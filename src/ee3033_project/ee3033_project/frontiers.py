@@ -3,6 +3,7 @@ import math
 import numpy as np
 from scipy.ndimage import binary_dilation, label
 from .coverage import CoveragePlanner
+from .core import angle_difference
 
 
 def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
@@ -51,9 +52,10 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                 cx,cy=planner.cell_to_world(edge[0],edge[1])
                 yaw=math.atan2(cy-y,cx-x)
                 distance=math.hypot(x-robot[0],y-robot[1])
-                if distance<0.15:
+                if distance<0.35:
                     continue
-                score=len(cells)*resolution/(0.5+distance)
+                turn=abs(angle_difference(math.atan2(y-robot[1],x-robot[0]),robot[2]))
+                score=len(cells)*resolution/(0.5+distance+0.4*turn)
                 options.append((score,(x,y,yaw)))
                 break
     return max(options,key=lambda p:p[0])[1] if options else None,valid_groups

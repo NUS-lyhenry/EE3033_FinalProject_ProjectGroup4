@@ -22,6 +22,8 @@ specific instance among several cups.
   coordinates/confidence, coverage, event log, initial pose setup, and Start/Stop.
 - One final velocity gate with command, lidar, and mission-heartbeat deadlines.
   Manual control is restricted to the mapping stage. Motion defaults to disabled.
+- Nav2 rotation shim aligns the car before driving along a new path; frontier
+  scoring penalizes unnecessary turns and avoids very close goals.
 
 ## Deployment and dependencies
 
