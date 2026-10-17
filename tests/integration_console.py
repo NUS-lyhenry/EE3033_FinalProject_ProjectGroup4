@@ -10,14 +10,95 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import Twist
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
 from ee3033_project.console import Console
 from ee3033_project.ros_utils import LATCHED
+from ee3033_project.mapper import Mapper
+from ee3033_project.velocity_gate import VelocityGate
+from ee3033_project.trial import parameter_plan
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_live_trial_sliders_and_voltage(self):
+        rclpy.init()
+        console=Console(parameter_overrides=[Parameter('port',value=0),
+                        Parameter('phase',value='mapping'),Parameter('allow_motion',value=True)])
+        gate=VelocityGate(parameter_overrides=[Parameter('mapping_mode',value=True),
+             Parameter('max_linear',value=.12),Parameter('max_angular',value=.4)])
+        mapper=Mapper()
+        controller=Node('controller_server')
+        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.)
+        for key,value in parameter_plan(initial)['controller_server'].items():
+            controller.declare_parameter(key,value)
+        reject=[False]
+        def accept(changes):
+            if reject[0]:
+                reject[0]=False
+                return SetParametersResult(successful=False,reason='Simulated rejection')
+            return SetParametersResult(successful=True)
+        controller.add_on_set_parameters_callback(accept)
+        voltage=controller.create_publisher(Float32,'/power_voltage',10)
+        executor=MultiThreadedExecutor(num_threads=4)
+        for node in (console,gate,mapper,controller):
+            executor.add_node(node)
+        thread=threading.Thread(target=executor.spin,daemon=True)
+        thread.start()
+        base=f'http://127.0.0.1:{console.p["port"]}'
+        token=console.token
+        def post(data):
+            request=Request(base+'/api/trial',json.dumps(data).encode(),
+                            {'Content-Type':'application/json','X-Project-Token':token},method='POST')
+            return json.load(urlopen(request,timeout=15))
+        try:
+            deadline=time.monotonic()+4
+            while 'Mission' not in console.freshness and time.monotonic()<deadline:
+                time.sleep(.05)
+            state=json.load(urlopen(base+'/api/trial',timeout=12))
+            self.assertEqual(state['values'],initial)
+            changed=dict(max_linear=.18,max_angular=.6,goal_timeout=90.)
+            response=post(changed)
+            self.assertTrue(response['synchronized'])
+            self.assertEqual(response['values'],changed)
+            time.sleep(.2)
+            self.assertEqual(gate.p['max_linear'],.18)
+            self.assertEqual(mapper.p['goal_timeout'],90.)
+            self.assertEqual(gate.p['rotation_clearance'],.16)
+            with self.assertRaises(HTTPError):
+                post({**changed,'max_linear':1.})
+            # A rejection restores all nodes already updated, not just UI values.
+            reject[0]=True
+            with self.assertRaises(HTTPError):
+                post(initial)
+            self.assertEqual(json.load(urlopen(base+'/api/trial',timeout=12))['values'],changed)
+            self.assertIsNone(console.trial_fault)
+            for timer in mapper.timers:
+                timer.cancel()
+            mapper.state='MAPPING'
+            console.on_status(String(data=json.dumps({'state':'MAPPING','reason':'Synthetic active mapping'})))
+            with self.assertRaises(HTTPError):
+                post(initial)
+            self.assertFalse(mapper.set_parameters_atomically([Parameter('goal_timeout',value=60.)]).successful)
+            mapper.state='STOPPED'
+            for _ in range(4):
+                voltage.publish(Float32(data=11.87))
+                time.sleep(.1)
+            battery=json.load(urlopen(base+'/api/state'))['battery']
+            self.assertTrue(battery['fresh'])
+            self.assertAlmostEqual(battery['voltage'],11.87,places=2)
+            with console.lock:
+                console.freshness['Battery']=time.monotonic()-6
+            self.assertFalse(json.load(urlopen(base+'/api/state'))['battery']['fresh'])
+            print('PASS: live navigation trial parameters, limits, readback, rollback, active lockout, battery freshness')
+        finally:
+            executor.shutdown(timeout_sec=3)
+            thread.join(timeout=3)
+            for node in (console,gate,mapper,controller):
+                node.destroy_node()
+            rclpy.shutdown()
+
     def test_http_controls_and_autonomous_lockout(self):
         rclpy.init()
         console=Console(parameter_overrides=[Parameter('port',value=0),

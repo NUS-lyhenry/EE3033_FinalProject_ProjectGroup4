@@ -1,11 +1,11 @@
 const {test,expect}=require('@playwright/test');
 
-test('live console connects and displays camera with motion disabled',async({page})=>{
+test('live console connects and displays camera and motion state without driving',async({page,request})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const state=await (await request.get('/api/state')).json();
   await page.goto('/');
   await expect(page.locator('#connection')).toHaveText('Connected');
-  await expect(page.locator('#start')).toBeDisabled();
-  await expect(page.locator('#motion')).toHaveText('Motion disabled');
+  await expect(page.locator('#motion')).toHaveText(state.allow_motion?'Motion enabled':'Motion disabled');
   await expect(page.locator('#camera')).toHaveJSProperty('naturalWidth',640,{timeout:15000});
   expect(errors).toEqual([]);
   await page.screenshot({path:'test-results/live-console.png',fullPage:true});
@@ -26,6 +26,45 @@ test('active mapping locks manual controls and map saving',async({page})=>{
   await expect(page.locator('[aria-label="Drive forward"]')).toBeDisabled();
   await expect(page.locator('#setup')).toBeHidden();
   await expect(page.locator('#stop')).toBeEnabled();
+  await expect(page.locator('#trialLinear')).toBeDisabled();
+  await expect(page.locator('#applyTrial')).toBeDisabled();
+});
+
+test('trial sliders apply verified values and battery marks stale telemetry',async({page})=>{
+  let batteryFresh=true;
+  let values={max_linear:.12,max_angular:.4,goal_timeout:60};
+  const limits={max_linear:{min:.04,max:.18,step:.01,unit:'m/s'},max_angular:{min:.15,max:.6,step:.05,unit:'rad/s'},goal_timeout:{min:20,max:120,step:5,unit:'s'}};
+  await page.route('**/api/state',r=>r.fulfill({json:{
+    phase:'mapping',allow_motion:true,token:'test-only',pose:[0,0,0],
+    mission:{state:'STOPPED',reason:'SIMULATED SLIDER TEST — no robot motion'},
+    map_revision:0,route:[],path:[],health:{},events:[],camera_source:null,
+    battery:{voltage:11.87,fresh:batteryFresh,age:batteryFresh?.1:6},
+  }}));
+  await page.route('**/api/map',r=>r.fulfill({json:null}));
+  await page.route('**/api/trial',async r=>{
+    if(r.request().method()==='POST'){
+      expect(r.request().headers()['x-project-token']).toBe('test-only');
+      values=r.request().postDataJSON();
+      expect(values.max_linear).toBe(.18);
+    }
+    await r.fulfill({json:{success:true,values,limits,synchronized:true,
+                          protection:{stop_distance:.22,rotation_clearance:.16}}});
+  });
+  await page.goto('/');
+  await expect(page.locator('#battery')).toHaveText('Battery 11.87 V');
+  await expect(page.locator('#trialLinear')).toBeEnabled();
+  await page.locator('#trialLinear').focus();
+  await page.keyboard.press('End');
+  await expect(page.locator('#trialLinearValue')).toHaveText('0.18 m/s');
+  await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.12 m/s');
+  await expect(page.locator('#applyTrial')).toBeEnabled();
+  await page.locator('#applyTrial').click();
+  await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.18 m/s');
+  await expect(page.locator('#applyTrial')).toBeDisabled();
+  batteryFresh=false;
+  await expect(page.locator('#battery')).toHaveText('Battery 11.87 V · stale');
+  await expect(page.locator('#trialProtection')).toContainText('turn clearance 0.16 m');
+  await page.screenshot({path:'test-results/simulated-trial-sliders.png',fullPage:true});
 });
 
 test('mission results, confidence and map render without browser errors',async({page})=>{

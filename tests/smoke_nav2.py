@@ -20,6 +20,8 @@ from rclpy.qos import qos_profile_sensor_data
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
 from lifecycle_msgs.srv import GetState
+from rcl_interfaces.srv import GetParameters, SetParametersAtomically
+from rclpy.parameter import Parameter
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
 from std_msgs.msg import String
@@ -163,6 +165,28 @@ def main():
                 names = {p.node_name for p in publishers}
                 # behavior_server creates a publisher for each behavior plugin.
                 assert names == {'controller_server','behavior_server'}, str(names)
+                # Exercise the actual Humble controller/shim parameter callbacks,
+                # with motion still disabled, not only a fake parameter server.
+                setter=world.create_client(SetParametersAtomically,'/controller_server/set_parameters_atomically')
+                getter=world.create_client(GetParameters,'/controller_server/get_parameters')
+                assert setter.wait_for_service(timeout_sec=3) and getter.wait_for_service(timeout_sec=3)
+                for linear,angular in [(.18,.6),(.12,.4)]:
+                    entries={'FollowPath.max_vel_x':linear,'FollowPath.max_speed_xy':linear,
+                             'FollowPath.max_vel_theta':angular,
+                             'FollowPath.rotate_to_heading_angular_vel':angular*.875}
+                    future=setter.call_async(SetParametersAtomically.Request(parameters=[
+                        Parameter(key,value=value).to_parameter_msg() for key,value in entries.items()]))
+                    until=time.monotonic()+4
+                    while not future.done() and time.monotonic()<until:
+                        time.sleep(.02)
+                    assert future.done() and future.result().result.successful, 'Nav2 trial update rejected'
+                    future=getter.call_async(GetParameters.Request(names=list(entries)))
+                    until=time.monotonic()+4
+                    while not future.done() and time.monotonic()<until:
+                        time.sleep(.02)
+                    assert future.done()
+                    assert all(math.isclose(msg.double_value,value,abs_tol=1e-8)
+                               for msg,value in zip(future.result().values,entries.values()))
                 start = world.create_client(Trigger,'/project/start')
                 assert start.wait_for_service(timeout_sec=3)
                 future = start.call_async(Trigger.Request())
@@ -172,7 +196,7 @@ def main():
                 assert future.done() and not future.result().success
                 assert 'Motion disabled' in future.result().message, future.result().message
                 print('PASS: 7 active lifecycle nodes; AMCL, YOLO and images live; '
-                      'sole gated velocity output; motion-disabled start rejected.')
+                      'sole gated velocity output; motion-disabled start rejected; native Nav2 trial updates verified.')
             finally:
                 import signal
                 os.killpg(proc.pid,signal.SIGINT)

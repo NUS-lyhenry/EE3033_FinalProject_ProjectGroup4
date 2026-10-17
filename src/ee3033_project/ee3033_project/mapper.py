@@ -20,6 +20,7 @@ from .core import quaternion_yaw,stamp_seconds
 from .frontiers import frontier_goal
 from .map_io import save_new_map
 from .ros_utils import LATCHED,parameters,run,set_yaw
+from .trial import guarded_parameters
 
 
 class Mapper(Node):
@@ -33,6 +34,7 @@ class Mapper(Node):
                                 'frontier_settle_seconds':4.0,
                                 'map_directory':'~/ee3033_maps'})
         self.state,self.reason='WAITING','Ready for on-site autonomous mapping'
+        guarded_parameters(self, ('goal_timeout',), lambda: self.state not in self.ACTIVE)
         self.map=None
         self.map_time=self.scan_time=self.odom_time=-math.inf
         self.home=None
@@ -201,6 +203,7 @@ class Mapper(Node):
         self.get_logger().error(reason)
 
     def tick(self):
+        self.p['goal_timeout']=self.get_parameter('goal_timeout').value
         now=time.monotonic()
         automatic=self.state in self.ACTIVE
         drive=self.state in ('MAPPING','RETURNING') and self.nav_handle is not None

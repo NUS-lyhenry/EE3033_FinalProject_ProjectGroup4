@@ -74,6 +74,18 @@ To save another snapshot without overwriting any map, use **Save a new map** or:
 bash scripts/save_map.sh /home/ros2_ws/group4_maps
 ```
 
+The **Mapping trial settings** panel displays live forward/turn speed caps and
+the per-goal timeout. Stop mapping, adjust the sliders, then select **Apply trial
+settings**. The console updates the gate, Nav2 controller, and mapper, verifies
+their readback, and attempts rollback if a node rejects an update. Unverified
+rollback locks console driving until a successful reapply. Bounds are
+0.04–0.18 m/s, 0.15–0.60 rad/s, and 20–120 s. These settings are temporary until
+restart; they do not alter balance PID, obstacle clearances, or lab files.
+
+The header shows measured battery voltage from `/power_voltage` (`Float32`).
+Readings older than five seconds are marked stale. No battery percentage or
+chemistry-dependent low-voltage threshold is inferred.
+
 Record the resulting absolute YAML path. Stop the mapping launch with Ctrl+C
 before starting saved-map localization. Do not run SLAM and AMCL together as
 competing `map -> odom_combined` transform publishers.

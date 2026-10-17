@@ -22,16 +22,20 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Path as NavPath
 from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rcl_interfaces.msg import Parameter as ParameterMessage
+from rcl_interfaces.srv import GetParameters, SetParametersAtomically
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from .core import quaternion_yaw
 from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
+from .trial import LIMITS, parameter_plan, validate_trial
 
 
 class Console(Node):
@@ -42,6 +46,8 @@ class Console(Node):
         if self.p['phase'] not in ('mapping','mission'):
             raise ValueError('phase must be mapping or mission')
         self.lock = threading.Lock()
+        self.control_lock = threading.Lock()
+        self.trial_fault = None
         self.token = secrets.token_urlsafe(24)
         self.state = {'state':'WAITING','reason':'Waiting for mission status',
                       'target':None,'home':None}
@@ -54,6 +60,7 @@ class Console(Node):
         self.jpeg_time = {}
         self.last_encoding = {}
         self.amcl_covariance = None
+        self.battery_voltage = None
         self.saved_map = None
         self.manual = (0.,0.,0.)
         self.bridge = CvBridge()
@@ -62,10 +69,17 @@ class Console(Node):
         self.manual_pub = self.create_publisher(Twist,'/project/manual_cmd_vel',10)
         self.initial_pub = self.create_publisher(PoseWithCovarianceStamped,'/initialpose',10)
         self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop')}
+        self.parameter_clients = {
+            (name, operation): self.create_client(kind, f'/{name}/{operation}')
+            for name in parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.))
+            for operation, kind in [('get_parameters',GetParameters),
+                                    ('set_parameters_atomically',SetParametersAtomically)]
+        } if self.p['phase']=='mapping' else {}
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
         self.create_subscription(String,'/project/perception_status',
                                  lambda m:self.mark('YOLO'),10)
         self.create_subscription(LaserScan,'/scan_fixed',lambda m:self.mark('Lidar'),qos_profile_sensor_data)
+        self.create_subscription(Float32,'/power_voltage',self.on_voltage,qos_profile_sensor_data)
         self.create_subscription(PoseWithCovarianceStamped,'/amcl_pose',self.on_amcl,10)
         self.create_subscription(OccupancyGrid,'/map',self.on_map,LATCHED)
         self.create_subscription(NavPath,'/project/search_path',self.on_route,LATCHED)
@@ -99,6 +113,13 @@ class Console(Node):
                     return self.reply(200,node.html,'text/html; charset=utf-8')
                 if path=='/api/state':
                     return self.reply(200,node.snapshot())
+                if path=='/api/trial':
+                    try:
+                        with node.control_lock:
+                            data = node.trial_settings()
+                        return self.reply(200,data)
+                    except (RuntimeError,ValueError) as exc:
+                        return self.reply(503,{'error':str(exc)})
                 if path=='/api/map':
                     with node.lock:
                         data = node.map_data
@@ -122,7 +143,13 @@ class Console(Node):
                     if not 0<=length<=8192:
                         raise ValueError('Request too large')
                     body = json.loads(self.rfile.read(length) or b'{}')
-                    result = node.command(urlparse(self.path).path,body)
+                    path = urlparse(self.path).path
+                    # Stop never waits behind parameter service requests.
+                    if path=='/api/stop':
+                        result = node.command(path,body)
+                    else:
+                        with node.control_lock:
+                            result = node.command(path,body)
                     return self.reply(200,result)
                 except (ValueError,TypeError,KeyError) as exc:
                     return self.reply(400,{'error':str(exc)})
@@ -156,6 +183,12 @@ class Console(Node):
         with self.lock:
             self.amcl_covariance = [msg.pose.covariance[i] for i in (0,7,35)]
             self.freshness['AMCL'] = time.monotonic()
+
+    def on_voltage(self,msg):
+        if math.isfinite(msg.data) and 0 <= msg.data <= 60:
+            with self.lock:
+                self.battery_voltage = float(msg.data)
+                self.freshness['Battery'] = time.monotonic()
 
     def on_map(self,msg):
         with self.lock:
@@ -210,13 +243,110 @@ class Console(Node):
             health = {name:{'age':round(now-t,1),'ok':now-t<limit}
                       for name,t in self.freshness.items()
                       for limit in [3 if name in ('YOLO','Mission') else
-                                    30 if name=='AMCL' else 3 if name=='Lidar' else math.inf]}
+                                    30 if name=='AMCL' else 5 if name=='Battery' else
+                                    3 if name=='Lidar' else math.inf]}
+            battery_age = now-self.freshness.get('Battery',-math.inf)
             return {'mission':self.state,'phase':self.p['phase'],
                     'allow_motion':self.p['allow_motion'],'pose':pose,
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
+                    'control_fault':self.trial_fault,
+                    'battery':{'voltage':self.battery_voltage,
+                               'age':round(battery_age,1) if math.isfinite(battery_age) else None,
+                               'fresh':battery_age<5},
                     'saved_map':self.saved_map,'token':self.token}
+
+    def parameter_request(self, name, operation, request):
+        client = self.parameter_clients[(name,operation)]
+        if not client.wait_for_service(timeout_sec=.4):
+            raise RuntimeError(f'{name}: parameter service unavailable')
+        future = client.call_async(request)
+        deadline = time.monotonic()+2
+        while not future.done() and time.monotonic()<deadline:
+            time.sleep(.01)
+        if not future.done():
+            raise RuntimeError(f'{name}: parameter request timed out')
+        result = future.result()
+        if result is None:
+            raise RuntimeError(f'{name}: parameter service failed')
+        return result
+
+    def read_trial_nodes(self):
+        plan = parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.))
+        result = {}
+        for name, entries in plan.items():
+            names = list(entries)
+            if name=='project_velocity_gate':
+                names += ['stop_distance','rotation_clearance']
+            response = self.parameter_request(name,'get_parameters',GetParameters.Request(names=names))
+            if len(response.values)!=len(names):
+                raise RuntimeError(f'{name}: incomplete parameter readback')
+            result[name] = {key:Parameter.from_parameter_msg(ParameterMessage(name=key,value=value)).value
+                            for key,value in zip(names,response.values)}
+            if any(type(value) is not float or not math.isfinite(value)
+                   for value in result[name].values()):
+                raise RuntimeError(f'{name}: invalid parameter readback')
+        return result
+
+    def write_trial_node(self, name, values):
+        request = SetParametersAtomically.Request(parameters=[
+            Parameter(key,value=float(value)).to_parameter_msg() for key,value in values.items()])
+        result = self.parameter_request(name,'set_parameters_atomically',request).result
+        if not result.successful:
+            raise RuntimeError(f'{name}: {result.reason}')
+
+    @staticmethod
+    def trial_matches(actual, expected):
+        return all(math.isclose(actual[name][key],value,abs_tol=1e-8)
+                   for name,entries in expected.items() for key,value in entries.items())
+
+    def trial_settings(self, values=None):
+        if self.p['phase']!='mapping':
+            raise ValueError('Navigation trial settings are only available in mapping mode')
+        if values is not None:
+            values = validate_trial(values)
+            with self.lock:
+                if (self.state['state'] not in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL')
+                        or time.monotonic()-self.freshness.get('Mission',-math.inf)>2):
+                    raise ValueError('Stop mapping and wait for fresh status before tuning')
+            self.manual = (0.,0.,0.)
+            self.manual_pub.publish(Twist())
+        original = self.read_trial_nodes()
+        if values is not None:
+            expected = parameter_plan(values)
+            attempted = []
+            try:
+                for name, entries in expected.items():
+                    attempted.append(name)
+                    self.write_trial_node(name,entries)
+                actual = self.read_trial_nodes()
+                if not self.trial_matches(actual,expected):
+                    raise RuntimeError('Requested settings did not match live readback')
+            except Exception as exc:
+                restored = True
+                for name in reversed(attempted):
+                    try:
+                        self.write_trial_node(name,{key:original[name][key] for key in expected[name]})
+                    except Exception:
+                        restored = False
+                try:
+                    restored = restored and self.trial_matches(self.read_trial_nodes(),original)
+                except Exception:
+                    restored = False
+                self.trial_fault = None if restored else 'Trial update/rollback unverified; reapply settings before driving'
+                raise RuntimeError(str(exc)+('; original values restored' if restored else '; driving locked')) from exc
+            original = actual
+            self.trial_fault = None
+        gate = original['project_velocity_gate']
+        current = {key:gate[key] for key in ('max_linear','max_angular')}
+        current['goal_timeout'] = original['project_mapper']['goal_timeout']
+        return {'success':True,'values':current,
+                'limits':{key:dict(min=v[0],max=v[1],step=v[2],unit=v[3]) for key,v in LIMITS.items()},
+                'protection':{key:gate[key] for key in ('stop_distance','rotation_clearance')},
+                'synchronized':self.trial_matches(original,parameter_plan(current)),
+                'fault':self.trial_fault,'temporary':True,
+                'message':'Trial settings applied and verified; temporary until restart' if values is not None else ''}
 
     def command(self,path,body):
         with self.lock:
@@ -226,6 +356,8 @@ class Console(Node):
             key = path.rsplit('/',1)[-1]
             if key=='start' and not self.p['allow_motion']:
                 raise ValueError('Motion disabled in this console')
+            if key=='start' and self.trial_fault:
+                raise ValueError(self.trial_fault)
             if key=='stop':
                 self.manual = (0.,0.,0.)
                 self.manual_pub.publish(Twist())
@@ -240,6 +372,8 @@ class Console(Node):
                 raise RuntimeError('Mission service timed out; inspect mission status')
             result = future.result()
             return {'success':result.success,'message':result.message}
+        if path=='/api/trial':
+            return self.trial_settings(body)
         if path=='/api/initial_pose':
             if active or self.p['phase']!='mission':
                 raise ValueError('Initial pose is only available before the autonomous mission')
@@ -269,6 +403,8 @@ class Console(Node):
             self.initial_pub.publish(msg)
             return {'success':True,'message':'Assigned initial pose sent to AMCL'}
         if path=='/api/teleop':
+            if self.trial_fault:
+                raise ValueError(self.trial_fault)
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Manual driving is restricted to the mapping stage')
             x,z = float(body.get('linear',0)),float(body.get('angular',0))
