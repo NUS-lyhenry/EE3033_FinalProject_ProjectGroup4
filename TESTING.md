@@ -51,6 +51,14 @@ real battery readings around 11.70 V, live navigation limits of 0.12 m/s and
 0.40 rad/s, and a 60 s per-goal timeout. The underlying software checks do not
 establish safe maximum physical speeds or battery capacity.
 
+The real browser Apply flow subsequently set and verified 0.16 m/s, 0.50 rad/s,
+and 60 s. A physical retry completed two frontier goals, but the return attempt
+hit its navigation timeout at approximately 155 s total elapsed. The robot was
+stopped and another partial snapshot was saved separately at
+`/home/ros2_ws/group4_maps/onsite_zh1zopew/map.yaml`. Original lab maps and balance
+PID were unchanged. The eight isolated ROS integration cases were rerun on
+domain 96 and passed. Complete room coverage and physical return remain unverified.
+
 Pending: fresh autonomous room mapping, Pepsi-can detection/class check, map-frame
 coordinate checks against reference positions, full target-search/return run,
 return stopping distance, and operator-console use during the run.
