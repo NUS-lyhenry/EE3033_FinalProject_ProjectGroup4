@@ -190,6 +190,11 @@ long-term storage. Generated results and maps are ignored by Git.
   `base_footprint`, `odom_combined`, `camera_link`, and `laser` from this car.
   The optical transform follows ROS optical axes; the lab driver remains the
   owner of the actual camera position and mounting pitch.
+- The scan adapter masks returns inside the configured 0.14 m robot interior.
+  Such rays become NaN (occluded/unknown), never clear-space rays. This was added
+  after rear 0.04–0.07 m returns persisted when the car was moved to open space.
+  Verify `self_mask_radius` against the actual scanner mounting and footprint;
+  it must not mask valid obstacles outside the robot.
 - Confirm CameraInfo matches 640×480 and the actual camera/lens. Camera tilt and
   balance-car pitch affect the accuracy of object position estimates.
 - Default lidar localization requires the target to intersect the lidar plane,

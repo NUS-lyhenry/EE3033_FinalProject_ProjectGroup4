@@ -4,13 +4,14 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from .ros_utils import parameters, run
+from .scan_core import resample
 
 
 class ScanResampler(Node):
     def __init__(self):
         super().__init__('project_scan_resampler')
         self.p = parameters(self, {'input_topic': '/scan', 'output_topic': '/scan_fixed',
-                                   'bins': 450})
+                                   'bins': 450,'self_mask_radius':0.14})
         if self.p['bins'] < 10:
             raise ValueError('bins must be at least 10')
         self.pub = self.create_publisher(LaserScan, self.p['output_topic'],
@@ -21,7 +22,7 @@ class ScanResampler(Node):
     def on_scan(self, msg):
         out = LaserScan()
         out.header = msg.header
-        out.range_min, out.range_max = msg.range_min, msg.range_max
+        out.range_min, out.range_max = max(msg.range_min,self.p['self_mask_radius']), msg.range_max
         out.scan_time = msg.scan_time
         n = self.p['bins']
         out.angle_min = -math.pi
@@ -29,14 +30,8 @@ class ScanResampler(Node):
         out.angle_max = out.angle_min+(n-1)*out.angle_increment
         # Bins are reordered, so do not invent a per-bin acquisition time.
         out.time_increment = 0.0
-        ranges = [math.inf]*n
-        for i, distance in enumerate(msg.ranges):
-            if not math.isfinite(distance) or not msg.range_min <= distance <= msg.range_max:
-                continue
-            a = (msg.angle_min+i*msg.angle_increment+math.pi) % (2*math.pi)-math.pi
-            j = round((a+math.pi)/out.angle_increment) % n
-            ranges[j] = min(ranges[j], distance)
-        out.ranges = ranges
+        out.ranges = resample(msg.ranges,msg.angle_min,msg.angle_increment,msg.range_min,
+                              msg.range_max,n,self.p['self_mask_radius'])
         self.pub.publish(out)
 
 
