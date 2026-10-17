@@ -117,6 +117,8 @@ class FakeRobot(Node):
         else:
             self.xy_yaw = [pose.position.x,pose.position.y,quaternion_yaw(pose.orientation)]
         duration = 1.4 if self.scenario in ('found','stale','delayed_accept') and not home else 0.18
+        if self.scenario == 'mapping_timeout':
+            duration = 2.0
         deadline = time.monotonic()+duration
         if self.scenario == 'stale' and not home:
             self.live = False
@@ -324,6 +326,34 @@ class GateIntegration(unittest.TestCase):
 
 
 class MappingIntegration(unittest.TestCase):
+    def test_timeout_cancels_before_saving_partial_map(self):
+        rclpy.init()
+        root=tempfile.TemporaryDirectory(prefix='group4_partial_test_')
+        robot=FakeRobot('mapping_timeout')
+        mapper=Mapper(parameter_overrides=overrides(allow_motion=True,
+            settle_seconds=.1,frontier_settle_seconds=.2,map_directory=root.name))
+        executor=MultiThreadedExecutor(num_threads=5)
+        for node in (robot,mapper): executor.add_node(node)
+        thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
+        try:
+            self.assertTrue(wait(lambda:mapper.error() is None and mapper.nav.server_is_ready()))
+            client=robot.create_client(Trigger,'/project/start')
+            self.assertTrue(client.wait_for_service(timeout_sec=3))
+            future=client.call_async(Trigger.Request());self.assertTrue(wait(future.done))
+            self.assertTrue(future.result().success)
+            self.assertTrue(wait(lambda:mapper.state=='RETURNING' and mapper.nav_handle is not None))
+            mapper.goal_time=time.monotonic()-61
+            self.assertTrue(wait(lambda:mapper.state in ('MAPPED_PARTIAL','FAILED'),15))
+            self.assertEqual(mapper.state,'MAPPED_PARTIAL',mapper.reason)
+            self.assertEqual(robot.canceled,1)
+            self.assertEqual(robot.active_goals,0)
+            self.assertIsNone(mapper.nav_handle)
+            self.assertTrue(Path(mapper.saved_map).is_file())
+            print('PASS: mapping timeout confirmed cancellation before separate partial-map save')
+        finally:
+            executor.shutdown(timeout_sec=3);thread.join(timeout=3)
+            mapper.destroy_node();robot.destroy_node();rclpy.shutdown();root.cleanup()
+
     def test_frontier_exhaustion_returns_and_saves_a_separate_map(self):
         rclpy.init()
         root=tempfile.TemporaryDirectory(prefix='group4_mapping_test_')

@@ -29,6 +29,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import angle_difference, quaternion_yaw, stamp_seconds
 from .coverage import CoveragePlanner, returned_home
+from .gap import guard_clearance
 from .ros_utils import LATCHED, parameters, run, set_yaw
 
 
@@ -63,6 +64,7 @@ class Mission(Node):
         self.goal_handle = None
         self.goal_pending = False
         self.goal_serial = 0
+        guard_clearance(self, lambda: self.state == 'WAITING' and not self.goal_pending and self.goal_handle is None)
         self.goal_kind = None
         self.goal_started = self.started = 0.0
         self.finished_at = 0.0
@@ -183,6 +185,7 @@ class Mission(Node):
         if error:
             response.message = error
             return response
+        self.p['clearance'] = self.get_parameter('clearance').value
         self.home, self.target = self.pose(), None
         self.target_details = None
         self.index, self.route, self.seen, self.failures = 0, [], set(), []

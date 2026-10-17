@@ -21,6 +21,7 @@ from .frontiers import frontier_goal
 from .map_io import save_new_map
 from .ros_utils import LATCHED,parameters,run,set_yaw
 from .trial import guarded_parameters
+from .gap import guard_clearance
 
 
 class Mapper(Node):
@@ -44,11 +45,13 @@ class Mapper(Node):
         self.started=self.goal_time=self.last_decision=self.empty_since=0.0
         self.finished_at=0.0
         self.cancel_deadline=0.0
+        self.save_after_cancel=False
         self.failed=[]
         self.visited=[]
         self.goals=0
         self.partial=False
         self.saved_map=None
+        guard_clearance(self, lambda: self.state not in self.ACTIVE and not self.pending and self.nav_handle is None)
         self.tf=Buffer()
         self.listener=TransformListener(self.tf,self)
         self.nav=ActionClient(self,NavigateToPose,'/navigate_to_pose')
@@ -113,6 +116,7 @@ class Mapper(Node):
             return response
         self.home,self.started,self.failed,self.partial=self.pose(),time.monotonic(),[],False
         self.finished_at=0.0
+        self.save_after_cancel=False
         self.visited=[]
         self.goals=0
         self.job=None
@@ -126,6 +130,7 @@ class Mapper(Node):
 
     def stop(self,request,response):
         del request
+        self.save_after_cancel=False
         self.drive_pub.publish(Bool(data=False))
         if self.nav_handle or self.pending:
             self.state='CANCELING'
@@ -178,8 +183,11 @@ class Mapper(Node):
 
     def done(self,success):
         if self.state=='CANCELING':
-            self.state='STOPPED'
-            self.finished_at=time.monotonic()
+            if self.save_after_cancel:
+                self.save_partial()
+            else:
+                self.state='STOPPED'
+                self.finished_at=time.monotonic()
         elif self.state=='RETURNING':
             pose=self.pose()
             if not success or pose is None or math.hypot(pose[0]-self.home[0],pose[1]-self.home[1])>0.25:
@@ -194,6 +202,15 @@ class Mapper(Node):
             self.goal=None
             self.last_decision=time.monotonic()
 
+    def save_partial(self):
+        # Called only once navigation has finished/canceled. Never restart a node
+        # or issue recovery motion; preserve a separate, honestly partial map.
+        self.save_after_cancel=False
+        self.partial=True
+        self.drive_pub.publish(Bool(data=False))
+        self.state,self.reason='SAVING','Navigation timed out; stopped and saving a partial map'
+        self.job=self.worker.submit(save_new_map,self.p['map_directory'])
+
     def fail(self,reason):
         self.state,self.reason='FAILED',reason
         self.finished_at=time.monotonic()
@@ -204,6 +221,7 @@ class Mapper(Node):
 
     def tick(self):
         self.p['goal_timeout']=self.get_parameter('goal_timeout').value
+        self.p['clearance']=self.get_parameter('clearance').value
         now=time.monotonic()
         automatic=self.state in self.ACTIVE
         drive=self.state in ('MAPPING','RETURNING') and self.nav_handle is not None
@@ -217,7 +235,13 @@ class Mapper(Node):
             if error:
                 self.fail(error)
             elif (self.nav_handle or self.pending) and now-self.goal_time>self.p['goal_timeout']:
-                self.fail('Mapping navigation time limit exceeded')
+                self.stop(None,Trigger.Response())
+                self.partial=True
+                if self.state=='CANCELING':
+                    self.save_after_cancel=True
+                    self.reason='Navigation timed out; canceling before saving a partial map'
+                else:
+                    self.save_partial()
             elif self.state=='MAPPING' and not self.nav_handle and not self.pending:
                 if self.job is not None:
                     if self.job.done():

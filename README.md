@@ -22,6 +22,8 @@ specific instance among several cups.
   coordinates/confidence, coverage, event log, initial pose setup, and Start/Stop.
 - One final velocity gate with command, lidar, and mission-heartbeat deadlines.
   Manual control is restricted to the mapping stage. Motion defaults to disabled.
+- Stopped-only narrow-gap blocking with verified global/local footprints,
+  synchronized mapping/search clearance, rollback and fault lockout.
 - Nav2 rotation shim aligns the car before driving along a new path; frontier
   scoring penalizes unnecessary turns and avoids very close goals.
 
@@ -56,7 +58,8 @@ alongside this package's resampler.
 ## Stage 1 — construct a new map
 
 ```bash
-ros2 launch ee3033_project mapping.launch.py allow_motion:=true
+ros2 launch ee3033_project mapping.launch.py allow_motion:=true \
+  map_directory:=/home/ros2_ws/group4_maps
 ```
 
 Open the operator console, then select **Start automatic mapping**. The robot
@@ -81,6 +84,34 @@ their readback, and attempts rollback if a node rejects an update. Unverified
 rollback locks console driving until a successful reapply. Bounds are
 0.04–0.18 m/s, 0.15–0.60 rad/s, and 20–120 s. These settings are temporary until
 restart; they do not alter balance PID, obstacle clearances, or lab files.
+
+The **Narrow-gap blocking** button is available in both stages. Configure it
+while mapping is idle or before starting stage 2. ON selects a 0.18 m virtual
+radius in both Nav2 costmaps, from the estimated 0.20 m body width and 0.08 m
+reserve on each side. OFF retains the original 0.14 m collision radius. Both
+include 0.01 m footprint padding. This is a route policy; it does not edit the
+SLAM map, change the scan mask, or disable obstacle/deadman protection.
+
+The 0.36 m nominal opening is not a centimetre-accurate fit guarantee: padding,
+footprint discretization, and the 0.05 m grid affect passage rejection. Frontier
+and search reachability also retain conservative center-to-obstacle clearance:
+0.26 m ON and 0.22 m OFF. Consequently their reachable areas can be smaller than
+Nav2's. The UI shows these live values. Only lateral 2D clearance is considered;
+objects outside the lidar plane may remain unseen. Physical body measurements
+and passage trials remain required.
+
+The console atomically changes each node, verifies committed readback across
+nodes, and attempts rollback on any rejection. An unverified gap rollback locks
+console driving independently of trial-slider faults; a successful gap reapply
+is needed to clear it. Custom polygon footprints or disabled inflation are
+rejected by this policy rather than silently treated as a circular footprint.
+These settings reset on process restart.
+
+Mapping uses relaxed final heading because the lidar observes all directions;
+mission search retains its observation heading. A navigation timeout cancels
+motion and waits for the action result before saving a separate partial map.
+Cancellation failure stays a failure and does not trigger movement recovery.
+A map with no safe connected space is never counted as completed exploration.
 
 The header shows measured battery voltage from `/power_voltage` (`Float32`).
 Readings older than five seconds are marked stale. No battery percentage or
@@ -243,6 +274,8 @@ isolated domains (never domain 6):
 ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
 ROS_DOMAIN_ID=89 python3 tests/smoke_nav2.py
 ROS_DOMAIN_ID=90 python3 tests/integration_console.py
+ROS_DOMAIN_ID=91 python3 tests/integration_gap_nav2.py
+GROUP4_GAP_RESOLUTION=.05 ROS_DOMAIN_ID=92 python3 tests/integration_gap_nav2.py
 ```
 
 The integration tests exercise actual ROS messages/actions, cancellation races,
@@ -251,7 +284,8 @@ saves, HTTP controls, and manual-control lockout. The Nav2 smoke test starts rea
 Nav2, AMCL, YOLO, and project nodes against synthetic sensors with motion
 disabled. These tests do not replace physical navigation and calibration tests.
 
-See [TESTING.md](TESTING.md) for the recorded results and remaining validation.
+See [RUNBOOK.md](RUNBOOK.md) for stage transitions, combined timing, and report
+evidence requirements. See [TESTING.md](TESTING.md) for the recorded results and remaining validation.
 
 Optional browser checks use development-only dependencies (no Node.js is needed
 on the robot). With a motion-disabled console and a camera feed running:

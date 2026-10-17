@@ -16,10 +16,10 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
     if not planner.safe[r,c]:
         safe = np.argwhere(planner.safe)
         if not len(safe):
-            return None,0
+            raise ValueError(f'No mapped space with {clearance:.2f} m clearance; map remains incomplete')
         near = safe[np.argmin(np.sum((safe-np.array([r,c]))**2,axis=1))]
         if np.linalg.norm(near-[r,c])*resolution > 0.18:
-            raise ValueError('No connected space with robot clearance')
+            raise ValueError(f'No connected space with {clearance:.2f} m clearance; use an open starting area')
         r,c = map(int,near)
     reachable = components==components[r,c]
     frontier = planner.free & binary_dilation(planner.grid<0,

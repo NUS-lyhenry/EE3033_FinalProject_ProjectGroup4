@@ -33,3 +33,10 @@ def test_frontier_failures_suppress_nearby_goals():
 def test_frontier_outside_map_fails_closed():
     with pytest.raises(ValueError):
         frontier_goal(np.zeros((10,10)),0.1,(0,0,0),(-2,-2,0))
+
+
+def test_no_safe_space_cannot_be_reported_as_completed_mapping():
+    grid=np.full((20,20),100)
+    grid[9:12,9:12]=0
+    with pytest.raises(ValueError,match='map remains incomplete'):
+        frontier_goal(grid,.05,(0,0,0),(.525,.525,0))

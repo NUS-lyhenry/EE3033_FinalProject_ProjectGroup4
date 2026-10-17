@@ -90,3 +90,33 @@ test('mission results, confidence and map render without browser errors',async({
   expect(errors).toEqual([]);
   await page.screenshot({path:'test-results/simulated-results.png',fullPage:true});
 });
+
+for(const phase of ['mapping','mission'])test(`gap reserve readback and active lockout in ${phase}`,async({page})=>{
+  let enabled=false,state='WAITING',writes=0;
+  await page.route('**/api/state',r=>r.fulfill({json:{phase,allow_motion:true,token:'test-only',pose:[0,0,0],
+    mission:{state,reason:'SIMULATED GAP TEST — no robot motion'},map_revision:0,route:[],path:[],health:{},events:[],camera_source:null}}));
+  await page.route('**/api/map',r=>r.fulfill({json:null}));
+  await page.route('**/api/gap',async r=>{
+    if(r.request().method()==='POST'){
+      expect(r.request().headers()['x-project-token']).toBe('test-only');
+      enabled=r.request().postDataJSON().enabled;writes++;
+    }
+    const parameters={robot_radius:enabled?.18:.14,footprint_padding:.01,resolution:.05};
+    await r.fulfill({json:{success:true,enabled,synchronized:true,nodes:{
+      'global_costmap/global_costmap':parameters,'local_costmap/local_costmap':parameters,
+      [phase==='mapping'?'project_mapper':'project_mission']:{clearance:enabled?.26:.22}}}});
+  });
+  await page.goto('/');
+  await expect(page.locator('#gapToggle')).toBeEnabled();
+  await expect(page.locator('#gapToggle')).toHaveAttribute('aria-pressed','false');
+  await page.locator('#gapToggle').click();
+  await expect(page.locator('#gapToggle')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#gapStatus')).toContainText('global 0.18 m / local 0.18 m');
+  await expect(page.locator('#gapStatus')).toContainText('clearance 0.26 m');
+  expect(writes).toBe(1);
+  state=phase==='mapping'?'MAPPING':'SEARCHING';
+  await expect(page.locator('#gapToggle')).toBeDisabled();
+  await expect(page.locator('#stop')).toBeEnabled();
+  expect(writes).toBe(1);
+  await page.screenshot({path:`test-results/simulated-gap-${phase}.png`,fullPage:true});
+});

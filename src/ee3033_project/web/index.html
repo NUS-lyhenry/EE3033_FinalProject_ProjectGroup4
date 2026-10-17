@@ -19,6 +19,7 @@
 </section>
 <div class="layout"><div>
 <section class="panel"><div class="panel-head"><h2>Environment map</h2><span id="mapScale" class="muted">Waiting for /map</span></div><div class="map-wrap"><canvas id="map" width="600" height="470" tabindex="0" aria-label="Live map with robot, search viewpoints, and target"></canvas><div id="mapEmpty" class="empty">The on-site map will appear here.<br>Start mapping or load the saved-map mission.</div></div><div class="legend"><span><i class="dot" style="background:#7fb9ff"></i>Robot</span><span><i class="dot" style="background:#72dfbd"></i>Nav2 path</span><span><i class="dot" style="background:#baa7ff"></i>Search viewpoints</span><span><i class="dot" style="background:#ffd183"></i>Confirmed target</span><span><i class="dot" style="background:#ff8ccc"></i>Home</span></div></section>
+<section class="panel"><div class="panel-head"><h2>Narrow-gap blocking</h2><span class="muted">Temporary navigation policy</span></div><div class="panel-body"><button id="gapToggle" type="button" aria-pressed="false" disabled>Reading gap policy…</button><p id="gapStatus" role="status" aria-live="polite" class="muted">Reading live clearance…</p><p class="muted">ON uses the estimated 20 cm width plus 8 cm on each side: nominal 36 cm opening, with additional costmap padding and grid effects. OFF retains the standard collision footprint and obstacle protection. Change while stopped in mapping or before starting stage 2.</p><p class="muted">Lateral 2D clearance only. Objects below or above the lidar plane may be unseen.</p></div></section>
 <section id="trialPanel" class="panel" hidden><div class="panel-head"><h2>Mapping trial settings</h2><span class="muted">Temporary · not balance PID</span></div><div class="panel-body"><div class="trial-grid">
 <div><label for="trialLinear">Forward speed cap</label><output id="trialLinearValue" for="trialLinear">—</output><input id="trialLinear" type="range" min="0.04" max="0.18" step="0.01" value="0.12" disabled><small id="trialLinearLive">Live: unavailable</small></div>
 <div><label for="trialAngular">Turning speed cap</label><output id="trialAngularValue" for="trialAngular">—</output><input id="trialAngular" type="range" min="0.15" max="0.60" step="0.05" value="0.40" disabled><small id="trialAngularLive">Live: unavailable</small></div>
@@ -39,6 +40,7 @@
 const $=id=>document.getElementById(id);
 let snapshot=null,mapData=null,mapRevision=-1,token='',online=false,drag=null,mapImage=null,driveTimer=null;
 let trial=null,trialDirty=false,trialBusy=false,trialTime=0;
+let gapPolicy=null,gapBusy=false,gapTime=0,gapError='';
 const trialFields=[['max_linear','trialLinear','m/s'],['max_angular','trialAngular','rad/s'],['goal_timeout','trialTimeout','s']];
 const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','VERIFYING','MAPPING','SAVING']);
 const fmt=(n,d=2)=>Number.isFinite(n)?n.toFixed(d):'—';
@@ -75,18 +77,19 @@ function update(){
   $('camera').hidden=!snapshot.camera_source;
   $('events').replaceChildren(...(snapshot.events.length?snapshot.events:[{time:'',state:'WAITING',reason:'No mission events yet.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),s=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time;s.textContent=e.state;r.textContent=e.reason;li.append(t,s,r);return li;}));
   updateTrial();
+  updateGap();
   draw();
 }
 function updateTrial(){
   const mapping=snapshot?.phase==='mapping',active=ACTIVE.has(snapshot?.mission.state),fresh=Date.now()-trialTime<8000;
   $('trialPanel').hidden=!mapping;
   trialFields.forEach(([key,id,unit])=>{
-    $(id).disabled=!online||!mapping||active||trialBusy||!trial||!fresh;
+    $(id).disabled=!online||!mapping||active||trialBusy||gapBusy||!trial||!fresh;
     $(id+'Value').textContent=`${fmt(Number($(id).value),key==='goal_timeout'?0:2)} ${unit}`;
     $(id+'Live').textContent=`Live: ${trial?fmt(trial.values[key],key==='goal_timeout'?0:2)+' '+unit:'unavailable'}${trial&&!fresh?' · stale':''}`;
   });
-  $('applyTrial').disabled=!online||!mapping||active||trialBusy||!trial||!fresh||!trialDirty;
-  if(trialBusy)$('start').disabled=true;
+  $('applyTrial').disabled=!online||!mapping||active||trialBusy||gapBusy||!trial||!fresh||!trialDirty;
+  if(trialBusy||gapBusy)$('start').disabled=true;
   if(active)$('trialStatus').textContent='Mapping active — stop before adjusting trial settings.';
   else if(trialBusy)$('trialStatus').textContent='Applying and verifying live parameters…';
   else if(trial?.fault)$('trialStatus').textContent=trial.fault;
@@ -111,6 +114,29 @@ $('applyTrial').onclick=async()=>{
   catch(error){trialTime=0;$('trialStatus').textContent=error.message;}
   finally{trialBusy=false;updateTrial();}
 };
+function updateGap(){
+  const fresh=Date.now()-gapTime<8000,active=ACTIVE.has(snapshot?.mission.state);
+  const permitted=snapshot?.phase==='mapping'||snapshot?.mission.state==='WAITING';
+  $('gapToggle').disabled=!online||active||!permitted||gapBusy||trialBusy||!gapPolicy||!fresh;
+  $('gapToggle').setAttribute('aria-pressed',String(gapPolicy?.enabled===true));
+  $('gapToggle').textContent=gapPolicy?.enabled===true?'Narrow-gap blocking: ON · Disable':gapPolicy?.enabled===false?'Narrow-gap blocking: OFF · Enable':'Synchronize gap policy: Enable';
+  const nodes=gapPolicy?.nodes,stage=nodes?.[snapshot?.phase==='mapping'?'project_mapper':'project_mission'],global=nodes?.['global_costmap/global_costmap'],local=nodes?.['local_costmap/local_costmap'];
+  $('gapStatus').textContent=gapBusy?'Applying and verifying clearance…':gapError||gapPolicy?.fault||(!fresh?'Live clearance unavailable or stale.':`Verified radius: global ${fmt(global?.robot_radius)} m / local ${fmt(local?.robot_radius)} m. Padding ${fmt(global?.footprint_padding)} m; grid ${fmt(global?.resolution)} m. Mapping/search clearance ${fmt(stage?.clearance)} m from obstacles. ${active?'Stop before changing.':''}`);
+  if(gapBusy||!fresh||!gapPolicy?.synchronized||gapPolicy?.fault)$('start').disabled=true;
+  if(gapBusy)document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=true);
+}
+async function pollGap(){
+  if(online&&!gapBusy&&!trialBusy){try{const r=await fetch('/api/gap');const d=await r.json();if(!r.ok)throw Error(d.error||'Gap policy unavailable');if(!gapBusy){gapPolicy=d;gapTime=Date.now();gapError='';}}catch(e){gapTime=0;gapError=e.message;}updateGap();}
+  setTimeout(pollGap,4000);
+}
+$('gapToggle').onclick=async()=>{
+  if($('gapToggle').disabled)return;
+  releaseDrive();gapBusy=true;updateGap();updateTrial();
+  try{gapPolicy=await command('gap',{enabled:gapPolicy.enabled!==true});gapTime=Date.now();gapError='';}
+  catch(e){gapTime=0;gapError=e.message;}
+  finally{gapBusy=false;update();}
+};
+setTimeout(pollGap,750);
 function point(x,y){const [ox,oy,a]=mapData.origin,dx=x-ox,dy=y-oy;return [(Math.cos(a)*dx+Math.sin(a)*dy)/mapData.resolution,mapData.height-(-Math.sin(a)*dx+Math.cos(a)*dy)/mapData.resolution];}
 function draw(){if(!mapData||!snapshot)return;const canvas=$('map'),ctx=canvas.getContext('2d'),wrap=canvas.parentElement,scale=Math.min((wrap.clientWidth-30)/mapData.width,(wrap.clientHeight-30)/mapData.height);canvas.style.width=(mapData.width*scale)+'px';canvas.style.height=(mapData.height*scale)+'px';canvas.width=mapData.width*3;canvas.height=mapData.height*3;ctx.scale(3,3);ctx.imageSmoothingEnabled=false;ctx.drawImage(mapImage,0,0);
   function line(points,color,dash=[]){if(!points?.length)return;ctx.beginPath();ctx.setLineDash(dash);points.forEach((p,i)=>{const [x,y]=point(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle=color;ctx.lineWidth=.8;ctx.stroke();ctx.setLineDash([]);}
@@ -121,7 +147,7 @@ function draw(){if(!mapData||!snapshot)return;const canvas=$('map'),ctx=canvas.g
   if(drag){ctx.beginPath();ctx.moveTo(drag.start[0],drag.start[1]);ctx.lineTo(drag.end[0],drag.end[1]);ctx.strokeStyle='#ffdd80';ctx.lineWidth=1;ctx.stroke();}
 }
 function renderMap(m){mapData=m;if(!m)return;$('mapEmpty').hidden=true;$('mapScale').textContent=`${fmt(m.width*m.resolution,1)} × ${fmt(m.height*m.resolution,1)} m · ${fmt(m.resolution,2)} m/cell`;mapImage=document.createElement('canvas');mapImage.width=m.width;mapImage.height=m.height;const ctx=mapImage.getContext('2d'),pixels=ctx.createImageData(m.width,m.height);for(let r=0;r<m.height;r++)for(let c=0;c<m.width;c++){const value=m.cells[r*m.width+c],i=((m.height-1-r)*m.width+c)*4;const color=value<0?[52,63,78]:value>=50?[14,20,29]:[198,210,222];pixels.data.set([...color,255],i);}ctx.putImageData(pixels,0,0);draw();}
-async function poll(){try{const response=await fetch('/api/state');if(!response.ok)throw Error('Console unavailable');snapshot=await response.json();token=snapshot.token;online=true;$('connection').textContent='Connected';$('connection').className='badge online';if(snapshot.map_revision!==mapRevision){mapRevision=snapshot.map_revision;renderMap(await (await fetch('/api/map')).json());}update();}catch(error){online=false;$('connection').textContent='Connection lost';$('connection').className='badge offline';$('start').disabled=true;$('setPose').disabled=true;$('battery').className='badge';$('battery').textContent='Battery · disconnected';releaseDrive();updateTrial();}finally{setTimeout(poll,500);}}
+async function poll(){try{const response=await fetch('/api/state');if(!response.ok)throw Error('Console unavailable');snapshot=await response.json();token=snapshot.token;online=true;$('connection').textContent='Connected';$('connection').className='badge online';if(snapshot.map_revision!==mapRevision){mapRevision=snapshot.map_revision;renderMap(await (await fetch('/api/map')).json());}update();}catch(error){online=false;$('connection').textContent='Connection lost';$('connection').className='badge offline';$('start').disabled=true;$('setPose').disabled=true;$('battery').className='badge';$('battery').textContent='Battery · disconnected';releaseDrive();updateTrial();updateGap();}finally{setTimeout(poll,500);}}
 $('start').onclick=()=>command('start').catch(()=>{});$('stop').onclick=()=>{releaseDrive();command('stop').catch(()=>{});};$('saveMap').onclick=async()=>{feedback('Saving map in a new directory…');try{const r=await command('save_map');$('savedMap').textContent=r.path;}catch(_){}};
 $('setPose').onclick=()=>command('initial_pose',{x:Number($('poseX').value),y:Number($('poseY').value),yaw:Number($('poseYaw').value)*Math.PI/180}).catch(()=>{});
 function canvasPoint(e){const b=$('map').getBoundingClientRect();return [(e.clientX-b.left)/b.width*mapData.width,(e.clientY-b.top)/b.height*mapData.height];}

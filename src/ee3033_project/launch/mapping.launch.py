@@ -17,6 +17,7 @@ def generate_launch_description():
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
+        DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
         DeclareLaunchArgument('port', default_value='8765'),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share,'config','navigation.yaml')),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -28,16 +29,17 @@ def generate_launch_description():
              output='screen'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(share,'launch','navigation.launch.py')),launch_arguments={
-                'nav_config':LaunchConfiguration('nav_config')}.items()),
+                'nav_config':LaunchConfiguration('nav_config'),'mapping_mode':'true'}.items()),
         Node(package='ee3033_project',executable='mapper',output='screen',parameters=[{
-            'allow_motion':ParameterValue(LaunchConfiguration('allow_motion'),value_type=bool)}]),
+            'allow_motion':ParameterValue(LaunchConfiguration('allow_motion'),value_type=bool),
+            'map_directory':LaunchConfiguration('map_directory')}]),
         Node(package='ee3033_project', executable='velocity_gate', parameters=[
             os.path.join(share, 'config', 'project.yaml'), {'mapping_mode': True,
             'allow_motion': ParameterValue(LaunchConfiguration('allow_motion'), value_type=bool)}],
              output='screen'),
         Node(package='ee3033_project',executable='console',output='screen',
              condition=IfCondition(LaunchConfiguration('console')),parameters=[{
-                 'phase':'mapping',
+                 'phase':'mapping','map_directory':LaunchConfiguration('map_directory'),
                  'port':ParameterValue(LaunchConfiguration('port'),value_type=int),
                  'allow_motion':ParameterValue(LaunchConfiguration('allow_motion'),value_type=bool)}]),
         Node(package='rviz2', executable='rviz2', condition=IfCondition(LaunchConfiguration('rviz')),

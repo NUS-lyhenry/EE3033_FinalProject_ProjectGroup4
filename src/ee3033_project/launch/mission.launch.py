@@ -33,6 +33,7 @@ def generate_launch_description():
         DeclareLaunchArgument('camera', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
+        DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
         DeclareLaunchArgument('port', default_value='8765'),
         DeclareLaunchArgument('config', default_value=os.path.join(share, 'config', 'project.yaml')),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share, 'config', 'navigation.yaml')),
@@ -58,7 +59,7 @@ def generate_launch_description():
             config, {'target_class': target, 'allow_motion': motion}]),
         Node(package='ee3033_project',executable='console',output='screen',
              condition=IfCondition(LaunchConfiguration('console')),parameters=[{
-                 'phase':'mission','allow_motion':motion,
+                 'phase':'mission','allow_motion':motion,'map_directory':LaunchConfiguration('map_directory'),
                  'port':ParameterValue(LaunchConfiguration('port'),value_type=int)}]),
         Node(package='rviz2', executable='rviz2', condition=IfCondition(LaunchConfiguration('rviz')),
              arguments=['-d', os.path.join(share, 'rviz', 'mission.rviz')]),

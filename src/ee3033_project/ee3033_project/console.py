@@ -36,6 +36,7 @@ from .core import quaternion_yaw
 from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
 from .trial import LIMITS, parameter_plan, validate_trial
+from . import gap
 
 
 class Console(Node):
@@ -48,6 +49,7 @@ class Console(Node):
         self.lock = threading.Lock()
         self.control_lock = threading.Lock()
         self.trial_fault = None
+        self.gap_fault = None
         self.token = secrets.token_urlsafe(24)
         self.state = {'state':'WAITING','reason':'Waiting for mission status',
                       'target':None,'home':None}
@@ -71,10 +73,12 @@ class Console(Node):
         self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop')}
         self.parameter_clients = {
             (name, operation): self.create_client(kind, f'/{name}/{operation}')
-            for name in parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.))
+            for name in (set(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.)))
+                         if self.p['phase']=='mapping' else set()) |
+                        set(gap.parameter_plan(False,self.p['phase']))
             for operation, kind in [('get_parameters',GetParameters),
                                     ('set_parameters_atomically',SetParametersAtomically)]
-        } if self.p['phase']=='mapping' else {}
+        }
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
         self.create_subscription(String,'/project/perception_status',
                                  lambda m:self.mark('YOLO'),10)
@@ -113,10 +117,10 @@ class Console(Node):
                     return self.reply(200,node.html,'text/html; charset=utf-8')
                 if path=='/api/state':
                     return self.reply(200,node.snapshot())
-                if path=='/api/trial':
+                if path in ('/api/trial','/api/gap'):
                     try:
                         with node.control_lock:
-                            data = node.trial_settings()
+                            data = node.trial_settings() if path=='/api/trial' else node.gap_settings()
                         return self.reply(200,data)
                     except (RuntimeError,ValueError) as exc:
                         return self.reply(503,{'error':str(exc)})
@@ -251,7 +255,7 @@ class Console(Node):
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
-                    'control_fault':self.trial_fault,
+                    'control_fault':self.trial_fault or self.gap_fault,
                     'battery':{'voltage':self.battery_voltage,
                                'age':round(battery_age,1) if math.isfinite(battery_age) else None,
                                'fresh':battery_age<5},
@@ -348,6 +352,74 @@ class Console(Node):
                 'fault':self.trial_fault,'temporary':True,
                 'message':'Trial settings applied and verified; temporary until restart' if values is not None else ''}
 
+    def read_gap_nodes(self):
+        result = {}
+        for name, entries in gap.parameter_plan(False,self.p['phase']).items():
+            names = list(entries)
+            if name in gap.COSTMAPS:
+                names += ['footprint','footprint_padding','resolution',
+                          'inflation_layer.enabled','inflation_layer.inflation_radius']
+            response = self.parameter_request(name,'get_parameters',GetParameters.Request(names=names))
+            if len(response.values)!=len(names):
+                raise RuntimeError(f'{name}: incomplete gap readback')
+            result[name] = {key:Parameter.from_parameter_msg(ParameterMessage(name=key,value=value)).value
+                            for key,value in zip(names,response.values)}
+            for key,value in result[name].items():
+                expected = str if key=='footprint' else bool if key.endswith('.enabled') else float
+                if type(value) is not expected or (expected is float and not math.isfinite(value)):
+                    raise RuntimeError(f'{name}: invalid {key} readback')
+        return result
+
+    def gap_settings(self, enabled=None):
+        phase = self.p['phase']
+        if enabled is not None:
+            expected = gap.parameter_plan(enabled,phase)
+            with self.lock:
+                idle = self.state['state'] in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL')
+                if (not idle or time.monotonic()-self.freshness.get('Mission',-math.inf)>2
+                        or (phase=='mission' and self.state['state']!='WAITING')):
+                    raise ValueError('Stop mapping or configure clearance before starting stage 2')
+            self.manual = (0.,0.,0.)
+            self.manual_pub.publish(Twist())
+        try:
+            original = self.read_gap_nodes()
+            gap.describe(original,phase)  # reject unsupported geometry before any write
+        except (RuntimeError,ValueError) as exc:
+            self.gap_fault = 'Gap policy unavailable; driving locked: '+str(exc)
+            raise RuntimeError(self.gap_fault) from exc
+        if enabled is not None:
+            attempted = []
+            try:
+                for name,entries in expected.items():
+                    attempted.append(name)
+                    self.write_trial_node(name,entries)
+                actual = self.read_gap_nodes()
+                if not self.trial_matches(actual,expected):
+                    raise RuntimeError('Gap settings differ from live readback')
+                gap.describe(actual,phase)
+            except Exception as exc:
+                restored = True
+                for name in reversed(attempted):
+                    try:
+                        self.write_trial_node(name,{key:original[name][key] for key in expected[name]})
+                    except Exception:
+                        restored = False
+                try:
+                    # Include geometry fields in verification, without treating bool/str as numbers.
+                    restored = self.read_gap_nodes()==original and restored
+                except Exception:
+                    restored = False
+                self.gap_fault = None if restored and gap.describe(original,phase)['synchronized'] else 'Gap update/rollback unverified; driving locked; reapply gap policy'
+                raise RuntimeError(str(exc)+('; original values restored' if restored else '; driving locked')) from exc
+            original = actual
+            self.gap_fault = None
+        data = gap.describe(original,phase)
+        if not data['synchronized']:
+            self.gap_fault = 'Gap parameters differ across nodes; driving locked; reapply gap policy'
+        data.update(success=True,fault=self.gap_fault,
+                    message='Gap policy applied and verified; temporary until restart' if enabled is not None else '')
+        return data
+
     def command(self,path,body):
         with self.lock:
             state = self.state['state']
@@ -356,8 +428,8 @@ class Console(Node):
             key = path.rsplit('/',1)[-1]
             if key=='start' and not self.p['allow_motion']:
                 raise ValueError('Motion disabled in this console')
-            if key=='start' and self.trial_fault:
-                raise ValueError(self.trial_fault)
+            if key=='start' and (self.trial_fault or self.gap_fault):
+                raise ValueError(self.trial_fault or self.gap_fault)
             if key=='stop':
                 self.manual = (0.,0.,0.)
                 self.manual_pub.publish(Twist())
@@ -374,6 +446,11 @@ class Console(Node):
             return {'success':result.success,'message':result.message}
         if path=='/api/trial':
             return self.trial_settings(body)
+        if path=='/api/gap':
+            if not isinstance(body,dict) or set(body)!={'enabled'}:
+                raise ValueError('Provide only enabled: true or false')
+            gap.parameter_plan(body['enabled'],self.p['phase'])
+            return self.gap_settings(body['enabled'])
         if path=='/api/initial_pose':
             if active or self.p['phase']!='mission':
                 raise ValueError('Initial pose is only available before the autonomous mission')
@@ -403,8 +480,8 @@ class Console(Node):
             self.initial_pub.publish(msg)
             return {'success':True,'message':'Assigned initial pose sent to AMCL'}
         if path=='/api/teleop':
-            if self.trial_fault:
-                raise ValueError(self.trial_fault)
+            if self.trial_fault or self.gap_fault:
+                raise ValueError(self.trial_fault or self.gap_fault)
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Manual driving is restricted to the mapping stage')
             x,z = float(body.get('linear',0)),float(body.get('angular',0))
