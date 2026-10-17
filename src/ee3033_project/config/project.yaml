@@ -1,0 +1,70 @@
+project_mission:
+  ros__parameters:
+    map_frame: map
+    base_frame: base_footprint
+    target_class: cup  # Overridden by the target_class launch argument.
+    allow_motion: false
+    clearance: 0.22
+    viewpoint_spacing: 0.65
+    camera_range: 2.0
+    camera_fov: 1.35  # Conservative horizontal field of view, radians.
+    viewpoint_headings: 6
+    max_candidates: 250
+    max_goals: 120
+    coverage_fraction: 0.98
+    observe_seconds: 3.0
+    goal_timeout: 75.0
+    mission_timeout: 900.0
+    return_tolerance: 0.20  # Replace with examiner's specified tolerance.
+    return_heading_required: false
+    verify_seconds: 2.0
+    max_stationary_speed: 0.035
+    max_xy_variance: 0.16
+    max_yaw_variance: 0.36
+    sensor_timeout: 1.0
+    perception_timeout: 3.0
+    results_directory: ~/ee3033_results
+
+project_perception:
+  ros__parameters:
+    model: /home/ros2_ws/weights/yolo26n.pt
+    target_class: cup
+    confidence: 0.60
+    image_topic: /image_raw
+    camera_info_topic: /camera_info
+    scan_topic: /scan_fixed
+    camera_optical_frame: project_camera_optical
+    map_frame: map
+    localization_method: lidar
+    max_scan_delta: 0.25
+    max_image_age: 1.5
+    inference_period: 0.25
+    image_size: 416
+    max_range: 3.0
+    position_sigma: 0.10
+    min_lidar_points: 2
+    cluster_gap: 0.12
+    max_cluster_width: 0.50
+    cpu_threads: 1
+
+project_target_filter:
+  ros__parameters:
+    confirmation_frames: 4
+    confidence: 0.60
+    association_radius: 0.30
+    max_frame_gap: 1.2
+    filter_window: 9
+    max_position_spread: 0.12
+    max_observation_age: 2.0
+    map_frame: map
+
+project_velocity_gate:
+  ros__parameters:
+    allow_motion: false
+    command_timeout: 0.5
+    heartbeat_timeout: 0.7
+    scan_timeout: 0.7
+    max_linear: 0.12
+    max_angular: 0.40
+    stop_distance: 0.22
+    rotation_clearance: 0.16

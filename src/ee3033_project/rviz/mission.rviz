@@ -1,0 +1,96 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: map
+    Background Color: 35; 35; 35
+    Frame Rate: 15
+  Displays:
+    - Class: rviz_default_plugins/Map
+      Name: On-site map
+      Enabled: true
+      Topic:
+        Value: /map
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Depth: 1
+      Alpha: 0.75
+    - Class: rviz_default_plugins/LaserScan
+      Name: Lidar
+      Enabled: true
+      Topic:
+        Value: /scan_fixed
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
+      Size (m): 0.025
+    - Class: rviz_default_plugins/TF
+      Name: Robot frames
+      Enabled: true
+      Show Names: false
+      Marker Scale: 0.25
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Mission state and viewpoints
+      Enabled: true
+      Topic:
+        Value: /project/markers
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Planned search order (not obstacle-avoiding path)
+      Enabled: true
+      Color: 80; 160; 255
+      Topic:
+        Value: /project/search_path
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Nav2 planned path
+      Enabled: true
+      Color: 0; 255; 0
+      Topic:
+        Value: /plan
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 1
+    - Class: rviz_default_plugins/Pose
+      Name: Recorded home
+      Enabled: true
+      Color: 255; 80; 255
+      Topic:
+        Value: /project/home
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Depth: 1
+    - Class: rviz_default_plugins/PoseWithCovariance
+      Name: Confirmed target and uncertainty
+      Enabled: true
+      Topic:
+        Value: /project/confirmed_target
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 5
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top down
+      Scale: 65
+      Target Frame: map
+      X: 0
+      Y: 0
+Window Geometry:
+  Width: 1200
+  Height: 850

@@ -1,0 +1,8 @@
+# Versions validated in the existing ARM64 robot container. Install PyTorch's
+# CPU wheel using the appropriate official index for your architecture.
+# ROS packages (rclpy/cv_bridge/nav2/etc.) are provided by ROS Humble, not pip.
+numpy==1.26.4
+scipy==1.15.3
+ultralytics==8.4.54
+# Existing robot: torch==2.12.0+cpu. Do not replace a working robot environment
+# merely to run this package; these pins document its tested perception stack.
