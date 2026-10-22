@@ -18,6 +18,16 @@ specific instance among several cups.
 - Four extra features: consecutive-frame target confirmation with spatial
   association; robust coordinate filtering; mission/status visualization; and
   distance plus stationary-odometry verification at home.
+
+Return verification uses a fresh two-second odometry window and fresh zero
+final movement commands. It allows brief balancing corrections while requiring
+mean absolute linear speed at most 0.035 m/s, mean absolute yaw rate at most
+0.10 rad/s, an odometry XY window span at most 0.05 m and an unwrapped heading
+span at most 0.12 rad. Samples must remain within 0.25 s of each other and current
+time; final commands must remain zero and no older than 0.30 s. The assigned
+return-position tolerance still applies throughout verification. Sustained
+translation, turning, drift or missing data prevents completion. Results retain
+the measured window statistics and a specific failure reason.
 - Browser operator console with live map, annotated video, state, target
   coordinates/confidence, coverage, event log, initial pose setup, and Start/Stop.
 - Stage-1 mapping waypoints with click-drag position and final facing, safe

@@ -3,6 +3,37 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Stationary-window verification for the balancing robot
+
+2026-10-22: the Bold run in `mission_2dlna35_` confirmed the bottle at
+approximately (0.383,-0.531) m with 90% confidence over four frames, and Nav2
+returned to the recorded start. Its frozen software return error was 0.0122 m,
+within the selected 0.20 m tolerance. It then failed the old continuous raw-speed
+hold. That historical failed result is preserved; no absolute target/return
+ground-truth measurement or successful stop verification is retroactively claimed.
+
+The revised stop check uses time-weighted mean absolute linear and yaw speeds
+over a complete two-second window, with separate 0.035 m/s and 0.10 rad/s limits.
+The odometry XY window span must be <=0.05 m and unwrapped yaw span <=0.12 rad.
+Fresh zero final commands are mandatory; nonzero commands, gaps/stale or invalid
+odometry reset/prevent verification. The original return tolerance and 12 s
+verification deadline remain. Window measurements and specific reasons are
+exported in the result and progress is shown in the Results page.
+
+129 algorithm checks and all19 browser checks pass. Ten new native Humble stop
+cases on isolated domain100 pass: bounded balancing spikes complete; sustained
+translation/yaw, slow creeping/turning, nonzero commands, stale zero commands,
+odometry gaps and invalid poses fail; operator Stop remains terminal. The original
+nine ROS mission/mapper/gate cases also pass on domain88, including successful
+found/return, absent target and rejection of a false Nav2 success outside home.
+
+A read-only shadow check on the real stopped robot accepted a fresh two-second
+window (101 samples): mean linear 0.0346 m/s, mean yaw 0.0267 rad/s, XY span
+0.0499 m, yaw span 0.0266 rad. Current map-frame home distance was 0.0718 m;
+no nonzero movement commands were observed. This validates acceptance of current
+balancing data, without starting a mission or changing its historical result.
+A complete physical mission using the new verifier is still to be demonstrated.
+
 ## Bold as the mapping and search default
 
 2026-10-22: at the operator's request, every new mapping and mission stage now

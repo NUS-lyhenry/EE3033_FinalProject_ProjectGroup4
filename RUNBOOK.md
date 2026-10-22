@@ -47,7 +47,10 @@ a duplicate tunnel or driver. See README for exact launch commands.
    Start the mission with the UI visible. No manual drive, navigation goals, map
    edits or manual target coordinates are available in stage 2.
 5. Completion requires the target report, return within tolerance and the
-   stationary hold. `NOT_FOUND`, `FAILED`, or an unverified Nav2 success is not a
+   stationary window. This requires fresh zero final commands, bounded odometry
+   drift and separate mean linear/angular speed limits over two seconds; brief
+   balancing spikes alone do not reset the window. Results show window progress
+   and retain its measurements. `NOT_FOUND`, `FAILED`, or an unverified Nav2 success is not a
    complete mission. Open **Results** and download the trial JSON, preserving independent target and
    return reference measurements outside mission control.
 6. Inform the examiner before any restart/intervention. Nothing auto-restarts.

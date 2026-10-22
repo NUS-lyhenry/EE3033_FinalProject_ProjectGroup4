@@ -18,7 +18,12 @@ project_mission:
     return_tolerance: 0.20  # Replace with examiner's specified tolerance.
     return_heading_required: false
     verify_seconds: 2.0
-    max_stationary_speed: 0.035
+    max_stationary_speed: 0.035  # Mean absolute linear speed, m/s, over verify_seconds.
+    max_stationary_angular_speed: 0.10  # Mean absolute yaw rate, rad/s.
+    stationary_position_span: 0.05  # Maximum odometry XY window span, metres.
+    stationary_heading_span: 0.12  # Maximum unwrapped yaw span, radians.
+    stationary_max_gap: 0.25  # Maximum gap/age of odometry samples, seconds.
+    stationary_command_timeout: 0.30  # Fresh zero final commands are required.
     max_xy_variance: 0.16
     max_yaw_variance: 0.36
     sensor_timeout: 1.0

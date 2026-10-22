@@ -209,6 +209,20 @@ test('mapping reload restores Bold after choosing a different level',async({page
   expect(f.errors).toEqual([]);
 });
 
+test('stationary window progress and failure keep the detected target visible',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  Object.assign(f.state.mission,{state:'VERIFYING',target:{x:.38,y:-.53,class:'bottle'},
+    stationary_required_seconds:2,stationary_check:{duration:1.4,reason:'Collecting a complete stationary window'}});
+  await view(page,'results');
+  await expect(page.locator('#resultStop')).toHaveText('Checking 1.4 / 2.0 s…');
+  await expect(page.locator('#resultReason')).toContainText('Collecting a complete stationary window');
+  Object.assign(f.state.mission,{state:'FAILED',reason:'Return verification failed: Position is still drifting'});
+  await expect(page.locator('#resultStop')).toHaveText('Not verified');
+  await expect(page.locator('#resultTarget')).toHaveText('(0.38, -0.53) m');
+  await expect(page.locator('#resultReason')).toContainText('Position is still drifting');
+  expect(f.errors).toEqual([]);
+});
+
 test('Stop remains available while a stage request is pending',async({page})=>{
   const f=await fixture(page);let release;f.setStageDelay(()=>new Promise(r=>release=r));
   await page.locator('#loadMapping').click();await expect(page.locator('#loadMapping')).toBeDisabled();

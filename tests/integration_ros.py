@@ -150,9 +150,8 @@ class FakeRobot(Node):
         amcl.pose.pose.orientation.w = 1.0
         amcl.pose.covariance[0] = amcl.pose.covariance[7] = amcl.pose.covariance[35] = 0.01
         self.amcl_pub.publish(amcl)
-        odom = Odometry()
-        odom.header.stamp = stamp
-        self.odom_pub.publish(odom)
+        odom = self.make_odometry(stamp)
+        if odom is not None:self.odom_pub.publish(odom)
         scan = LaserScan()
         scan.header.stamp,scan.header.frame_id = stamp,'laser'
         scan.angle_min,scan.angle_max,scan.angle_increment = -math.pi,math.pi,2*math.pi/99
@@ -161,6 +160,13 @@ class FakeRobot(Node):
         self.scan_pub.publish(scan)
         self.status_pub.publish(String(data=json.dumps({'stamp':time.time(),'ready':True,
                                                         'target_class':'bottle'})))
+
+    def make_odometry(self, stamp):
+        odom=Odometry()
+        odom.header.stamp,odom.header.frame_id,odom.child_frame_id=stamp,'odom_combined','base_footprint'
+        odom.pose.pose.position.x,odom.pose.pose.position.y=self.xy_yaw[:2]
+        set_yaw(odom.pose.pose.orientation,self.xy_yaw[2])
+        return odom
 
     def observations(self):
         stamp = time.time()
@@ -180,7 +186,7 @@ class Integration(unittest.TestCase):
         rclpy.init()
         root = tempfile.TemporaryDirectory(prefix='group4_test_')
         robot = FakeRobot(scenario)
-        mission = Mission(parameter_overrides=overrides(
+        mission = Mission(cli_args=['--ros-args','-r','/cmd_vel:=/test/motor_output'],parameter_overrides=overrides(
             allow_motion=True, target_class='bottle', viewpoint_spacing=1.0, max_goals=4, max_candidates=12,
             observe_seconds=0.20, verify_seconds=0.25, verify_timeout=1.5,
             cancel_timeout=2.0, sensor_timeout=0.6, perception_timeout=1.5,
