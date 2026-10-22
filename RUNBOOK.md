@@ -27,6 +27,10 @@ a duplicate tunnel or driver. See README for exact launch commands.
 2. Keep the target absent during mapping. Start automatic mapping, or use manual
    mapping only as permitted. Save in a new directory. Inspect and mark the map
    reviewed; `MAPPED_PARTIAL` remains partial after review.
+   Failed exploration goals are deferred until other reachable areas have been
+   explored, then retried once using the current map. Watch the deferred count
+   and final retry pass in the mapping panel. Stop and sensor/cancellation faults
+   still halt the run; this policy does not restart failed nodes.
 3. Select that trial's saved map. After placing the target, choose the actual
    model class, physically validated coordinate method and required return
    tolerance. **Load selected map for mission** stops the owned SLAM/Nav2 stage

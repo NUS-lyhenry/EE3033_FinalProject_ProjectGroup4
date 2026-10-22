@@ -82,6 +82,8 @@ function render(){
   $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
   $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
   $('stageHelp').textContent=managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
+  $('mappingProgress').hidden=!mapping;
+  $('mappingProgress').textContent=`${m.viewpoints_completed||0} goals reached · ${m.deferred_frontiers||0} deferred · ${m.frontier_retry_round?'Final retry pass':'Explore other areas before one final retry pass'}`;
   renderParameters();draw();
 }
 function renderParameters(){

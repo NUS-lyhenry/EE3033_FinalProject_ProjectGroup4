@@ -62,6 +62,16 @@ test('preview is explicitly simulated and cannot command robot motion',async({pa
   const response=await request.post('/api/start',{data:{}});expect(response.status()).toBe(403);
 });
 
+test('mapping shows deferred areas and the final retry pass',async({page})=>{
+  const f=await fixture(page,{active:true});
+  Object.assign(f.state.mission,{viewpoints_completed:2,deferred_frontiers:1,frontier_retry_round:0});
+  await expect(page.locator('#mappingProgress')).toContainText('2 goals reached · 1 deferred');
+  await expect(page.locator('#mappingProgress')).toContainText('Explore other areas');
+  f.state.mission.frontier_retry_round=1;
+  await expect(page.locator('#mappingProgress')).toContainText('Final retry pass');
+  expect(f.errors).toEqual([]);
+});
+
 test('complete basic workflow: map save review, stage transition, assigned pose, search, target and verified return',async({page})=>{
   const f=await fixture(page);
   await expect(page.locator('#totalElapsed')).toHaveText('01:05');

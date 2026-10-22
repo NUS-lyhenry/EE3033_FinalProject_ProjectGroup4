@@ -176,9 +176,15 @@ rejected by this policy rather than silently treated as a circular footprint.
 These settings reset on process restart.
 
 Mapping uses relaxed final heading because the lidar observes all directions;
-mission search retains its observation heading. A navigation timeout cancels
-motion and waits for the action result before saving a separate partial map.
-Cancellation failure stays a failure and does not trigger movement recovery.
+mission search retains its observation heading. A failed exploration goal is
+deferred while other reachable frontiers are explored. A timeout first disables
+motion and waits for the action's terminal result. Once other options are
+exhausted, deferred areas get one final retry pass, replanned against the latest
+map with the same clearance checks. The UI shows reached/deferred goals and the
+retry pass. Remaining failures produce a partial map; the overall mapping time
+limit still applies. A home-return timeout saves a separate partial map after
+confirmed cancellation. Stop, sensor faults and unconfirmed cancellation never
+start a successor goal. No node is automatically restarted.
 A map with no safe connected space is never counted as completed exploration.
 
 The header shows measured battery voltage from `/power_voltage` (`Float32`).
@@ -343,6 +349,7 @@ ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
 ROS_DOMAIN_ID=89 python3 tests/smoke_nav2.py
 ROS_DOMAIN_ID=90 python3 tests/integration_console.py
 ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
+ROS_DOMAIN_ID=96 python3 tests/integration_mapping_retry.py
 ROS_DOMAIN_ID=91 python3 tests/integration_gap_nav2.py
 GROUP4_GAP_RESOLUTION=.05 ROS_DOMAIN_ID=92 python3 tests/integration_gap_nav2.py
 ```

@@ -24,10 +24,10 @@ drivers. A persistent console now coordinates the two stages.
   Start/Stop services, session/origin checks, autonomous lockout, motion-disable,
   live trial readback/limits/rollback/active lockout, battery freshness, and narrow-gap
   transactions in both stages including rejected writes and unverified rollback lockout.
-- Nine browser checks pass: complete two-stage map/save/review/pose/search/return
+- Ten browser checks pass: complete two-stage map/save/review/pose/search/return
   flow, simulated read-only preview, active-stage restrictions, false-success
   rejection, stale/offline telemetry, retained optional controls, Stop during
-  stage loading, and mobile layout. Fixtures are simulated; they are not physical
+  stage loading, deferred-frontier/retry display, and mobile layout. Fixtures are simulated; they are not physical
   trial evidence.
 - Two native Humble workflow checks pass on isolated domain 93: HTTP controls
   launch real mapper/mission/filter/gate processes with synthetic sensors and
@@ -37,6 +37,15 @@ drivers. A persistent console now coordinates the two stages.
 - Native Nav2 smoke was rerun on domain 95. The original test missed a response
   during DDS discovery although all seven nodes activated; bounded retries of
   the read-only lifecycle query resolved the test stall. The smoke then passed.
+- Eight additional native Humble mapper checks pass on isolated domain 96:
+  failed area A is deferred while B is explored, then A is retried; timeouts and
+  late goal acceptance wait for terminal cancellation before any successor;
+  repeated failure receives only one retry pass and saves a partial map; Stop
+  during cancellation prevents resumption; unconfirmed cancellation and sensor
+  loss halt exploration; and the mapping time limit prevents further exploration
+  or retries. These use synthetic frontier/action fixtures and establish policy,
+  not successful physical exploration. The original nine ROS scenarios and two
+  workflow checks are also rerun for this change.
 
 Native Humble narrow-passage tests pass on isolated domains 91 and 92. Both
 costmaps use synthetic static obstacles and the actual project inflation policy;

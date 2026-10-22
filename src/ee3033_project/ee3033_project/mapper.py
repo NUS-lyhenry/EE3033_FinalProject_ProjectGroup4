@@ -46,7 +46,10 @@ class Mapper(Node):
         self.finished_at=0.0
         self.cancel_deadline=0.0
         self.save_after_cancel=False
+        self.resume_after_cancel=False
         self.failed=[]
+        self.deferred=[]
+        self.retry_round=0
         self.visited=[]
         self.goals=0
         self.partial=False
@@ -117,6 +120,9 @@ class Mapper(Node):
         self.home,self.started,self.failed,self.partial=self.pose(),time.monotonic(),[],False
         self.finished_at=0.0
         self.save_after_cancel=False
+        self.resume_after_cancel=False
+        self.deferred=[]
+        self.retry_round=0
         self.visited=[]
         self.goals=0
         self.job=None
@@ -131,6 +137,7 @@ class Mapper(Node):
     def stop(self,request,response):
         del request
         self.save_after_cancel=False
+        self.resume_after_cancel=False
         self.drive_pub.publish(Bool(data=False))
         if self.nav_handle or self.pending:
             self.state='CANCELING'
@@ -183,7 +190,11 @@ class Mapper(Node):
 
     def done(self,success):
         if self.state=='CANCELING':
-            if self.save_after_cancel:
+            if self.resume_after_cancel:
+                self.resume_after_cancel=False
+                self.state='MAPPING'
+                self.finish_frontier(False)
+            elif self.save_after_cancel:
                 self.save_partial()
             else:
                 self.state='STOPPED'
@@ -195,23 +206,34 @@ class Mapper(Node):
             self.state,self.reason='SAVING','Saving a separate on-site map'
             self.job=self.worker.submit(save_new_map,self.p['map_directory'])
         elif self.state=='MAPPING':
-            if not success and self.goal:
-                self.failed.append(self.goal[:2])
-            elif success and self.goal:
+            self.finish_frontier(success)
+
+    def finish_frontier(self,success):
+        if self.goal:
+            if success:
                 self.visited.append(self.goal[:2])
-            self.goal=None
-            self.last_decision=time.monotonic()
+                self.reason='Frontier reached; selecting the next unexplored area'
+            else:
+                self.failed.append(self.goal[:2])
+                self.deferred.append(self.goal[:2])
+                self.reason=('Frontier retry failed; checking other remaining areas' if self.retry_round
+                             else 'Frontier deferred after navigation failure; exploring other areas first')
+        self.goal=None
+        self.empty_since=0.0
+        self.last_decision=time.monotonic()
 
     def save_partial(self):
         # Called only once navigation has finished/canceled. Never restart a node
         # or issue recovery motion; preserve a separate, honestly partial map.
         self.save_after_cancel=False
+        self.resume_after_cancel=False
         self.partial=True
         self.drive_pub.publish(Bool(data=False))
         self.state,self.reason='SAVING','Navigation timed out; stopped and saving a partial map'
         self.job=self.worker.submit(save_new_map,self.p['map_directory'])
 
     def fail(self,reason):
+        self.save_after_cancel=self.resume_after_cancel=False
         self.state,self.reason='FAILED',reason
         self.finished_at=time.monotonic()
         self.drive_pub.publish(Bool(data=False))
@@ -235,9 +257,19 @@ class Mapper(Node):
             if error:
                 self.fail(error)
             elif (self.nav_handle or self.pending) and now-self.goal_time>self.p['goal_timeout']:
+                mapping_timeout=self.state=='MAPPING'
                 self.stop(None,Trigger.Response())
-                self.partial=True
-                if self.state=='CANCELING':
+                if mapping_timeout:
+                    # A successor is allowed only after the old action's
+                    # terminal result, including a late goal acceptance.
+                    if self.state=='CANCELING':
+                        self.resume_after_cancel=True
+                        self.reason='Frontier timed out; canceling before exploring another area'
+                    else:
+                        self.state='MAPPING'
+                        self.finish_frontier(False)
+                elif self.state=='CANCELING':
+                    self.partial=True
                     self.save_after_cancel=True
                     self.reason='Navigation timed out; canceling before saving a partial map'
                 else:
@@ -255,9 +287,21 @@ class Mapper(Node):
                             else:
                                 self.empty_since=self.empty_since or now
                                 if now-self.empty_since>self.p['frontier_settle_seconds']:
-                                    self.partial=groups>0
-                                    self.state,self.reason='RETURNING','Frontier search finished; returning to mapping start'
-                                    self.send(self.home)
+                                    if (self.deferred and self.retry_round==0
+                                            and now-self.started<self.p['max_mapping_seconds']):
+                                        # Replan using the latest map. Release
+                                        # failed-area exclusions once, retaining
+                                        # successfully visited areas and the
+                                        # full failure history for reporting.
+                                        self.deferred=[]
+                                        self.retry_round=1
+                                        self.empty_since=0.0
+                                        self.reason='Other reachable areas explored; retrying deferred frontiers once'
+                                        self.get_logger().info(self.reason)
+                                    else:
+                                        self.partial=self.partial or groups>0 or bool(self.deferred)
+                                        self.state,self.reason='RETURNING','Frontier search finished; returning to mapping start'
+                                        self.send(self.home)
                         except Exception as exc:
                             self.fail(str(exc))
                 elif now-self.started>self.p['max_mapping_seconds']:
@@ -270,7 +314,7 @@ class Mapper(Node):
                     data=np.array(m.data).reshape(m.info.height,m.info.width)
                     self.job=self.worker.submit(frontier_goal,data,m.info.resolution,
                         (origin.position.x,origin.position.y,quaternion_yaw(origin.orientation)),
-                        self.pose(),tuple(self.failed+self.visited),self.p['clearance'])
+                        self.pose(),tuple(self.deferred+self.visited),self.p['clearance'])
                     self.last_decision=now
         elif self.state=='SAVING' and self.job and self.job.done():
             try:
@@ -288,7 +332,9 @@ class Mapper(Node):
             'readiness_reason':self.error() or ('Ready' if self.nav.server_is_ready() else 'Nav2 not ready'),
             'map_partial':self.partial,
             'saved_map':self.saved_map,'elapsed_seconds':(self.finished_at or now)-self.started if self.started else 0,
-            'viewpoints_completed':self.goals,'viewpoints_total':0,
+            'viewpoints_completed':len(self.visited),'viewpoints_total':0,
+            'frontier_goals_sent':self.goals,'deferred_frontiers':len(self.deferred),
+            'frontier_retry_round':self.retry_round,
             'failed_viewpoints':self.failed,'observed_fraction':0.0})))
 
     def destroy_node(self):
