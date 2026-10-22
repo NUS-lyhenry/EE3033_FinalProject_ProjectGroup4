@@ -21,6 +21,16 @@ parent project configuration. The unmodified code fails the first check; the fix
 passes both checks on local Jazzy and the robot's Humble. All 115 algorithm tests
 also pass. The native CI job now includes these two launch checks.
 
+The fix was deployed to the existing robot overlay and only the idle mission
+stage was reloaded, retaining the operator's reviewed map
+`onsite_6dmqc_95/map.yaml` and bottle/lidar selection. Reapplying the previously
+selected start produced fresh AMCL output, a valid map-to-base transform and
+`ready: true` with no console fault. Sample covariance was about 0.03 m² in x/y
+and 0.12 rad² in heading. A read-only sample observed one final velocity
+publisher (the project gate) and 11 zero-command messages. The search was left
+waiting for the operator. This establishes working live localization; it does
+not measure absolute pose error or demonstrate bottle finding and return.
+
 ## Follow-up turning policy validation
 
 2026-10-22: Balanced and Bold now include graded turning policies as well as
