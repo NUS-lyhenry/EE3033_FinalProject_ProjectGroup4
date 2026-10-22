@@ -42,8 +42,14 @@ rejection, rotated map coordinates and deferred targets. Native waypoint tests
 cover HTTP-to-mapper navigation and Spin, independent pose/heading verification,
 false action success, Stop during late Spin acceptance, stale requests after
 Stop and stage-2 rejection. The expanded CI also reruns the original mapper/
-mission, retry and workflow regressions. Native results for this follow-up are
-pending; no physical waypoint or complete mission result is claimed.
+mission, retry and workflow regressions. GitHub run39721950629 passed all three
+jobs for feature commit e70437c: 115 algorithm checks, 17 browser checks, native
+console3, original ROS9, mapping-retry8, workflow2, waypoint6, real-Nav2 turning5
+and both passage-resolution fixtures. The waypoint cases verify requested
+position/facing and repeated goals, invalid goals/stage2 rejection, false heading
+and position success, Stop during late Spin acceptance and stale requests after
+Stop. These are synthetic checks; no physical waypoint or complete mission result
+is claimed. Follow-up mobile/header and mapping-layout checks also passed locally.
 
 ## Software validation
 

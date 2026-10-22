@@ -136,7 +136,8 @@ reads the metadata so the console does not retain another Torch model. Metadata
 is cached until the weight file changes; missing/unreadable weights leave mission
 setup disabled. The server rejects labels outside that model, and Perception
 checks the selected class again when it loads the weights. Standard YOLO26n uses
-COCO labels such as cup, bottle, bowl, book and chair; it has no Pepsi brand label.
+[COCO labels](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml)
+such as cup, bottle, bowl, book and chair; it has no Pepsi brand label.
 Inspect actual detections before choosing the assessment target class.
 
 ## Stage 1 — construct a new map
