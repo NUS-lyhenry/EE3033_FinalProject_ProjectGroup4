@@ -74,8 +74,26 @@ replaying the saved map found diagonal frontier chains split into fragments of
 at most four cells and discarded by the minimum-five-cell filter. Eight-neighbour
 frontier grouping fixes that loss while retaining four-neighbour route
 reachability and the same footprint clearance. A synthetic slanted-boundary
-regression and all nine native ROS scenarios pass. Fresh physical validation
-of that fix is pending. The complete physical target-search/return remains pending.
+regression and all nine native ROS scenarios pass.
+
+The second physical mapping trial used commit `d9104c2`. It reached its first
+goal and selected a second frontier, demonstrating that the diagonal-boundary
+fix continued exploration. Known map cells increased from 2004 to 2242 during
+the recorded interval. The second goal timed out after intermittent turn
+blocking; a 25 s diagnostic found close returns below the unchanged turn
+threshold in 184/240 adapted scans. The 75.7 s trial saved another partial map,
+`onsite_kk4zlmos/map.yaml`, and was explicitly stopped. Its latest grid is
+83 by 63 cells at 0.05 m/cell. Four unknown-boundary groups span approximately
+0.30 m or more, with two smaller groups; boundary extent does not establish
+passage width or traversability.
+
+A stationary 10 s raw/adapted scan comparison found persistent close returns in
+the rear sector, approximately raw angles 150–215 degrees. Their physical source
+has not been established. The operator did not identify an obvious nearby
+object; actual chassis dimensions and lidar clearance are still needed to
+validate any additional self-return mask. No collision threshold was lowered,
+no extra points were masked, and no further motion was started. Complete mapping,
+physical target localization and the full target-search/return remain pending.
 
 GitHub publication succeeded on 2026-10-22 after device authorization added the
 workflow scope required for the repository's CI file.
