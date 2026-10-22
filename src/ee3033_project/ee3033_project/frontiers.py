@@ -24,7 +24,11 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
     reachable = components==components[r,c]
     frontier = planner.free & binary_dilation(planner.grid<0,
                                                structure=[[0,1,0],[1,1,1],[0,1,0]])
-    groups,count = label(frontier)
+    # Slanted SLAM boundaries form diagonal chains. Four-neighbour grouping
+    # breaks them into tiny fragments that the noise filter discards. Group
+    # boundaries with eight neighbours; driving reachability stays four-way
+    # through the independently clearance-checked safe grid above.
+    groups,count = label(frontier,structure=np.ones((3,3),dtype=bool))
     safe_cells = np.argwhere(reachable)
     options=[]
     valid_groups=0

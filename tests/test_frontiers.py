@@ -20,6 +20,17 @@ def test_enclosed_fully_mapped_room_has_no_frontiers():
     assert frontier_goal(grid,0.1,(0,0,0),(1,1,0)) == (None,0)
 
 
+def test_slanted_frontier_is_not_discarded_as_single_cell_noise():
+    grid=np.full((60,60),100)
+    for row in range(1,59):
+        for col in range(1,59):
+            grid[row,col]=0 if row+col<60 else -1
+    goal,count=frontier_goal(grid,.05,(0,0,0),(.8,.8,0))
+    assert count==1 and goal is not None
+    planner=CoveragePlanner(grid,.05,(0,0,0),clearance=.22)
+    assert planner.safe[planner.world_to_cell(*goal[:2])]
+
+
 def test_frontier_failures_suppress_nearby_goals():
     grid=np.full((40,40),-1)
     grid[1:39,1:25]=0
