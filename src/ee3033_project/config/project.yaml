@@ -4,7 +4,7 @@ project_mission:
     base_frame: base_footprint
     target_class: cup  # Overridden by the target_class launch argument.
     allow_motion: false
-    clearance: 0.22
+    clearance: 0.14
     viewpoint_spacing: 0.65
     camera_range: 2.0
     camera_fov: 1.35  # Conservative horizontal field of view, radians.
@@ -67,4 +67,4 @@ project_velocity_gate:
     max_linear: 0.12
     max_angular: 0.40
     stop_distance: 0.22
-    rotation_clearance: 0.16
+    rotation_clearance: 0.14

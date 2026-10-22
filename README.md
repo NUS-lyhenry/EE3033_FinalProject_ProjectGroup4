@@ -192,8 +192,9 @@ rollback locks console driving until a successful reapply. Bounds are
 restart; they do not alter balance PID, obstacle clearances, or lab files.
 
 The **Audacity level** panel sets the planning reserve for automatic mapping
-and mission navigation. **Cautious** is the original behaviour and remains the
-default. Configure a level while mapping is idle or before mission Start.
+and mission navigation. **Bold** is the default for every new mapping or mission
+stage. **Cautious** retains the original behaviour. Configure a different level
+while mapping is idle or before mission Start.
 
 | Level | Centre-to-boundary clearance | Nominal opening, gap blocking OFF | Turn stop |
 |---|---|---|---|
@@ -245,7 +246,7 @@ nodes, and attempts rollback on any rejection. An unverified gap rollback locks
 console driving independently of trial-slider faults; a successful gap reapply
 is needed to clear it. Custom polygon footprints or disabled inflation are
 rejected by this policy rather than silently treated as a circular footprint.
-These settings reset to Cautious with gap blocking OFF when the stage reloads.
+These settings reset to Bold with gap blocking OFF when the stage reloads.
 The legacy gap-only API preserves the currently selected level.
 
 Mapping uses relaxed final heading because the lidar observes all directions;

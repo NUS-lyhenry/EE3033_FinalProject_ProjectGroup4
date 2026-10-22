@@ -74,7 +74,7 @@ class ConsoleTests(unittest.TestCase):
             time.sleep(.2)
             self.assertEqual(gate.p['max_linear'],.18)
             self.assertEqual(mapper.p['goal_timeout'],90.)
-            self.assertEqual(gate.p['rotation_clearance'],.16)
+            self.assertEqual(gate.p['rotation_clearance'],.14)
             with self.assertRaises(HTTPError):
                 post({**changed,'max_linear':1.})
             # A rejection restores all nodes already updated, not just UI values.
@@ -154,7 +154,11 @@ class ConsoleTests(unittest.TestCase):
             try:
                 deadline=time.monotonic()+4
                 while 'Mission' not in console.freshness and time.monotonic()<deadline: time.sleep(.05)
-                self.assertFalse(json.load(urlopen(base+'/api/gap',timeout=15))['enabled'])
+                defaults=json.load(urlopen(base+'/api/gap',timeout=15))
+                self.assertFalse(defaults['enabled'])
+                self.assertEqual(defaults['audacity'],'bold')
+                self.assertTrue(defaults['synchronized'])
+                self.assertAlmostEqual(consumer.get_parameter('clearance').value,.14)
                 with self.assertRaises(HTTPError): post(True,token='')
                 for invalid in (None,1,'true'):
                     with self.assertRaises(HTTPError): post(invalid)

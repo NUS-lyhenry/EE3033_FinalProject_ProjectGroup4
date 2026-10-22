@@ -122,7 +122,7 @@ def main():
                 'mapping_mode:=true'],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             rclpy.init()
             chassis=Chassis()
-            mapper=Node('project_mapper');mapper.declare_parameter('clearance',.22)
+            mapper=Node('project_mapper');mapper.declare_parameter('clearance',.14)
             console=Console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value='mapping'),
                 Parameter('session_directory',value=tmp)])
             gate=VelocityGate(parameter_overrides=[Parameter('allow_motion',value=True),

@@ -11,6 +11,8 @@ AUDACITY = {
     'balanced': ('Balanced', 0.18),
     'bold': ('Bold', 0.14),
 }
+DEFAULT_AUDACITY = 'bold'
+DEFAULT_CLEARANCE = AUDACITY[DEFAULT_AUDACITY][1]
 TURNING = {
     # angle > pi keeps Cautious identical to the original translation checker.
     'cautious': dict(angle=3.2, closed_loop=True, acceleration=0.8, sample=0.10, stop=0.16),
@@ -27,7 +29,7 @@ def validate_audacity(value):
     return value
 
 
-def parameter_plan(enabled, phase, audacity='cautious'):
+def parameter_plan(enabled, phase, audacity=DEFAULT_AUDACITY):
     if type(enabled) is not bool:
         raise ValueError('enabled must be true or false')
     if phase not in ('mapping', 'mission'):

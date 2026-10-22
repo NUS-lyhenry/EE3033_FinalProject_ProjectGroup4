@@ -22,7 +22,7 @@ from .frontiers import frontier_goal
 from .map_io import save_new_map
 from .ros_utils import LATCHED,parameters,run,set_yaw
 from .trial import guarded_parameters
-from .gap import guard_clearance
+from .gap import DEFAULT_CLEARANCE, guard_clearance
 from .waypoint import validate_waypoint,waypoint_goal
 from .core import angle_difference
 
@@ -32,7 +32,7 @@ class Mapper(Node):
 
     def __init__(self,**kwargs):
         super().__init__('project_mapper',**kwargs)
-        self.p=parameters(self,{'allow_motion':False,'clearance':0.22,
+        self.p=parameters(self,{'allow_motion':False,'clearance':DEFAULT_CLEARANCE,
                                 'max_mapping_seconds':600.0,'goal_timeout':60.0,
                                 'sensor_timeout':1.0,'settle_seconds':2.0,
                                 'frontier_settle_seconds':4.0,

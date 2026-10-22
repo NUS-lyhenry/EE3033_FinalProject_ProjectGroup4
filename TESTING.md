@@ -3,6 +3,22 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Bold as the mapping and search default
+
+2026-10-22: at the operator's request, every new mapping and mission stage now
+defaults to Bold with gap blocking OFF. Mapper/search clearance and turn stop
+are 0.14 m; the controller uses heading progress of 0.20 rad, open-loop command
+ramping and 0.30 m path sampling. Cautious and Balanced remain selectable.
+Speed caps, collision radius/padding, scan mask and forward stop are unchanged.
+
+All 116 algorithm checks pass, including a consistency check against the actual
+project/Nav2 YAML. All 18 browser scenarios pass, with the two affected cases
+rerun after correcting their expected default and waiting for stage loading.
+The browser flow verifies that mission loading and mapping reloading restore
+Bold after selecting Cautious. Three native Humble console cases also pass on
+isolated domain94, checking synchronized Bold startup in both mapping and mission,
+all profile transactions, rejected writes/rollback and active-state lockout.
+
 ## Hardware launch configuration regression
 
 2026-10-22: a physical mission received the assigned initial pose but could not
@@ -20,6 +36,7 @@ hardware. It checks both use of the lab frame/settings and preservation of the
 parent project configuration. The unmodified code fails the first check; the fix
 passes both checks on local Jazzy and the robot's Humble. All 115 algorithm tests
 also pass. The native CI job now includes these two launch checks.
+GitHub run39739555918 passed all three jobs, including the full native suite.
 
 The fix was deployed to the existing robot overlay and only the idle mission
 stage was reloaded, retaining the operator's reviewed map

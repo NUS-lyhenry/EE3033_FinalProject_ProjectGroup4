@@ -1,9 +1,11 @@
 import copy
+from pathlib import Path
 import pytest
+import yaml
 from ee3033_project import gap
 
 
-def snapshot(enabled=False, phase='mapping', audacity='cautious'):
+def snapshot(enabled=False, phase='mapping', audacity=gap.DEFAULT_AUDACITY):
     result = gap.parameter_plan(enabled, phase, audacity)
     for name in gap.COSTMAPS:
         result[name].update(footprint='[]',footprint_padding=.01,resolution=.05,
@@ -21,8 +23,34 @@ def test_floor_and_reserved_policy_match_both_stages():
             assert off[name]['robot_radius']==.14
             assert on[name]['robot_radius']==pytest.approx(.18)
         consumer='project_mapper' if phase=='mapping' else 'project_mission'
-        assert off[consumer]['clearance']==pytest.approx(.22)
-        assert on[consumer]['clearance']==pytest.approx(.26)
+        assert off[consumer]['clearance']==pytest.approx(.14)
+        assert on[consumer]['clearance']==pytest.approx(.18)
+
+
+def test_installed_yaml_defaults_form_a_synchronized_bold_policy():
+    config=Path(__file__).resolve().parents[1]/'src/ee3033_project/config'
+    project=yaml.safe_load((config/'project.yaml').read_text())
+    nav=yaml.safe_load((config/'navigation.yaml').read_text())
+    actual={}
+    for name,entries in gap.parameter_plan(False,'mission').items():
+        keys=list(entries)
+        if name in gap.COSTMAPS:
+            outer,inner=name.split('/')
+            params=nav[outer][inner]['ros__parameters']
+            keys+=['footprint','footprint_padding','resolution',
+                   'inflation_layer.enabled','inflation_layer.inflation_radius']
+        elif name=='controller_server':
+            params=nav[name]['ros__parameters']
+            keys+=['progress_checker.plugin']
+        else:params=project[name]['ros__parameters']
+        actual[name]={}
+        for key in keys:
+            value=params
+            for part in key.split('.'):value=value[part]
+            actual[name][key]=value
+    result=gap.describe(actual,'mission')
+    assert result['audacity']=='bold' and result['synchronized']
+    assert result['enabled'] is False
 
 
 def test_partial_updates_are_never_labelled_verified():

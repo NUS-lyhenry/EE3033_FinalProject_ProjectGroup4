@@ -12,7 +12,8 @@ a duplicate tunnel or driver. See README for exact launch commands.
    are not calibration evidence.
 2. Check exactly one `/cmd_vel` publisher (the project gate), no competing SLAM/
    AMCL transform, fresh lidar/odometry/TF, and the actual map/save directory.
-3. Open **Navigation settings**. Select Cautious, Balanced or Bold while stopped, then
+3. Open **Navigation settings**. Each stage defaults to Bold. Select Cautious or
+   Balanced while stopped if required, then
    configure gap blocking; verify global/local
    radii, mapping/search clearance and turn-stop distance. Apply temporary trial limits only in
    idle mapping. Confirm no control fault. Defaults return after restart.

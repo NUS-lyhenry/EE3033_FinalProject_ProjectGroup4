@@ -8,7 +8,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from .ros_utils import LATCHED, parameters, run
 from .trial import guarded_parameters
-from .gap import guard_rotation
+from .gap import DEFAULT_AUDACITY, TURNING, guard_rotation
 
 
 class VelocityGate(Node):
@@ -18,7 +18,7 @@ class VelocityGate(Node):
             'allow_motion': False, 'mapping_mode': False, 'output_topic': '/cmd_vel',
             'command_timeout': 0.5, 'heartbeat_timeout': 0.7, 'scan_timeout': 0.7,
             'max_linear': 0.15, 'max_angular': 0.45,
-            'stop_distance': 0.25, 'rotation_clearance': 0.16,
+            'stop_distance': 0.25, 'rotation_clearance': TURNING[DEFAULT_AUDACITY]['stop'],
         })
         self.enabled = False
         self.automatic = False

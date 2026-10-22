@@ -59,8 +59,8 @@ controller_server:
       plugin: nav2_controller::PoseProgressChecker
       required_movement_radius: 0.10
       movement_time_allowance: 18.0
-      # Above pi disables angular progress for the default Cautious policy.
-      required_movement_angle: 3.2
+      # Bold is the default: heading changes count as navigation progress.
+      required_movement_angle: 0.20
     goal_checker:
       plugin: nav2_controller::SimpleGoalChecker
       xy_goal_tolerance: 0.12
@@ -71,12 +71,12 @@ controller_server:
       primary_controller: dwb_core::DWBLocalPlanner
       angular_dist_threshold: 0.50
       angular_disengage_threshold: 0.25
-      forward_sampling_distance: 0.10
+      forward_sampling_distance: 0.30
       rotate_to_heading_angular_vel: 0.35
       max_angular_accel: 0.8
       simulate_ahead_time: 1.5
       rotate_to_goal_heading: true
-      closed_loop: true
+      closed_loop: false
       min_vel_x: 0.0
       min_vel_y: 0.0
       max_vel_x: 0.12

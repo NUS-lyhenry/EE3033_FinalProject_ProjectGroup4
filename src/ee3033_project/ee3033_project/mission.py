@@ -29,7 +29,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import angle_difference, quaternion_yaw, stamp_seconds
 from .coverage import CoveragePlanner, returned_home
-from .gap import guard_clearance
+from .gap import DEFAULT_CLEARANCE, guard_clearance
 from .ros_utils import LATCHED, parameters, run, set_yaw
 
 
@@ -40,7 +40,7 @@ class Mission(Node):
         super().__init__('project_mission', **kwargs)
         self.p = parameters(self, {
             'map_frame': 'map', 'base_frame': 'base_footprint', 'allow_motion': False,
-            'target_class': 'cup', 'clearance': 0.22, 'viewpoint_spacing': 0.65,
+            'target_class': 'cup', 'clearance': DEFAULT_CLEARANCE, 'viewpoint_spacing': 0.65,
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
             'max_candidates': 250, 'max_goals': 120, 'coverage_fraction': 0.98,
             'observe_seconds': 3.0, 'goal_timeout': 75.0, 'mission_timeout': 900.0,

@@ -422,7 +422,7 @@ class Console(Workflow, Node):
                 enabled = current['enabled']
                 if enabled is None:
                     raise ValueError('Reapply both audacity and narrow-gap blocking to synchronize settings')
-            expected = gap.parameter_plan(enabled,phase,audacity or current['audacity'] or 'cautious')
+            expected = gap.parameter_plan(enabled,phase,audacity or current['audacity'] or gap.DEFAULT_AUDACITY)
             attempted = []
             try:
                 for name,entries in expected.items():
