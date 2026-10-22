@@ -84,6 +84,24 @@ the Nav2 collision envelope.
 
 ## Physical validation
 
+2026-10-22 audacity deployment: the operator explicitly requested saving the
+current map and restarting. Mapping was stopped and the map saved separately as
+`onsite_6h8dszmj/map.yaml`; it remains listed in the console catalogue. The
+previous source was backed up as `pre_audacity_d35497a_20261022.tar.gz`, then
+commit `d35497a` was deployed to the existing project overlay. The console and
+owned mapping stage were restarted, a fresh trial was loaded, and live readback
+verified Cautious at 0.22 m with gap blocking OFF, both costmap radii 0.14 m,
+healthy map/lidar/odometry and no control fault. The stage waits for operator
+Start. No autonomous run at Balanced/Bold was performed. GitHub CI passed both
+jobs for the feature commit.
+
+Immediately before deployment, a read-only 6 s lidar/command diagnostic sampled
+60 scans; 11 contained a usable return below the unchanged 0.16 m rotation
+threshold. The nearest return was approximately 0.14 m at 214 degrees. Nav2 was
+requesting turns and the final gate passed rotation between close returns. The
+physical source of this rear return remains unverified; audacity levels do not
+change the turn check or lidar mask.
+
 2026-10-22: robot rediscovered at its current LAN address, existing Humble
 container restarted, and the assessment UI deployed to the separate project
 folder. Original lab programs, PID and maps were preserved. Source backup:
