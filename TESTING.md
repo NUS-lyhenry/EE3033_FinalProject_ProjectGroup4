@@ -34,6 +34,15 @@ no nonzero movement commands were observed. This validates acceptance of current
 balancing data, without starting a mission or changing its historical result.
 A complete physical mission using the new verifier is still to be demonstrated.
 
+Runtime commit `ddd6d13` was deployed and the existing separate overlay rebuilt.
+The persistent console and failed mission were shut down cleanly, then the same
+reviewed map, bottle/lidar selection and assessment record were restored. Live
+mission status exposes separate linear/angular readings and the new window
+field, reports WAITING/ready, and retains Bold. SHA-256 checks confirm the prior
+failed mission result, map YAML/image and installed lab base configuration are
+unchanged. The prior HTTP result is also archived in the assessment directory as
+`pre_stop_window_fix_ddd6d13.json`. No autonomous mission was started during deployment.
+
 ## Bold as the mapping and search default
 
 2026-10-22: at the operator's request, every new mapping and mission stage now
