@@ -30,6 +30,16 @@ All eight native mapper retry/cancellation cases and all six native manual
 waypoint position/facing cases also pass on isolated domains96 and98.
 These are software checks, not a new physical navigation trial.
 
+Source commit `ef78258` was backed up, deployed and rebuilt in the separate
+robot overlay. The operator then loaded mapping stage `mapping_riasxm7z`;
+readback confirms its navigator selects the installed bounded-recovery tree.
+It was WAITING/ready without a console fault, with exactly one final velocity
+publisher (`project_velocity_gate`) and 21 sampled zero commands. No navigation
+trial was started by the deployment. Saved maps/results remain outside the
+source deployment directory. The persistent console was retained, so its
+version label still identifies `ddd6d13`; the new navigation launch/tree comes
+from `ef78258`. Future mapping and mission stage loads select the new tree.
+
 ## Stationary-window verification for the balancing robot
 
 2026-10-22: the Bold run in `mission_2dlna35_` confirmed the bottle at
