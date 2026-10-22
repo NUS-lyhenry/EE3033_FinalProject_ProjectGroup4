@@ -113,6 +113,18 @@ class ConsoleTests(unittest.TestCase):
             rclpy.init()
             console=self.make_console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value=phase)])
             consumer=Mapper() if phase=='mapping' else Mission()
+            gate=VelocityGate()
+            reject_gate=[False]
+            def accept_gate(changes):
+                if reject_gate[0]:
+                    reject_gate[0]=False
+                    return SetParametersResult(successful=False,reason='Simulated late policy rejection')
+                return SetParametersResult(successful=True)
+            gate.add_on_set_parameters_callback(accept_gate)
+            controller=Node('controller_server')
+            for key,value in gap.parameter_plan(False,phase)['controller_server'].items():
+                controller.declare_parameter(key,value)
+            controller.declare_parameter('progress_checker.plugin',gap.PROGRESS_PLUGIN)
             costmaps=[]
             reject=[False]
             def accept(changes):
@@ -129,7 +141,7 @@ class ConsoleTests(unittest.TestCase):
                 costmaps.append(node)
             costmaps[-1].add_on_set_parameters_callback(accept)
             executor=MultiThreadedExecutor(num_threads=4)
-            nodes=[console,consumer,*costmaps]
+            nodes=[console,consumer,gate,controller,*costmaps]
             for node in nodes: executor.add_node(node)
             thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
             base=f'http://127.0.0.1:{console.p["port"]}'
@@ -153,6 +165,9 @@ class ConsoleTests(unittest.TestCase):
                         self.assertEqual(response['audacity'],level)
                         self.assertTrue(response['synchronized'])
                         self.assertAlmostEqual(consumer.get_parameter('clearance').value,clearance+(.04 if enabled else 0))
+                        for key,value in gap.parameter_plan(enabled,phase,level)['controller_server'].items():
+                            self.assertEqual(controller.get_parameter(key).value,value)
+                        self.assertEqual(gate.get_parameter('rotation_clearance').value,gap.TURNING[level]['stop'])
                         for node in costmaps:
                             self.assertAlmostEqual(node.get_parameter('robot_radius').value,.18 if enabled else .14)
                         reject[0]=True
@@ -160,6 +175,16 @@ class ConsoleTests(unittest.TestCase):
                         restored=json.load(urlopen(base+'/api/gap',timeout=15))
                         self.assertEqual(restored['audacity'],level)
                         self.assertEqual(restored['enabled'],enabled)
+                        self.assertIsNone(console.gap_fault)
+                        # Reject at the last node after costmaps, consumer and
+                        # typed controller parameters have all changed.
+                        reject_gate[0]=True
+                        with self.assertRaises(HTTPError):post(not enabled,audacity='cautious' if level!='cautious' else 'bold')
+                        restored=json.load(urlopen(base+'/api/gap',timeout=15))
+                        self.assertEqual(restored['audacity'],level)
+                        self.assertEqual(restored['enabled'],enabled)
+                        for key,value in gap.parameter_plan(enabled,phase,level)['controller_server'].items():
+                            self.assertEqual(controller.get_parameter(key).value,value)
                         self.assertIsNone(console.gap_fault)
                 self.assertTrue(post(False)['audacity']=='bold') # legacy toggle preserves the selected tier
                 self.assertTrue(post(False,audacity='cautious')['synchronized'])
@@ -190,6 +215,11 @@ class ConsoleTests(unittest.TestCase):
                 with self.assertRaises(HTTPError): post(True)
                 with self.assertRaises(HTTPError): post(False,audacity='bold')
                 self.assertFalse(consumer.set_parameters_atomically([Parameter('clearance',value=.26)]).successful)
+                gate.enabled=True
+                self.assertFalse(gate.set_parameters_atomically([Parameter('rotation_clearance',value=.14)]).successful)
+                gate.enabled=False
+                for value in (.139,.161,float('nan')):
+                    self.assertFalse(gate.set_parameters_atomically([Parameter('rotation_clearance',value=value)]).successful)
                 # Stop remains independent of the transaction lock.
                 self.assertTrue(console.control_lock.acquire(timeout=.1));console.control_lock.release()
                 print('PASS: gap readback, both footprints and consumer clearance, rollback, lockout, types:',phase)

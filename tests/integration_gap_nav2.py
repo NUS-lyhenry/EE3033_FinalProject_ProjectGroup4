@@ -30,6 +30,7 @@ from lifecycle_msgs.srv import GetState
 from tf2_ros import StaticTransformBroadcaster
 from ee3033_project.console import Console
 from ee3033_project.mapper import Mapper
+from ee3033_project.velocity_gate import VelocityGate
 from ee3033_project.ros_utils import LATCHED
 
 
@@ -62,6 +63,7 @@ def main():
             world=Node('gap_test_world')
             console=Console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value='mapping')])
             mapper=Mapper()
+            gate=VelocityGate(parameter_overrides=[Parameter('output_topic',value='/test/gap_gate_output')])
             tf=StaticTransformBroadcaster(world)
             transforms=[]
             for parent,child,x in [('map','odom_combined',0.),('odom_combined','base_footprint',-.8)]:
@@ -71,7 +73,7 @@ def main():
             tf.sendTransform(transforms)
             maps=world.create_publisher(OccupancyGrid,'/map',LATCHED)
             executor=MultiThreadedExecutor(num_threads=4)
-            for node in (world,console,mapper): executor.add_node(node)
+            for node in (world,console,mapper,gate): executor.add_node(node)
             thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
             base=f'http://127.0.0.1:{console.p["port"]}'
             planner=ActionClient(world,ComputePathToPose,'/compute_path_to_pose')
@@ -134,7 +136,7 @@ def main():
                 except subprocess.TimeoutExpired:
                     os.killpg(proc.pid,signal.SIGTERM);proc.wait(timeout=5)
                 executor.shutdown(timeout_sec=3);thread.join(timeout=3)
-                for node in (console,mapper,world):node.destroy_node()
+                for node in (console,mapper,gate,world):node.destroy_node()
                 rclpy.shutdown()
 
 

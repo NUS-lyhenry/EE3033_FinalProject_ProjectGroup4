@@ -8,6 +8,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from .ros_utils import LATCHED, parameters, run
 from .trial import guarded_parameters
+from .gap import guard_rotation
 
 
 class VelocityGate(Node):
@@ -23,6 +24,7 @@ class VelocityGate(Node):
         self.automatic = False
         guarded_parameters(self, ('max_linear','max_angular'),
                            lambda: not self.enabled and not self.automatic)
+        guard_rotation(self, lambda: not self.enabled and not self.automatic)
         self.automatic_time = -math.inf
         self.enable_time = self.command_time = self.scan_time = -math.inf
         self.command = Twist()
@@ -57,7 +59,7 @@ class VelocityGate(Node):
             self.scan, self.scan_time = msg, time.monotonic()
 
     def tick(self):
-        for name in ('max_linear','max_angular'):
+        for name in ('max_linear','max_angular','rotation_clearance'):
             self.p[name] = self.get_parameter(name).value
         now = time.monotonic()
         out = Twist()

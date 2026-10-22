@@ -3,6 +3,26 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Follow-up turning policy validation
+
+2026-10-22: Balanced and Bold now include graded turning policies as well as
+planning clearance. Local validation passes 97 pure Python tests and all 13
+browser checks. The turn gate enforces a 0.14–0.16 m configuration range and
+rejects changes while enabled. API readback verifies the actual progress-checker
+plugin, controller settings and gate as part of the same rollback transaction.
+
+`tests/integration_turning_nav2.py` exercises the real installed Nav2 shim and
+pose progress checker with a synthetic chassis that under-reports angular
+velocity: original Cautious progress failure; Balanced and Bold turn-then-drive;
+abort when physically frozen; and Bold stopping for a closer obstacle. Synthetic
+tests run on separate domains without a `/cmd_vel` publisher. Production keeps
+the 18 s progress allowance; the regression fixture shortens it to 2 s.
+
+The robot was disconnected for battery charging before native validation and
+deployment. The GitHub workflow now includes an isolated Humble container job
+for native console, turning and both passage-resolution tests. The follow-up
+turning policy has not yet been deployed or physically demonstrated on the car.
+
 ## Software validation
 
 2026-10-22: the basic-requirements workflow reuses the existing mapper, mission,

@@ -94,6 +94,7 @@ function renderParameters(){
     button.disabled=!policyReady||!option;
     button.setAttribute('aria-pressed',String(fresh&&gap?.audacity===level&&gap?.synchronized===true));
     button.querySelector('small').textContent=option?`${fmt(option.clearance*100,0)} cm clearance · ~${fmt(option.nominal_min_opening*100,0)} cm opening`:'Waiting for live settings';
+    button.querySelector('em').textContent=option?`Turn stop ${fmt(option.turn_stop_distance*100,0)} cm · ${level==='cautious'?'original turning':level==='balanced'?'gentle turning':'firm turning'}`:'';
   });
   const label=gap?.audacity_options?.find(p=>p.id===gap?.audacity)?.label;
   setPill('audacityLive',fresh&&label?label:'Unverified',fresh&&gap?.synchronized?'good':'warn');

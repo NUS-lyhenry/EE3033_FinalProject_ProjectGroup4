@@ -157,18 +157,34 @@ The **Audacity level** panel sets the planning reserve for automatic mapping
 and mission navigation. **Cautious** is the original behaviour and remains the
 default. Configure a level while mapping is idle or before mission Start.
 
-| Level | Centre-to-boundary clearance | Nominal opening, gap blocking OFF |
-|---|---|---|
-| 1 · Cautious | 0.22 m | 0.44 m |
-| 2 · Balanced | 0.18 m | 0.36 m |
-| 3 · Bold | 0.14 m | About 0.30 m, limited by the padded Nav2 footprint |
+| Level | Centre-to-boundary clearance | Nominal opening, gap blocking OFF | Turn stop |
+|---|---|---|---|
+| 1 · Cautious | 0.22 m | 0.44 m | 0.16 m |
+| 2 · Balanced | 0.18 m | 0.36 m | 0.15 m |
+| 3 · Bold | 0.14 m | About 0.30 m, limited by the padded Nav2 footprint | 0.14 m |
 
 The UI selects a level only after verifying live parameters. It displays each
-level's clearance and opening including any enabled gap reserve. Levels change
-the mapper/search reachability reserve; the collision radius, speed limits,
-lidar mask, obstacle stop and 0.16 m rotation check retain their existing values.
+level's clearance and opening including any enabled gap reserve, plus its turn
+stop distance. Levels change the mapper/search reserve and turning policy;
+the collision radius, speed caps, lidar mask and forward obstacle stop retain
+their existing values.
 In particular, Bold does not guarantee passage through a 0.28 m physical gap.
 Occupied and unknown cells still bound reachable planning space.
+
+Balanced and Bold reuse Nav2's installed `PoseProgressChecker`, counting heading
+changes of 0.35/0.20 rad as progress alongside the existing 0.10 m translation
+threshold. A motionless robot still fails after the 18 s progress allowance;
+the existing mapping/mission goal deadlines also remain. Cautious sets the angle
+threshold above pi, retaining the original translation-only progress rule.
+Both higher levels ramp rotation from previous commands so weak angular velocity
+feedback cannot repeatedly hold the requested speed near zero. Balanced uses
+0.4 rad/s² acceleration and Bold 0.8 rad/s², under the existing angular speed
+cap. Their path-heading sampling distances are 0.20/0.30 m to reduce sensitivity
+to very short path bends. Nav2 continues to check the rotating footprint for
+collisions. The gate applies the selected 0.16/0.15/0.14 m turn stop and rejects
+changes while enabled; fresh sensors, heartbeats and command deadlines remain
+required. The 0.14 m lower bound is the requested Bold setting and does not
+mask or classify close echoes as robot parts.
 
 The **Narrow-gap blocking** button is available in both stages. Configure it
 while mapping is idle or before starting stage 2. ON selects a 0.18 m virtual

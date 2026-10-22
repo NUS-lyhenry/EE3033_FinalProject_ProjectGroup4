@@ -8,6 +8,7 @@ def snapshot(enabled=False, phase='mapping', audacity='cautious'):
     for name in gap.COSTMAPS:
         result[name].update(footprint='[]',footprint_padding=.01,resolution=.05,
                            **{'inflation_layer.enabled':True,'inflation_layer.inflation_radius':.24})
+    result['controller_server']['progress_checker.plugin']=gap.PROGRESS_PLUGIN
     return result
 
 
@@ -74,6 +75,31 @@ def test_level_readback_requires_both_costmaps_to_agree():
     actual[gap.COSTMAPS[1]]['robot_radius']=.18
     data=gap.describe(actual,'mapping')
     assert not data['synchronized'] and data['audacity'] is None
+
+
+def test_turning_profiles_preserve_cautious_and_grade_higher_levels():
+    cautious,balanced,bold=[gap.parameter_plan(False,'mapping',level) for level in gap.AUDACITY]
+    assert cautious['controller_server']['FollowPath.closed_loop'] is True
+    assert cautious['controller_server']['progress_checker.required_movement_angle']>3.1416
+    assert cautious['project_velocity_gate']['rotation_clearance']==.16
+    for plan in (balanced,bold):
+        assert plan['controller_server']['FollowPath.closed_loop'] is False
+        assert 0<plan['controller_server']['progress_checker.required_movement_angle']<.5
+    assert balanced['controller_server']['FollowPath.max_angular_accel']<bold['controller_server']['FollowPath.max_angular_accel']
+    assert balanced['project_velocity_gate']['rotation_clearance']==.15
+    assert bold['project_velocity_gate']['rotation_clearance']==.14
+
+
+def test_declared_turning_parameters_cannot_hide_an_old_progress_checker():
+    actual=snapshot(False,'mapping','bold')
+    actual['controller_server']['progress_checker.plugin']='nav2_controller::SimpleProgressChecker'
+    with pytest.raises(ValueError,match='Reload navigation'):gap.describe(actual,'mapping')
+
+
+def test_partial_turning_update_is_not_verified():
+    actual=snapshot(False,'mapping','bold')
+    actual['project_velocity_gate']['rotation_clearance']=.16
+    assert not gap.describe(actual,'mapping')['synchronized']
 
 
 @pytest.mark.parametrize('width,expected',[(.30,[False,False,True]),(.40,[False,True,True]),(.50,[True,True,True])])

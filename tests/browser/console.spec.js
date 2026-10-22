@@ -45,7 +45,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
     else if(path==='/api/gap'){
       if(method==='POST'){if('enabled' in body)gap=body.enabled;if('audacity' in body)audacity=body.audacity;}
       const p={robot_radius:gap?.18:.14,footprint_padding:.01,resolution:.05};
-      const options=[['cautious','Cautious',.22],['balanced','Balanced',.18],['bold','Bold',.14]].map(([id,label,c])=>({id,label,clearance:c+(gap?.04:0),nominal_min_opening:2*Math.max(c+(gap?.04:0),p.robot_radius+.01)}));
+      const options=[['cautious','Cautious',.22,.16],['balanced','Balanced',.18,.15],['bold','Bold',.14,.14]].map(([id,label,c,t])=>({id,label,clearance:c+(gap?.04:0),turn_stop_distance:t,nominal_min_opening:2*Math.max(c+(gap?.04:0),p.robot_radius+.01)}));
       json={success:true,enabled:gap,audacity,audacity_options:options,synchronized:true,nodes:{'global_costmap/global_costmap':p,'local_costmap/local_costmap':p,[state.phase==='mapping'?'project_mapper':'project_mission']:{clearance:options.find(o=>o.id===audacity).clearance}}};
     }else if(path==='/api/trial'){
       if(method==='POST')trial=body;
@@ -146,8 +146,10 @@ for(const phase of ['mapping','mission'])test(`three audacity levels use verifie
   await expect(cautious).toContainText('22 cm clearance · ~44 cm opening');
   await balanced.click();await expect(balanced).toHaveAttribute('aria-pressed','true');
   await expect(balanced).toContainText('18 cm clearance · ~36 cm opening');
+  await expect(balanced).toContainText('Turn stop 15 cm · gentle turning');
   await bold.click();await expect(bold).toHaveAttribute('aria-pressed','true');
   await expect(bold).toContainText('14 cm clearance · ~30 cm opening');
+  await expect(bold).toContainText('Turn stop 14 cm · firm turning');
   expect(f.calls.filter(c=>c.path==='/api/gap').map(c=>c.body)).toEqual([{audacity:'balanced',enabled:false},{audacity:'bold',enabled:false}]);
   await page.locator('#advanced > summary').click();await page.locator('#gapToggle').click();
   await expect(bold).toHaveAttribute('aria-pressed','true');await expect(bold).toContainText('18 cm clearance · ~38 cm opening');

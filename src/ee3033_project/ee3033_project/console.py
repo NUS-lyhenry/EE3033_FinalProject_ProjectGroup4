@@ -315,7 +315,7 @@ class Console(Workflow, Node):
 
     def write_trial_node(self, name, values):
         request = SetParametersAtomically.Request(parameters=[
-            Parameter(key,value=float(value)).to_parameter_msg() for key,value in values.items()])
+            Parameter(key,value=value).to_parameter_msg() for key,value in values.items()])
         result = self.parameter_request(name,'set_parameters_atomically',request).result
         if not result.successful:
             raise RuntimeError(f'{name}: {result.reason}')
@@ -379,13 +379,15 @@ class Console(Workflow, Node):
             if name in gap.COSTMAPS:
                 names += ['footprint','footprint_padding','resolution',
                           'inflation_layer.enabled','inflation_layer.inflation_radius']
+            elif name=='controller_server':
+                names += ['progress_checker.plugin']
             response = self.parameter_request(name,'get_parameters',GetParameters.Request(names=names))
             if len(response.values)!=len(names):
                 raise RuntimeError(f'{name}: incomplete gap readback')
             result[name] = {key:Parameter.from_parameter_msg(ParameterMessage(name=key,value=value)).value
                             for key,value in zip(names,response.values)}
             for key,value in result[name].items():
-                expected = str if key=='footprint' else bool if key.endswith('.enabled') else float
+                expected = str if key=='footprint' or key.endswith('.plugin') else bool if key.endswith(('.enabled','.closed_loop')) else float
                 if type(value) is not expected or (expected is float and not math.isfinite(value)):
                     raise RuntimeError(f'{name}: invalid {key} readback')
         return result
