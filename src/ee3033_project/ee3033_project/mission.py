@@ -55,6 +55,7 @@ class Mission(Node):
         })
         self.state, self.reason = 'WAITING', 'Call /project/start after localization'
         self.home = self.target = self.map = self.planner = None
+        self.return_verified = False
         self.target_details = None
         self.route, self.seen, self.failures = [], set(), []
         self.index = 0
@@ -188,6 +189,7 @@ class Mission(Node):
         self.p['clearance'] = self.get_parameter('clearance').value
         self.home, self.target = self.pose(), None
         self.target_details = None
+        self.return_verified = False
         self.index, self.route, self.seen, self.failures = 0, [], set(), []
         self.started = time.monotonic()
         self.finished_at = 0.0
@@ -407,7 +409,16 @@ class Mission(Node):
         self.result_pub.publish(String(data=json.dumps(self.summary())))
 
     def summary(self):
-        return {'state': self.state, 'reason': self.reason,
+        pose=self.pose() if self.home is not None else None
+        distance=math.hypot(pose[0]-self.home[0],pose[1]-self.home[1]) if pose and self.home else None
+        readiness=self.readiness_error()
+        return {'phase':'mission','stamp':self.get_clock().now().nanoseconds*1e-9,'state': self.state, 'reason': self.reason,
+                'ready':readiness is None and self.nav.server_is_ready(),
+                'readiness_reason':readiness or ('Ready' if self.nav.server_is_ready() else 'Nav2 not ready'),
+                'return_verified':self.return_verified,'return_distance':distance,
+                'return_tolerance':self.p['return_tolerance'],
+                'stationary_speed':self.speed if math.isfinite(self.speed) else None,
+                'stationary_required_seconds':self.p['verify_seconds'],
                 'target_class': self.p['target_class'],
                 'target': self.target, 'home': self.home,
                 'elapsed_seconds': (self.finished_at or time.monotonic())-self.started if self.started else 0,
@@ -480,6 +491,7 @@ class Mission(Node):
                     if correct and self.speed < self.p['max_stationary_speed']:
                         self.verify_started = self.verify_started or now
                         if now-self.verify_started >= self.p['verify_seconds']:
+                            self.return_verified=True
                             self.finish('COMPLETE' if self.target else 'NOT_FOUND',
                                         'Home verified; target reported' if self.target
                                         else 'Home verified; no target was confirmed')

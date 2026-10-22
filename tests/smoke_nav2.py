@@ -134,6 +134,7 @@ def main():
             clients = {name:world.create_client(GetState,'/'+name+'/get_state')
                        for name in servers}
             pending = {}
+            requested = {}
             executor = MultiThreadedExecutor(num_threads=3)
             executor.add_node(world)
             thread = threading.Thread(target=executor.spin,daemon=True)
@@ -151,8 +152,14 @@ def main():
                             if future.result().current_state.id == 3:
                                 active.add(server)
                             pending.pop(server,None)
+                        elif future is not None and time.monotonic()-requested[server]>3:
+                            # Fast DDS can lose an early discovery-time service
+                            # response. Retry the read, without restarting Nav2.
+                            client.remove_pending_request(future)
+                            pending.pop(server,None)
                         if server not in active and server not in pending and client.service_is_ready():
                             pending[server]=client.call_async(GetState.Request())
+                            requested[server]=time.monotonic()
                     if len(active)==len(servers) and world.amcl_seen and world.yolo_seen and world.image_seen:
                         break
                     time.sleep(0.1)

@@ -1,0 +1,146 @@
+'use strict';
+const $=id=>document.getElementById(id);
+const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','VERIFYING','MAPPING','SAVING']);
+const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d):'—';
+const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
+let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
+let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
+const trialFields=[['max_linear','trialLinear','m/s'],['max_angular','trialAngular','rad/s'],['goal_timeout','trialTimeout','s']];
+function feedback(message,error=false){$('feedback').textContent=message;$('feedback').classList.toggle('error',error);}
+async function get(path){const r=await fetch('/api/'+path);const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
+async function send(path,body={}){
+  if(!online||!snapshot)throw Error('Reconnect to the robot console before sending controls');
+  const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Project-Token':snapshot.token,'X-Control-Generation':String(snapshot.control_generation??0)},body:JSON.stringify(body)});
+  const data=await r.json();if(!r.ok||data.success===false)throw Error(data.error||data.message||'Command rejected');return data;
+}
+async function action(path,body={}){releaseDrive();busy++;render();try{const d=await send(path,body);if(d.message)feedback(d.message);return d;}catch(e){feedback(e.message,true);throw e;}finally{busy--;render();}}
+function chosenMap(){return maps.find(m=>m.id===$('savedMaps').value);}
+function running(){return snapshot?.stage?.managed?snapshot.stage.running:true;}
+function setupIdle(){return online&&!snapshot?.read_only&&!busy&&!snapshot?.stage?.transitioning&&!ACTIVE.has(snapshot?.mission?.state);}
+function ready(){return online&&!snapshot?.assessment?.interrupted&&snapshot?.assessment?.finished==null&&running()&&snapshot?.health?.Mission?.ok&&snapshot?.mission?.ready!==false&&!snapshot?.control_fault&&!busy&&!snapshot?.stage?.transitioning;}
+function setPill(id,text,kind=''){const e=$(id);e.textContent=text;e.className='pill '+kind;}
+function render(){
+  if(!snapshot)return;
+  const s=snapshot,m=s.mission||{},active=ACTIVE.has(m.state),mapping=s.phase==='mapping',idle=setupIdle(),loaded=running(),managed=!!s.stage?.managed;
+  $('previewNotice').hidden=!s.simulated;
+  $('stop').disabled=!!s.read_only;
+  setPill('connection',online?'Connected':'Disconnected',online?'good':'bad');
+  $('connectionBanner').hidden=online;
+  $('phase').textContent=mapping?'Stage 1 · Mapping':'Stage 2 · Autonomous';
+  setPill('battery',s.battery?.voltage!=null?`Battery ${fmt(s.battery.voltage)} V${s.battery.fresh?'':' · stale'}`:'Battery —',s.battery?.fresh?'good':'warn');
+  $('battery').title=s.battery?.age!=null?`Measured voltage · ${s.battery.age} s old`:'Waiting for battery telemetry';
+  setPill('motion',s.allow_motion?'Motion enabled':'Motion disabled',s.allow_motion?'good':'');
+  $('state').textContent=m.state||'WAITING';$('elapsed').textContent=duration(m.elapsed_seconds)+' stage elapsed';
+  const a=s.assessment||{};$('totalElapsed').textContent=duration(a.elapsed_seconds);
+  $('timerNote').textContent=a.interrupted?'Interrupted · timing invalid':a.finished!=null?'Finished':a.running?(a.timing_valid?'Both stages · running':'Search only · mapping not timed'):'Starts when mapping loads';
+  $('target').textContent=m.target?`${fmt(m.target.x)}, ${fmt(m.target.y)} m`:'—, — m';
+  $('confidence').textContent=m.target?`${m.target.class||s.mission_options?.target_class||'Target'} · ${m.target.confidence!=null?Math.round(m.target.confidence*100)+'% confidence':'confirmed'}${Number.isFinite(m.target.variance)?' · σ '+fmt(Math.sqrt(m.target.variance))+' m':''}`:'Waiting for confirmed coordinates';
+  const distance=m.return_distance??(s.pose&&m.home?Math.hypot(s.pose[0]-m.home[0],s.pose[1]-m.home[1]):null);
+  $('distance').textContent=distance!=null?`${fmt(distance)} m`:'— m';
+  $('returnStatus').textContent=m.return_verified?'Home position verified':m.home?`Required tolerance ${fmt(m.return_tolerance??s.mission_options?.return_tolerance??.2)} m`:'Home is recorded at mission Start';
+  $('coverage').textContent=m.viewpoints_total?`${Math.round((m.observed_fraction||0)*100)}%`:'—';
+  $('waypoints').textContent=m.viewpoints_total?`${m.viewpoints_completed||0} / ${m.viewpoints_total} viewpoints · ${m.failed_viewpoints?.length||0} failed`:'No search plan yet';
+  $('robotPose').textContent=s.pose?`Robot (${fmt(s.pose[0])}, ${fmt(s.pose[1])}) · ${fmt(s.pose[2]*180/Math.PI,0)}°`:'Pose unavailable';
+  const fault=s.control_fault||s.workflow_fault||s.stage?.fault;
+  $('faultBanner').hidden=!fault;$('faultBanner').textContent=fault||'';
+  $('reason').textContent=s.stage?.transitioning?'Changing stage; waiting for shutdown and fresh services…':m.readiness_reason&&m.state==='WAITING'?m.readiness_reason:m.reason||'Load a stage to begin.';
+  $('health').replaceChildren(...['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(name=>{const h=s.health?.[name],e=document.createElement('span');e.className='check '+(h?.ok?'ok':'bad');e.textContent=`${h?.ok?'●':'○'} ${name}`;e.title=h?`Last received ${h.age} s ago`:'No fresh status';return e;}));
+  $('loadMapping').hidden=!managed;$('loadMapping').disabled=!idle;
+  $('start').hidden=!mapping;$('start').textContent='Start automatic mapping';
+  $('start').disabled=!mapping||active||!s.allow_motion||!ready();
+  $('saveMap').disabled=!mapping||!loaded||!idle||!s.health?.Map?.ok;
+  $('mappingControls').hidden=!mapping;
+  document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=!mapping||!loaded||!idle||!s.allow_motion||!!fault||!s.health?.Lidar?.ok);
+  $('loadMission').hidden=!managed;$('loadMission').disabled=!idle||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
+  $('reviewMap').disabled=!mapping||!idle||!chosenMap();
+  $('savedMaps').disabled=!idle;$('refreshMaps').disabled=!online||!!busy;
+  const entry=chosenMap();setPill('mapQuality',entry?(entry.reviewed?'Reviewed · ':'')+entry.quality:'Unverified',entry?.reviewed?'good':'warn');
+  $('savedMap').textContent=entry?.path||s.saved_map||m.saved_map||'Every save uses a new directory.';
+  $('mapReviewNote').textContent=entry?.quality==='partial'?'Partial map: review accessible and missing regions before use.':'Review records your inspection. Partial and unverified maps remain labelled.';
+  const poseAllowed=!mapping&&idle&&loaded&&(!managed||!m.home)&&m.state==='WAITING';
+  $('setPose').disabled=!poseAllowed||!s.health?.Map?.ok;
+  ['poseX','poseY','poseYaw'].forEach(id=>$(id).disabled=!poseAllowed);
+  $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
+  ['targetClass','localizationMethod','returnTolerance'].forEach(id=>$(id).disabled=!idle);
+  $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Floor-plane projection uses the visible object bottom and calibrated camera geometry. Check it at measured floor positions before the mission.':'Lidar localization requires the target to intersect the scan plane. Validate the camera and chosen method at measured positions.';
+  $('startMission').disabled=mapping||active||!s.allow_motion||!ready()||(managed&&!s.initial_pose_sent);
+  $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
+  setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
+  setPill('missionBadge',mapping?'Awaiting map':m.state==='COMPLETE'?'Complete':active?'In progress':'Setup',m.state==='COMPLETE'?'good':'');
+  const currentStep=mapping?0:m.state==='WAITING'?1:!m.target?2:3;
+  ['stepMap','stepPose','stepSearch','stepReturn'].forEach((id,i)=>{$(id).className=i===currentStep?'current':i<currentStep?'done':'';});
+  if(m.state==='COMPLETE'&&m.return_verified)$('stepReturn').className='done';
+  $('resultTarget').textContent=m.target?`(${fmt(m.target.x)}, ${fmt(m.target.y)}) m`:'Awaiting target';
+  $('resultReturn').textContent=m.return_verified?`Verified · ${fmt(distance)} m`:m.state==='RETURNING'?'Returning…':'Pending';
+  $('resultStop').textContent=m.return_verified?'Verified stationary':m.state==='VERIFYING'?`Checking ${fmt(m.stationary_required_seconds??2,1)} s hold…`:'Pending';
+  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?'Complete':m.state==='NOT_FOUND'?'Target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?'Stopped':'Trial not complete';
+  $('resultReason').textContent=m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
+  const p=s.perception;
+  $('detectorSummary').textContent=p?`${p.target_class} · ${p.detected_candidates??'—'} visible · ${p.localized_candidates??0} localized${p.highest_confidence!=null?' · '+Math.round(p.highest_confidence*100)+'%':''}`:'No mission detector status';
+  $('methodSummary').textContent=p?`${p.localization_method==='ground_plane'?'Floor-plane projection':'Camera + lidar'} · ${fmt(p.latency,2)} s inference latency`:'Coordinate method is selected before loading stage 2.';
+  $('cameraSource').textContent=s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
+  $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
+  $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
+  $('stageHelp').textContent=managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
+  renderParameters();draw();
+}
+function renderParameters(){
+  const idle=setupIdle(),fresh=Date.now()-paramTime<8000,mapping=snapshot?.phase==='mapping';
+  $('gapToggle').disabled=!idle||!fresh||!gap||parametersBusy||(!mapping&&snapshot?.mission?.state!=='WAITING');
+  $('gapToggle').setAttribute('aria-pressed',String(gap?.enabled===true));
+  $('gapToggle').textContent=gap?.enabled===true?'Narrow-gap blocking: ON · Disable':gap?.enabled===false?'Narrow-gap blocking: OFF · Enable':'Synchronize gap policy: Enable';
+  if(gap&&fresh){const n=gap.nodes,g=n?.['global_costmap/global_costmap'],l=n?.['local_costmap/local_costmap'],stage=n?.[mapping?'project_mapper':'project_mission'];$('gapStatus').textContent=gap.fault||`Verified radius: global ${fmt(g?.robot_radius)} m / local ${fmt(l?.robot_radius)} m. Mapping/search clearance ${fmt(stage?.clearance)} m.`;}
+  $('trialPanel').hidden=!mapping;
+  trialFields.forEach(([key,id,unit])=>{$(id).disabled=!idle||!fresh||!trial||parametersBusy;$(id+'Value').textContent=fmt(Number($(id).value),key==='goal_timeout'?0:2)+' '+unit;$(id+'Live').textContent='Live: '+(trial?fmt(trial.values[key],key==='goal_timeout'?0:2)+' '+unit:'unavailable');});
+  $('applyTrial').disabled=!idle||!fresh||!trial||!trialDirty||parametersBusy;
+  $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes — press Apply.':trial?.fault||'Temporary until restart. Adjust only while stopped.';
+  if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
+}
+async function refreshMaps(preferred){const d=await get('maps');maps=d.maps||[];const current=$('savedMaps').value;const selected=preferred||snapshot?.selected_map?.id||((snapshot?.assessment?.maps||[]).includes(current)?current:maps.find(m=>m.path===snapshot?.saved_map)?.id)||current;const options=maps.map(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=`${m.reviewed?'Reviewed':'Unreviewed'} · ${m.quality} · ${m.id.split('/')[0]}`;return o;});if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}$('savedMaps').replaceChildren(...options);if(maps.some(m=>m.id===selected))$('savedMaps').value=selected;render();}
+async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value)});await action('stage',body);}
+$('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
+$('start').onclick=()=>action('start').catch(()=>{});$('startMission').onclick=()=>action('start').catch(()=>{});
+$('stop').onclick=async()=>{releaseDrive();try{const d=await send('stop');feedback(d.message||'Stop requested');}catch(e){feedback(e.message,true);}};
+$('saveMap').onclick=async()=>{try{const d=await action('save_map');await refreshMaps(d.map?.id||maps.find(m=>m.path===d.path)?.id);}catch(_){}};
+$('refreshMaps').onclick=()=>refreshMaps().catch(e=>feedback(e.message,true));$('savedMaps').onchange=render;
+$('reviewMap').onclick=async()=>{try{await action('review_map',{map_id:$('savedMaps').value});await refreshMaps();}catch(_){}};
+$('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Number($('poseY').value),yaw:Number($('poseYaw').value)*Math.PI/180}).catch(()=>{});
+$('newTrial').onclick=()=>action('new_trial').catch(()=>{});$('localizationMethod').onchange=render;
+$('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
+trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
+$('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
+$('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
+async function pollParameters(){
+  if(online&&snapshot?.health?.Mission?.ok&&running()&&!busy&&!parametersBusy&&!snapshot.stage?.transitioning){const generation=snapshot.control_generation;try{const g=await get('gap');let t=null;if(snapshot.phase==='mapping')t=await get('trial');if(generation===snapshot.control_generation){gap=g;trial=t;paramTime=Date.now();if(t)trialFields.forEach(([k,id])=>{if(!trialDirty)$(id).value=t.values[k];});}}catch(e){paramTime=0;$('gapStatus').textContent=e.message;}renderParameters();}
+  setTimeout(pollParameters,4000);
+}
+async function poll(){
+  try{const s=await get('state');snapshot=s;online=true;
+    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;paramTime=0;trialDirty=false;releaseDrive();}
+    if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;}}
+    if(s.map_revision!==mapRevision){mapRevision=s.map_revision;renderMap(await get('map'));}
+    render();
+  }catch(e){online=false;releaseDrive();if(snapshot)render();else{$('connection').textContent='Disconnected';$('connectionBanner').hidden=false;}feedback(e.message,true);}
+  setTimeout(poll,500);
+}
+async function pollMaps(){if(online&&!busy)try{await refreshMaps();}catch(_){}setTimeout(pollMaps,5000);}
+function cameraTick(){if(online&&snapshot?.camera_source)$('camera').src='/api/image.jpg?t='+Date.now();setTimeout(cameraTick,800);}
+function releaseDrive(){if(driveTimer)clearInterval(driveTimer);driveTimer=null;if(driveRunning){driveRunning=false;send('teleop',{linear:0,angular:0}).catch(()=>{});}}
+for(const button of document.querySelectorAll('[data-drive]')){button.onpointerdown=e=>{if(button.disabled)return;e.preventDefault();releaseDrive();button.setPointerCapture(e.pointerId);const [linear,angular]=button.dataset.drive.split(',').map(Number);driveRunning=true;const tick=()=>send('teleop',{linear,angular}).catch(e=>{releaseDrive();feedback(e.message,true);});tick();driveTimer=setInterval(tick,100);};button.onpointerup=button.onpointercancel=button.onlostpointercapture=releaseDrive;}
+window.addEventListener('blur',releaseDrive);document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseDrive();});
+function point(x,y){const [ox,oy,a]=mapData.origin,dx=x-ox,dy=y-oy;return[(Math.cos(a)*dx+Math.sin(a)*dy)/mapData.resolution,mapData.height-(-Math.sin(a)*dx+Math.cos(a)*dy)/mapData.resolution];}
+function worldPoint(x,y){const [ox,oy,a]=mapData.origin,dx=x*mapData.resolution,dy=(mapData.height-y)*mapData.resolution;return[ox+Math.cos(a)*dx-Math.sin(a)*dy,oy+Math.sin(a)*dx+Math.cos(a)*dy];}
+function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),ctx=canvas.getContext('2d'),wrap=canvas.parentElement,scale=Math.min((wrap.clientWidth-28)/mapData.width,(wrap.clientHeight-28)/mapData.height);canvas.width=mapData.width*3;canvas.height=mapData.height*3;canvas.style.width=mapData.width*scale+'px';canvas.style.height=mapData.height*scale+'px';ctx.scale(3,3);ctx.imageSmoothingEnabled=false;ctx.drawImage(mapImage,0,0);
+  function line(points,color,dash=[]){if(!points?.length)return;ctx.beginPath();ctx.setLineDash(dash);points.forEach((p,i)=>{const [x,y]=point(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle=color;ctx.lineWidth=.8;ctx.stroke();ctx.setLineDash([]);}
+  function dot(p,color,r=2){if(!p)return;const[x,y]=point(...p);ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
+  line(snapshot.route,'#bca6d8',[1.5,2]);line(snapshot.path,'#52cfaa');const m=snapshot.mission;dot(m.home,'#ce92df',2.3);if(m.target)dot([m.target.x,m.target.y],'#ecba59',2.8);
+  if(snapshot.pose){const[x,y]=point(...snapshot.pose);ctx.save();ctx.translate(x,y);ctx.rotate(-(snapshot.pose[2]-mapData.origin[2]));ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(-2.5,-2);ctx.lineTo(-2.5,2);ctx.closePath();ctx.fillStyle='#5dbaec';ctx.fill();ctx.restore();}
+  if(drag){ctx.beginPath();ctx.moveTo(...drag.start);ctx.lineTo(...drag.end);ctx.strokeStyle='#ecba59';ctx.stroke();}
+}
+function renderMap(m){mapData=m;mapImage=null;$('mapEmpty').hidden=!!m;if(!m){$('map').getContext('2d').clearRect(0,0,$('map').width,$('map').height);return;}$('mapScale').textContent=`${fmt(m.width*m.resolution,1)} × ${fmt(m.height*m.resolution,1)} m · ${fmt(m.resolution)} m/cell`;mapImage=document.createElement('canvas');mapImage.width=m.width;mapImage.height=m.height;const ctx=mapImage.getContext('2d'),pixels=ctx.createImageData(m.width,m.height);for(let r=0;r<m.height;r++)for(let c=0;c<m.width;c++){const v=m.cells[r*m.width+c],i=((m.height-1-r)*m.width+c)*4;pixels.data.set([...(v<0?[48,65,75]:v>=50?[14,29,36]:[196,210,211]),255],i);}ctx.putImageData(pixels,0,0);draw();}
+function canvasPosition(e){const r=$('map').getBoundingClientRect();return[(e.clientX-r.left)/r.width*mapData.width,(e.clientY-r.top)/r.height*mapData.height];}
+$('map').onpointerdown=e=>{if(!mapData||$('setPose').disabled)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p};draw();};
+$('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
+$('map').onpointerup=()=>{if(!drag)return;const a=worldPoint(...drag.start),b=worldPoint(...drag.end);$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=(Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI).toFixed(0);drag=null;draw();feedback('Start pose selected. Press Set initial pose to send it.');};
+$('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);
+poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);cameraTick();

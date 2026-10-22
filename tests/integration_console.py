@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import unittest
+import tempfile
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 import rclpy
@@ -24,9 +25,15 @@ from ee3033_project.mission import Mission
 
 
 class ConsoleTests(unittest.TestCase):
+    def make_console(self,**kwargs):
+        root=tempfile.TemporaryDirectory(prefix='group4_console_record_')
+        self.addCleanup(root.cleanup)
+        overrides=kwargs.pop('parameter_overrides',[])
+        return Console(parameter_overrides=[Parameter('session_directory',value=root.name),*overrides],**kwargs)
+
     def test_live_trial_sliders_and_voltage(self):
         rclpy.init()
-        console=Console(parameter_overrides=[Parameter('port',value=0),
+        console=self.make_console(parameter_overrides=[Parameter('port',value=0),
                         Parameter('phase',value='mapping'),Parameter('allow_motion',value=True)])
         gate=VelocityGate(parameter_overrides=[Parameter('mapping_mode',value=True),
              Parameter('max_linear',value=.12),Parameter('max_angular',value=.4)])
@@ -104,7 +111,7 @@ class ConsoleTests(unittest.TestCase):
     def test_gap_transactions_both_stages(self):
         for phase in ('mapping','mission'):
             rclpy.init()
-            console=Console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value=phase)])
+            console=self.make_console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value=phase)])
             consumer=Mapper() if phase=='mapping' else Mission()
             costmaps=[]
             reject=[False]
@@ -173,7 +180,7 @@ class ConsoleTests(unittest.TestCase):
 
     def test_http_controls_and_autonomous_lockout(self):
         rclpy.init()
-        console=Console(parameter_overrides=[Parameter('port',value=0),
+        console=self.make_console(parameter_overrides=[Parameter('port',value=0),
                                              Parameter('allow_motion',value=True)])
         io=Node('console_test_peer')
         status=io.create_publisher(String,'/project/mission_status',LATCHED)
@@ -195,7 +202,10 @@ class ConsoleTests(unittest.TestCase):
         base=f'http://127.0.0.1:{console.p["port"]}'
         try:
             html=urlopen(base).read().decode()
-            self.assertIn('Mission console',html)
+            self.assertIn('Assessment console',html)
+            self.assertEqual(urlopen(base+'/app.js').headers.get_content_type(),'text/javascript')
+            self.assertEqual(urlopen(base+'/style.css').headers.get_content_type(),'text/css')
+            self.assertNotIn('token',json.load(urlopen(base+'/api/result')))
             self.assertIn('Set initial pose',html)
             self.assertIn('Live object detections',html)
             state=json.load(urlopen(base+'/api/state'))

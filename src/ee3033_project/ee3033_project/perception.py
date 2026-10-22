@@ -145,6 +145,7 @@ class Perception(Node):
             self.warn('Stale image or unsynchronized clocks; refusing target coordinates')
             return
         observations = []
+        detected_confidences=[]
         started = time.monotonic()
         try:
             frame = self.bridge.imgmsg_to_cv2(image, desired_encoding='bgr8')
@@ -156,6 +157,7 @@ class Perception(Node):
                 label = result.names[int(b.cls.item())]
                 if label.casefold() != self.p['target_class'].casefold():
                     continue
+                detected_confidences.append(float(b.conf.item()))
                 box = b.xyxy[0].cpu().numpy().astype(float)
                 point = None
                 if camera is not None:
@@ -181,7 +183,10 @@ class Perception(Node):
             self.status_pub.publish(String(data=json.dumps({
                 'stamp': stamp, 'ready': True, 'latency': time.monotonic()-started,
                 'localized_candidates': len(observations),
-                'target_class': self.p['target_class']})))
+                'detected_candidates':len(detected_confidences),
+                'highest_confidence':max(detected_confidences) if detected_confidences else None,
+                'target_class': self.p['target_class'],
+                'localization_method': self.p['localization_method']})))
         except Exception as exc:
             self.warn('Perception failed: ' + str(exc))
             self.obs_pub.publish(String(data=json.dumps({'stamp': stamp,

@@ -20,27 +20,29 @@ a duplicate tunnel or driver. See README for exact launch commands.
 
 ## Mapping, then mission
 
-1. Begin one external stopwatch at the start of mapping from the assigned pose.
-   Keep it running across map saving, launch transition, initial localization,
-   and autonomous search. The UI elapsed value is stage-local and cannot replace
-   this combined timer.
-2. Keep the target absent during mapping. Start automatic mapping through the
-   UI; use manual mapping only as the examiner permits. Save into a unique
-   bind-mounted directory. Inspect coverage; `MAPPED_PARTIAL` is not a complete
-   room map. An automatic timeout save records a partial map after confirmed
-   cancellation and does not restart failed nodes.
-3. Stop mapping and its launch cleanly. Confirm SLAM has stopped before launching
-   AMCL. Preserve the exact saved YAML/PGM pair; never overwrite lab maps.
-4. After the target is placed, establish the assigned initial pose. Configure
-   gap policy before Start in stage 2. Launch using the saved on-site map, the
-   observed target class, and a physically validated localization method.
-5. Start the autonomous mission with the UI visible. Do not manually drive,
-   choose navigation goals, edit the map, or enter target coordinates. The
-   controller records home and chooses its own viewpoints.
-6. Stop the combined stopwatch only after a target was reported and the robot
-   returned and verified stationary. `NOT_FOUND`, `FAILED`, a partial map, or a
-   Nav2 success outside home must be recorded honestly. Inform the examiner
-   before any restart/intervention.
+1. Launch `assessment.launch.py` with the persistent map/results directories and
+   `allow_motion:=true` only for the prepared robot. Open the UI and **Load
+   mapping**. The combined timer starts as the mapping stack loads; the UI's
+   separate stage timer is still shown. Keep an examiner stopwatch as reference.
+2. Keep the target absent during mapping. Start automatic mapping, or use manual
+   mapping only as permitted. Save in a new directory. Inspect and mark the map
+   reviewed; `MAPPED_PARTIAL` remains partial after review.
+3. Select that trial's saved map. After placing the target, choose the actual
+   model class, physically validated coordinate method and required return
+   tolerance. **Load selected map for mission** stops the owned SLAM/Nav2 stage
+   before loading AMCL and the mission stack. The console stays open. Do not run
+   any second mapping/localization or velocity writer alongside it.
+4. Set the assigned initial pose and wait for localization and sensor readiness.
+   Start the mission with the UI visible. No manual drive, navigation goals, map
+   edits or manual target coordinates are available in stage 2.
+5. Completion requires the target report, return within tolerance and the
+   stationary hold. `NOT_FOUND`, `FAILED`, or an unverified Nav2 success is not a
+   complete mission. Download the trial JSON, preserving independent target and
+   return reference measurements outside mission control.
+6. Inform the examiner before any restart/intervention. Nothing auto-restarts.
+   **New trial** explicitly reloads fresh mapping and resets the current timer;
+   previous trial JSON and maps remain in unique directories. A console restart
+   in the same host boot preserves timing; a host reboot marks it interrupted.
 
 ## Trial evidence and report constraints
 

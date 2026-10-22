@@ -283,7 +283,10 @@ class Mapper(Node):
             except Exception as exc:
                 self.fail(str(exc))
         self.status_pub.publish(String(data=json.dumps({
-            'state':self.state,'reason':self.reason,'home':self.home,'target':None,
+            'phase':'mapping','stamp':self.get_clock().now().nanoseconds*1e-9,'state':self.state,'reason':self.reason,'home':self.home,'target':None,
+            'ready':self.error() is None and self.nav.server_is_ready(),
+            'readiness_reason':self.error() or ('Ready' if self.nav.server_is_ready() else 'Nav2 not ready'),
+            'map_partial':self.partial,
             'saved_map':self.saved_map,'elapsed_seconds':(self.finished_at or now)-self.started if self.started else 0,
             'viewpoints_completed':self.goals,'viewpoints_total':0,
             'failed_viewpoints':self.failed,'observed_fraction':0.0})))

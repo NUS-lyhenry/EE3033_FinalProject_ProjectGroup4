@@ -5,8 +5,13 @@ with measured results after each room or sandbox trial.
 
 ## Software validation
 
-- 53 algorithm tests currently pass on the development computer (Python 3.12),
-  including scan self-occlusion handling and bounded navigation trial settings.
+2026-10-22: the basic-requirements workflow reuses the existing mapper, mission,
+detector, target filter, velocity gate, Nav2 configuration and installed lab
+drivers. A persistent console now coordinates the two stages.
+
+- 78 pure Python tests pass on the development computer (Python 3.12), including
+  scan handling, navigation bounds, continuous timing, atomic results, saved-map
+  validation/review, owned process shutdown and cancellation without auto-restart.
 - Nine Humble integration scenarios pass: target found/return; no target;
   failed search goals; sensor loss; stop during goal acceptance; false home
   success; velocity limiting/obstacle stop/deadlines; and automatic-map return
@@ -19,11 +24,19 @@ with measured results after each room or sandbox trial.
   Start/Stop services, session/origin checks, autonomous lockout, motion-disable,
   live trial readback/limits/rollback/active lockout, battery freshness, and narrow-gap
   transactions in both stages including rejected writes and unverified rollback lockout.
-- Six browser checks pass: live camera preview and motion-state display;
-  mapping control lockouts; slider application and stale battery display;
-  target/confidence/map/return-result rendering; and gap toggle readback/active
-  lockout in both stages. Mock results are explicitly
-  labeled simulated and are not physical trial evidence.
+- Nine browser checks pass: complete two-stage map/save/review/pose/search/return
+  flow, simulated read-only preview, active-stage restrictions, false-success
+  rejection, stale/offline telemetry, retained optional controls, Stop during
+  stage loading, and mobile layout. Fixtures are simulated; they are not physical
+  trial evidence.
+- Two native Humble workflow checks pass on isolated domain 93: HTTP controls
+  launch real mapper/mission/filter/gate processes with synthetic sensors and
+  navigation actions, save through the real Nav2 map saver, reject unreviewed or
+  previous-trial maps, enforce initial pose and stage restrictions, persist the
+  verified return and combined timing, and prevent a late launch after Stop.
+- Native Nav2 smoke was rerun on domain 95. The original test missed a response
+  during DDS discovery although all seven nodes activated; bounded retries of
+  the read-only lifecycle query resolved the test stall. The smoke then passed.
 
 Native Humble narrow-passage tests pass on isolated domains 91 and 92. Both
 costmaps use synthetic static obstacles and the actual project inflation policy;
@@ -101,9 +114,11 @@ The can's supporting surface/height remains to be confirmed.
 The robot was left stopped with the console open. No collision threshold, scan
 mask, balance PID, or original lab program was changed. Source backup on the Pi:
 `/home/balance/ros2_ws/group4_backups/pre_gap_source_20261017.tar.gz`.
-Publishing remains blocked: Git CLI lacks HTTPS credentials, and an actual
+At that time publishing was blocked: Git CLI lacked HTTPS credentials, and an actual
 Contents write through the connected integration returned HTTP 403 despite
-repository metadata reporting `push: true`. No source upload succeeded.
+repository metadata reporting `push: true`. On 2026-10-22, GitHub CLI device login
+completed as the repository owner and the Git push dry run succeeded. Final
+publication and fresh physical results are recorded separately below.
 
 Pending: fresh autonomous room mapping, Pepsi-can detection/class check, map-frame
 coordinate checks against reference positions, full target-search/return run,

@@ -55,6 +55,74 @@ driver is deliberately reused, pass `base:=false`, `lidar:=false`, or
 `camera:=false` as appropriate. Do not reuse an earlier `/scan_fixed` publisher
 alongside this package's resampler.
 
+## Recommended: one console for the basic briefing workflow
+
+The assessment console reuses the existing `mapping.launch.py` and
+`mission.launch.py` stacks. It adds an operator workflow around the already
+implemented mapper, Nav2, AMCL, detector, filter and velocity gate; it does not
+replace the original robot drivers, lab files, saved maps or balance PID.
+
+Inside Humble, source the lab and project overlays, then launch:
+
+```bash
+ros2 launch ee3033_project assessment.launch.py allow_motion:=true \
+  map_directory:=/home/ros2_ws/group4_maps \
+  session_directory:=/home/ros2_ws/group4_results/assessment
+```
+
+Without `allow_motion:=true`, the console can load services but rejects motion
+starts. The console initially starts no hardware. Open
+`http://127.0.0.1:8765` through SSH forwarding and use this sequence:
+
+1. **Load mapping** with the target absent. The combined timer starts here,
+   because SLAM is constructing the map even before the first motion command.
+2. **Start automatic mapping**, or use permitted hold-to-drive controls while
+   automatic mapping is inactive. **Stop robot** cancels and disables motion.
+3. Save a new map if needed, inspect accessible and missing areas, select it and
+   **Mark map reviewed**. Review changes metadata only; a partial map stays
+   labelled partial. Original map pixels and YAML remain unchanged.
+4. After the target is placed, select the detector class, a validated coordinate
+   method and the examiner's return tolerance. **Load selected map for mission**
+   stops the owned mapping launch, verifies its processes and ROS publishers
+   have disappeared, then starts saved-map localization and the mission stack.
+   It waits for Start. Only a reviewed map saved during this trial is accepted.
+5. Establish the assigned **initial pose** in the loaded map. Drag from position
+   toward heading, or enter that start pose. **Start autonomous mission** records
+   home and begins the existing search → report → return → stationary-stop logic.
+6. Read target `(x, y)` in metres in `map`, the return distance/tolerance and the
+   stationary verification. **Download trial JSON** exports the record without
+   console tokens. **New trial** stops the idle owned stage and loads fresh SLAM;
+   earlier maps and trial directories are preserved.
+
+Stage 2 has no manual driving, navigation goals, map edits or target-coordinate
+entry. Setup and stage changes are rejected while active; initial-pose changes
+are locked after mission Start. Stop bypasses stage and parameter transactions.
+Commands queued before a stage change or Stop carry an obsolete control
+context and are rejected. Crashed nodes are reported and never auto-restarted;
+follow the examiner's intervention procedure before any manual reload.
+
+The continuous monotonic timer spans mapping, review, localization, mission and
+interventions. It survives a console restart in the same host boot. A reboot
+marks timing interrupted instead of inventing an elapsed time. Only a confirmed
+target and the mission's explicit verified return can finish a successful timer.
+A mission started from the standalone legacy launch is labelled search-only if
+its record did not include mapping.
+
+Use `base:=false`, `lidar:=false`, or `camera:=false` at assessment launch only
+when deliberately reusing an existing corresponding driver. The console rejects
+an initial load that would duplicate known drivers or another project stack.
+Keep exactly one scan adapter and one final velocity writer. Stage changes
+restart only the stage launches owned by this console.
+
+To inspect the new UI without ROS or hardware:
+
+```bash
+python3 scripts/preview_ui.py
+# http://127.0.0.1:8790 — explicitly simulated, read-only; POST controls reject
+```
+
+The standalone stage launch procedures below remain available.
+
 ## Stage 1 — construct a new map
 
 ```bash
@@ -274,6 +342,7 @@ isolated domains (never domain 6):
 ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
 ROS_DOMAIN_ID=89 python3 tests/smoke_nav2.py
 ROS_DOMAIN_ID=90 python3 tests/integration_console.py
+ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
 ROS_DOMAIN_ID=91 python3 tests/integration_gap_nav2.py
 GROUP4_GAP_RESOLUTION=.05 ROS_DOMAIN_ID=92 python3 tests/integration_gap_nav2.py
 ```
@@ -282,13 +351,16 @@ The integration tests exercise actual ROS messages/actions, cancellation races,
 sensor loss, obstacle/heartbeat velocity gating, false home success, unique map
 saves, HTTP controls, and manual-control lockout. The Nav2 smoke test starts real
 Nav2, AMCL, YOLO, and project nodes against synthetic sensors with motion
-disabled. These tests do not replace physical navigation and calibration tests.
+disabled. These tests do not replace physical navigation and calibration tests. The two-stage workflow integration
+adds real process transitions, map saving/review, pose lockouts, timing and export
+against synthetic ROS sensors/actions; fixtures refuse domain 6.
 
 See [RUNBOOK.md](RUNBOOK.md) for stage transitions, combined timing, and report
 evidence requirements. See [TESTING.md](TESTING.md) for the recorded results and remaining validation.
 
 Optional browser checks use development-only dependencies (no Node.js is needed
-on the robot). With a motion-disabled console and a camera feed running:
+on the robot). The default browser suite starts its own read-only simulated preview and
+intercepts every test mutation. It does not require a running robot:
 
 ```bash
 npm ci

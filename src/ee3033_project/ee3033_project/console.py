@@ -37,19 +37,25 @@ from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
 from .trial import LIMITS, parameter_plan, validate_trial
 from . import gap
+from .console_workflow import Workflow
 
 
-class Console(Node):
+class Console(Workflow, Node):
     def __init__(self, **kwargs):
         super().__init__('project_console', **kwargs)
         self.p = parameters(self, {'port': 8765, 'phase': 'mission', 'allow_motion': False,
-                                   'map_directory': '~/ee3033_maps'})
+                                   'map_directory': '~/ee3033_maps',
+                                   'session_directory':'~/ee3033_results/assessment',
+                                   'manage_stages':False,'stage_base':True,'stage_lidar':True,
+                                   'stage_camera':True,'model':'/home/ros2_ws/weights/yolo26n.pt',
+                                   'software_version':'development'})
         if self.p['phase'] not in ('mapping','mission'):
             raise ValueError('phase must be mapping or mission')
         self.lock = threading.Lock()
         self.control_lock = threading.Lock()
         self.trial_fault = None
         self.gap_fault = None
+        self.control_generation=0
         self.token = secrets.token_urlsafe(24)
         self.state = {'state':'WAITING','reason':'Waiting for mission status',
                       'target':None,'home':None}
@@ -71,17 +77,16 @@ class Console(Node):
         self.manual_pub = self.create_publisher(Twist,'/project/manual_cmd_vel',10)
         self.initial_pub = self.create_publisher(PoseWithCovarianceStamped,'/initialpose',10)
         self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop')}
+        node_names=set(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.)))
+        node_names.update(gap.parameter_plan(False,'mapping'))
+        node_names.update(gap.parameter_plan(False,'mission'))
         self.parameter_clients = {
-            (name, operation): self.create_client(kind, f'/{name}/{operation}')
-            for name in (set(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.)))
-                         if self.p['phase']=='mapping' else set()) |
-                        set(gap.parameter_plan(False,self.p['phase']))
-            for operation, kind in [('get_parameters',GetParameters),
-                                    ('set_parameters_atomically',SetParametersAtomically)]
-        }
+            (name,operation):self.create_client(kind,f'/{name}/{operation}')
+            for name in node_names for operation,kind in [
+                ('get_parameters',GetParameters),('set_parameters_atomically',SetParametersAtomically)]}
+        self.init_workflow()
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
-        self.create_subscription(String,'/project/perception_status',
-                                 lambda m:self.mark('YOLO'),10)
+        self.create_subscription(String,'/project/perception_status',self.on_perception_status,10)
         self.create_subscription(LaserScan,'/scan_fixed',lambda m:self.mark('Lidar'),qos_profile_sensor_data)
         self.create_subscription(Float32,'/power_voltage',self.on_voltage,qos_profile_sensor_data)
         self.create_subscription(PoseWithCovarianceStamped,'/amcl_pose',self.on_amcl,10)
@@ -95,6 +100,8 @@ class Console(Node):
         node = self
         asset = Path(get_package_share_directory('ee3033_project'))/'web'/'index.html'
         self.html = asset.read_bytes()
+        self.assets = {'/app.js':((asset.parent/'app.js').read_bytes(),'text/javascript; charset=utf-8'),
+                       '/style.css':((asset.parent/'style.css').read_bytes(),'text/css; charset=utf-8')}
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):
@@ -115,6 +122,11 @@ class Console(Node):
                 path = urlparse(self.path).path
                 if path=='/':
                     return self.reply(200,node.html,'text/html; charset=utf-8')
+                if path in node.assets:
+                    data,kind=node.assets[path]
+                    return self.reply(200,data,kind)
+                if path in ('/api/maps','/api/result'):
+                    return self.reply(200,node.workflow_get(path))
                 if path=='/api/state':
                     return self.reply(200,node.snapshot())
                 if path in ('/api/trial','/api/gap'):
@@ -153,6 +165,8 @@ class Console(Node):
                         result = node.command(path,body)
                     else:
                         with node.control_lock:
+                            if node.stage and self.headers.get('X-Control-Generation')!=str(node.control_generation):
+                                raise ValueError('Control context changed; refresh state before retrying')
                             result = node.command(path,body)
                     return self.reply(200,result)
                 except (ValueError,TypeError,KeyError) as exc:
@@ -174,12 +188,17 @@ class Console(Node):
     def on_status(self,msg):
         try:
             state = json.loads(msg.data)
+            if self.stage and (self.stage.process is None or float(state.get('stamp',-math.inf))<self.status_after):
+                return
+            if state.get('phase') and state['phase']!=self.p['phase']:
+                return
             with self.lock:
                 if state['state'] != self.state['state']:
                     self.events.appendleft({'time':time.strftime('%H:%M:%S'),
                                              'state':state['state'],'reason':state['reason']})
                 self.state = state
                 self.freshness['Mission'] = time.monotonic()
+            self.workflow_status(state)
         except (ValueError,KeyError):
             pass
 
@@ -248,18 +267,19 @@ class Console(Node):
                       for name,t in self.freshness.items()
                       for limit in [3 if name in ('YOLO','Mission') else
                                     30 if name=='AMCL' else 5 if name=='Battery' else
-                                    3 if name=='Lidar' else math.inf]}
+                                    1 if name=='Odometry' else 3 if name=='Lidar' else math.inf]}
             battery_age = now-self.freshness.get('Battery',-math.inf)
             return {'mission':self.state,'phase':self.p['phase'],
                     'allow_motion':self.p['allow_motion'],'pose':pose,
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
-                    'control_fault':self.trial_fault or self.gap_fault,
+                    'control_fault':self.trial_fault or self.gap_fault or self.workflow_fault,
+                    **self.workflow_snapshot(),
                     'battery':{'voltage':self.battery_voltage,
                                'age':round(battery_age,1) if math.isfinite(battery_age) else None,
                                'fresh':battery_age<5},
-                    'saved_map':self.saved_map,'token':self.token}
+                    'saved_map':self.saved_map,'token':self.token,'control_generation':self.control_generation}
 
     def parameter_request(self, name, operation, request):
         client = self.parameter_clients[(name,operation)]
@@ -421,6 +441,13 @@ class Console(Node):
         return data
 
     def command(self,path,body):
+        if not isinstance(body,dict):
+            raise ValueError('Request must be a JSON object')
+        workflow=self.workflow_command(path,body)
+        if workflow is not None:
+            return workflow
+        if self.stage and self.stage.loading and path!='/api/stop':
+            raise ValueError('Wait for the stage transition to finish')
         with self.lock:
             state = self.state['state']
             active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','VERIFYING','MAPPING','SAVING')
@@ -428,13 +455,25 @@ class Console(Node):
             key = path.rsplit('/',1)[-1]
             if key=='start' and not self.p['allow_motion']:
                 raise ValueError('Motion disabled in this console')
-            if key=='start' and (self.trial_fault or self.gap_fault):
-                raise ValueError(self.trial_fault or self.gap_fault)
+            if key=='start' and (self.trial_fault or self.gap_fault or self.workflow_fault):
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if key=='start':
+                record=self.record.snapshot()
+                if record['interrupted'] or record['finished'] is not None:
+                    raise ValueError('Begin a new trial before starting again')
+                if self.stage and self.p['phase']=='mission' and not self.initial_pose_sent:
+                    raise ValueError('Set the assigned initial pose before Start')
             if key=='stop':
+                if self.stage:
+                    self.stage.cancel.set()
+                    with self.lock:
+                        self.control_generation+=1
                 self.manual = (0.,0.,0.)
                 self.manual_pub.publish(Twist())
             client = self.command_clients[key]
             if not client.wait_for_service(timeout_sec=1):
+                if key=='stop' and self.stage:
+                    return {'success':True,'message':'Stop recorded; no active stage service'}
                 raise RuntimeError('Mission service is not available')
             future = client.call_async(Trigger.Request())
             deadline = time.monotonic()+5
@@ -443,6 +482,8 @@ class Console(Node):
             if not future.done():
                 raise RuntimeError('Mission service timed out; inspect mission status')
             result = future.result()
+            if key=='start' and result.success:
+                self.record.start(self.p['phase'])
             return {'success':result.success,'message':result.message}
         if path=='/api/trial':
             return self.trial_settings(body)
@@ -477,16 +518,24 @@ class Console(Node):
             set_yaw(msg.pose.pose.orientation,yaw)
             msg.pose.covariance[0] = msg.pose.covariance[7] = 0.04
             msg.pose.covariance[35] = 0.12
+            if self.stage and self.state.get('home') is not None:
+                raise ValueError('Initial pose is locked after the autonomous mission begins')
             self.initial_pub.publish(msg)
+            self.initial_pose_sent=True
             return {'success':True,'message':'Assigned initial pose sent to AMCL'}
         if path=='/api/teleop':
-            if self.trial_fault or self.gap_fault:
-                raise ValueError(self.trial_fault or self.gap_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Manual driving is restricted to the mapping stage')
             x,z = float(body.get('linear',0)),float(body.get('angular',0))
             if not math.isfinite(x) or not math.isfinite(z):
                 raise ValueError('Invalid velocity')
+            if x or z:
+                with self.lock:
+                    if time.monotonic()-self.freshness.get('Mission',-math.inf)>2:
+                        raise ValueError('Mapping status is stale; manual motion is locked')
+                self.record.start('mapping')
             self.manual = (max(-0.10,min(0.10,x)),max(-0.35,min(0.35,z)),time.monotonic())
             return {'success':True}
         if path=='/api/save_map':
@@ -495,9 +544,11 @@ class Console(Node):
             self.manual = (0.,0.,0.)
             self.manual_pub.publish(Twist())
             saved = save_new_map(self.p['map_directory'])
+            entry=self.catalog.register(saved,'snapshot')
+            self.record.add_map(entry['id'])
             with self.lock:
                 self.saved_map = saved
-            return {'success':True,'message':'Map saved to '+self.saved_map,'path':self.saved_map}
+            return {'success':True,'message':'Map saved to '+self.saved_map,'path':self.saved_map,'map':entry}
         raise ValueError('Unknown command')
 
     def teleop_tick(self):
@@ -511,6 +562,12 @@ class Console(Node):
     def destroy_node(self):
         if self.context.ok():
             self.manual_pub.publish(Twist())
+        if self.stage:
+            self.stage.cancel.set()
+            try:
+                self.stage.stop()
+            except RuntimeError as exc:
+                self.get_logger().error(str(exc))
         self.server.shutdown()
         self.server.server_close()
         self.http_thread.join(timeout=2)

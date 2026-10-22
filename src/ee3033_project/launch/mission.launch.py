@@ -39,6 +39,7 @@ def generate_launch_description():
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share, 'config', 'navigation.yaml')),
         DeclareLaunchArgument('model', default_value='/home/ros2_ws/weights/yolo26n.pt'),
         DeclareLaunchArgument('localization_method', default_value='lidar'),
+        DeclareLaunchArgument('return_tolerance', default_value='0.20'),
         OpaqueFunction(function=check_map),
         include(os.path.join(share, 'launch', 'hardware.launch.py'), {
             k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}),
@@ -56,7 +57,8 @@ def generate_launch_description():
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
             config, {'allow_motion': motion}]),
         Node(package='ee3033_project', executable='mission', output='screen', parameters=[
-            config, {'target_class': target, 'allow_motion': motion}]),
+            config, {'target_class': target, 'allow_motion': motion,
+                     'return_tolerance':ParameterValue(LaunchConfiguration('return_tolerance'),value_type=float)}]),
         Node(package='ee3033_project',executable='console',output='screen',
              condition=IfCondition(LaunchConfiguration('console')),parameters=[{
                  'phase':'mission','allow_motion':motion,'map_directory':LaunchConfiguration('map_directory'),
