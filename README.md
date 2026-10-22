@@ -39,6 +39,10 @@ also be available. The existing YOLO weights are loaded from
 `/home/ros2_ws/weights/yolo26n.pt`; weights are not stored in this repository.
 
 No original lab program, PID value, or existing map is modified by this package.
+Hardware launches explicitly use the installed base driver's `base_params.yaml`
+inside a scoped launch group. The mission's project `config` cannot override the
+base's frame IDs or settings, and hardware arguments cannot replace the project
+configuration used by perception and mission nodes.
 Build it in a separate overlay:
 
 ```bash

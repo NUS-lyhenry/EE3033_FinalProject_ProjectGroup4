@@ -47,6 +47,7 @@ jobs:
           source /opt/ros/humble/setup.bash
           colcon build --symlink-install --packages-select ee3033_project
           source install/setup.bash
+          ROS_DOMAIN_ID=99 python3 tests/integration_hardware_launch.py
           ROS_DOMAIN_ID=94 python3 tests/integration_console.py
           ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
           ROS_DOMAIN_ID=96 python3 tests/integration_mapping_retry.py

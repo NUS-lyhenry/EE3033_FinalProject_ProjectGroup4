@@ -3,6 +3,24 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Hardware launch configuration regression
+
+2026-10-22: a physical mission received the assigned initial pose but could not
+localize. Its scans used `laser`, while the base mounting transform used the
+fallback `laser_link`. The mission's generic `config` argument was inherited by
+the included lab base launch, so it read the project YAML instead of its own
+installed base settings. Mapping had no parent `config`, which explains why
+the earlier mapping stage worked.
+
+The hardware wrapper now explicitly passes the installed base configuration and
+scopes each driver include. No lab files, PID settings or saved maps are edited.
+`tests/integration_hardware_launch.py` reproduces the conflicting parent argument
+with the real launch engine and a driver stand-in that reads YAML without opening
+hardware. It checks both use of the lab frame/settings and preservation of the
+parent project configuration. The unmodified code fails the first check; the fix
+passes both checks on local Jazzy and the robot's Humble. All 115 algorithm tests
+also pass. The native CI job now includes these two launch checks.
+
 ## Follow-up turning policy validation
 
 2026-10-22: Balanced and Bold now include graded turning policies as well as

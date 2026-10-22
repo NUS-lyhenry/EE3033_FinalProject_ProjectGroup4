@@ -2,7 +2,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -16,10 +16,17 @@ def setup(context):
         ('camera', 'balance_usb_cam', 'usb_cam.launch.py'),
     ]:
         if LaunchConfiguration(arg).perform(context).lower() == 'true':
-            path = os.path.join(get_package_share_directory(package), 'launch', filename)
+            share = get_package_share_directory(package)
+            path = os.path.join(share, 'launch', filename)
             kwargs = {'mode': 'detector'} if arg == 'camera' else {}
-            actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(path),
-                                                    launch_arguments=kwargs.items()))
+            if arg == 'base':
+                # Mission's generic `config` is the project YAML. Passing the lab
+                # config explicitly keeps its frame IDs and validated settings.
+                kwargs['config'] = os.path.join(share, 'config', 'base_params.yaml')
+            # Included launch arguments otherwise leak back into the parent:
+            # the base's `config` must not replace mission/perception's YAML.
+            actions.append(GroupAction(scoped=True, actions=[IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(path), launch_arguments=kwargs.items())]))
     return actions
 
 
