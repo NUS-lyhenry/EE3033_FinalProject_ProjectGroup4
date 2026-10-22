@@ -107,6 +107,26 @@ physical target localization and the full target-search/return remain pending.
 GitHub publication succeeded on 2026-10-22 after device authorization added the
 workflow scope required for the repository's CI file.
 
+The deferred-goal policy was deployed as `5f14407`. The first stack startup left
+SLAM alive but unresponsive to repeated parameter requests, with no initial map;
+the controller answered normally and a Fast DDS shared-memory lock error was
+observed. No navigation goal was sent. After explicit shutdown, the installed
+`fastdds shm clean` utility removed two zombie ports and two zombie segments,
+preserving one live port/segment. A manually reloaded stage then produced a map.
+
+In the subsequent live run, the mapper canceled a timed-out second frontier,
+deferred it, checked the other available approaches, and entered its single
+retry pass when none qualified. Nav2 reported that the replanned retry succeeded;
+three exploration goals were issued and two reported reached. The map's known
+cells increased from 1180 to 3426. Operator Stop interrupted the return, followed
+by a brief Start/Stop. The operator then reported that the robot had been stuck
+against a mattress and the map had become wrong. **This run is invalid as mapping
+or localization accuracy evidence.** It demonstrates the retry/cancellation
+sequence only; no correct complete map, physical goal accuracy or return success
+is claimed. The operator requested a fresh map using the UI's **New trial**,
+which restarts owned mapping/SLAM and resets the current trial timer while
+preserving previously saved maps and archived records.
+
 2026-10-17: deployed the package in its separate Humble overlay. The live browser
 UI displayed the current camera and new SLAM map. Battery was approximately
 11.88 V; the base, lidar, SLAM, and Nav2 started successfully. The final velocity
