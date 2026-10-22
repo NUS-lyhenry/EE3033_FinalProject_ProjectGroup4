@@ -19,6 +19,16 @@ Bold after selecting Cautious. Three native Humble console cases also pass on
 isolated domain94, checking synchronized Bold startup in both mapping and mission,
 all profile transactions, rejected writes/rollback and active-state lockout.
 
+Deployed runtime commit `cd6fb62` into the existing robot overlay. The failed
+search and persistent console were stopped cleanly and reloaded without starting
+navigation. The reviewed map `onsite_6dmqc_95/map.yaml`, bottle/lidar selection
+and current assessment record were retained. Live `/api/gap` confirms synchronized
+Bold, reserve OFF, search/turn clearance 0.14 m, heading progress 0.20 rad,
+open-loop rotation and path sampling 0.30 m. The collision radii remain 0.14 m
+with 0.01 m padding. AMCL and all required sensors are healthy; mission is
+WAITING/ready with no fault. The served UI identifies Bold as the default and
+reports software version `cd6fb62`. No physical Bold search result is claimed.
+
 ## Hardware launch configuration regression
 
 2026-10-22: a physical mission received the assigned initial pose but could not
