@@ -14,6 +14,7 @@ function renderPages(){
   document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=!e.dataset.pages.split(' ').includes(currentPage));
   document.querySelectorAll('[data-page-link]').forEach(e=>{if(e.dataset.pageLink===currentPage)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   $('pageTitle').textContent=PAGES[currentPage][0];$('pageDescription').textContent=PAGES[currentPage][1];
+  document.querySelector('.workspace-grid').classList.toggle('mapping-view',currentPage==='mapping');
   document.title=PAGES[currentPage][0]+' · Group 4 Assessment console';
 }
 function showPage(page){location.hash='/'+page;renderPages();draw();}
@@ -58,7 +59,7 @@ function render(){
   const fault=s.control_fault||s.workflow_fault||s.stage?.fault;
   $('faultBanner').hidden=!fault;$('faultBanner').textContent=fault||'';
   $('reason').textContent=s.stage?.transitioning?'Changing stage; waiting for shutdown and fresh services…':m.readiness_reason&&m.state==='WAITING'?m.readiness_reason:m.reason||'Load a stage to begin.';
-  $('health').replaceChildren(...['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(name=>{const h=s.health?.[name],e=document.createElement('span');e.className='check '+(h?.ok?'ok':'bad');e.textContent=`${h?.ok?'●':'○'} ${name}`;e.title=h?`Last received ${h.age} s ago`:'No fresh status';return e;}));
+  $('health').replaceChildren(...(mapping?['Map','Lidar','Odometry','Mission']:['Map','Lidar','Odometry','AMCL','YOLO','Mission']).map(name=>{const h=s.health?.[name],e=document.createElement('span');e.className='check '+(h?.ok?'ok':'bad');e.textContent=`${h?.ok?'●':'○'} ${name}`;e.title=h?`Last received ${h.age} s ago`:'No fresh status';return e;}));
   $('loadMapping').hidden=!managed;$('loadMapping').disabled=!idle;
   $('start').hidden=!mapping;$('start').textContent='Start automatic mapping';
   $('start').disabled=!mapping||active||!s.allow_motion||!ready();
