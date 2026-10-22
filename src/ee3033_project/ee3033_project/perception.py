@@ -22,6 +22,7 @@ from tf2_ros import Buffer, TransformListener, TransformException
 
 from .core import associate_lidar, ground_intersection, stamp_seconds
 from .ros_utils import parameters, transform_arrays
+from .model_labels import validate_target
 
 
 class Perception(Node):
@@ -46,6 +47,7 @@ class Perception(Node):
         from ultralytics import YOLO
         torch.set_num_threads(self.p['cpu_threads'])
         self.model = YOLO(self.p['model'])
+        validate_target(self.model.names,self.p['target_class'])
         self.model.to('cpu')
         self.bridge = CvBridge()
         self.buffer = Buffer(cache_time=Duration(seconds=20))

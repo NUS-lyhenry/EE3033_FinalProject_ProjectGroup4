@@ -18,10 +18,32 @@ abort when physically frozen; and Bold stopping for a closer obstacle. Synthetic
 tests run on separate domains without a `/cmd_vel` publisher. Production keeps
 the 18 s progress allowance; the regression fixture shortens it to 2 s.
 
-The robot was disconnected for battery charging before native validation and
-deployment. The GitHub workflow now includes an isolated Humble container job
-for native console, turning and both passage-resolution tests. The follow-up
-turning policy has not yet been deployed or physically demonstrated on the car.
+The robot was disconnected for battery charging before deployment. GitHub run
+39720335277 passed all three jobs for commit44c032f. Its isolated Humble container
+verified native console transactions, all five real-Nav2 turning cases, and
+passage checks at both resolutions. Balanced/Bold completed turn-then-drive;
+Cautious exposed the original stall, and frozen/close-obstacle cases aborted.
+This is synthetic software evidence. The follow-up turning policy has not yet
+been deployed or physically demonstrated on the car.
+
+## Operator pages, model labels and mapping waypoints
+
+Local algorithm checks pass 115 tests and all 17 browser checks pass, including
+subpage navigation, model selection and waypoint drag/facing. The UI uses a
+target dropdown populated from the configured weights. Metadata probe, missing
+weights, class validation, cache invalidation and probe shutdown have isolated
+tests; no class list from a different model is substituted when weights are
+unavailable. Model metadata on the charging robot has not yet been read with
+this new endpoint.
+
+Stage-1 waypoints retain both position and final facing. Pure checks cover
+unknown-space approaches, exact reachable targets, occupied/outside/nonfinite
+rejection, rotated map coordinates and deferred targets. Native waypoint tests
+cover HTTP-to-mapper navigation and Spin, independent pose/heading verification,
+false action success, Stop during late Spin acceptance, stale requests after
+Stop and stage-2 rejection. The expanded CI also reruns the original mapper/
+mission, retry and workflow regressions. Native results for this follow-up are
+pending; no physical waypoint or complete mission result is claimed.
 
 ## Software validation
 

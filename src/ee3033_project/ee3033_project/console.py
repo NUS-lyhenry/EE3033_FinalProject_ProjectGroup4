@@ -17,6 +17,7 @@ import time
 from urllib.parse import urlparse
 
 import cv2
+import numpy as np
 from cv_bridge import CvBridge
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
@@ -38,6 +39,8 @@ from .ros_utils import LATCHED, parameters, set_yaw
 from .trial import LIMITS, parameter_plan, validate_trial
 from . import gap
 from .console_workflow import Workflow
+from .model_labels import ModelLabels
+from .waypoint import validate_waypoint
 
 
 class Console(Workflow, Node):
@@ -57,6 +60,7 @@ class Console(Workflow, Node):
         self.gap_fault = None
         self.control_generation=0
         self.token = secrets.token_urlsafe(24)
+        self.model_labels=ModelLabels(self.p['model'])
         self.state = {'state':'WAITING','reason':'Waiting for mission status',
                       'target':None,'home':None}
         self.map_data = None
@@ -76,7 +80,7 @@ class Console(Workflow, Node):
         self.listener = TransformListener(self.tf,self)
         self.manual_pub = self.create_publisher(Twist,'/project/manual_cmd_vel',10)
         self.initial_pub = self.create_publisher(PoseWithCovarianceStamped,'/initialpose',10)
-        self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop')}
+        self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop','start_waypoint')}
         node_names=set(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.)))
         node_names.update(gap.parameter_plan(False,'mapping'))
         node_names.update(gap.parameter_plan(False,'mission'))
@@ -129,6 +133,8 @@ class Console(Workflow, Node):
                     return self.reply(200,node.workflow_get(path))
                 if path=='/api/state':
                     return self.reply(200,node.snapshot())
+                if path=='/api/labels':
+                    return self.reply(200,node.model_labels.read())
                 if path in ('/api/trial','/api/gap'):
                     try:
                         with node.control_lock:
@@ -331,7 +337,7 @@ class Console(Workflow, Node):
         if values is not None:
             values = validate_trial(values)
             with self.lock:
-                if (self.state['state'] not in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL')
+                if (self.state['state'] not in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL','WAYPOINT_REACHED')
                         or time.monotonic()-self.freshness.get('Mission',-math.inf)>2):
                     raise ValueError('Stop mapping and wait for fresh status before tuning')
             self.manual = (0.,0.,0.)
@@ -399,7 +405,7 @@ class Console(Workflow, Node):
             gap.validate_audacity(audacity)
         if changing:
             with self.lock:
-                idle = self.state['state'] in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL')
+                idle = self.state['state'] in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL','WAYPOINT_REACHED')
                 if (not idle or time.monotonic()-self.freshness.get('Mission',-math.inf)>2
                         or (phase=='mission' and self.state['state']!='WAITING')):
                     raise ValueError('Stop mapping or configure clearance before starting stage 2')
@@ -459,7 +465,7 @@ class Console(Workflow, Node):
             raise ValueError('Wait for the stage transition to finish')
         with self.lock:
             state = self.state['state']
-            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','VERIFYING','MAPPING','SAVING')
+            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING')
         if path in ('/api/start','/api/stop'):
             key = path.rsplit('/',1)[-1]
             if key=='start' and not self.p['allow_motion']:
@@ -475,8 +481,8 @@ class Console(Workflow, Node):
             if key=='stop':
                 if self.stage:
                     self.stage.cancel.set()
-                    with self.lock:
-                        self.control_generation+=1
+                with self.lock:
+                    self.control_generation+=1
                 self.manual = (0.,0.,0.)
                 self.manual_pub.publish(Twist())
             client = self.command_clients[key]
@@ -496,6 +502,47 @@ class Console(Workflow, Node):
             return {'success':result.success,'message':result.message}
         if path=='/api/trial':
             return self.trial_settings(body)
+        if path=='/api/map_waypoint':
+            if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
+                raise ValueError('Mapping waypoints are available only while stage 1 is stopped')
+            if self.trial_fault or self.gap_fault or self.workflow_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            record=self.record.snapshot()
+            if record['interrupted'] or record['finished'] is not None:
+                raise ValueError('Begin a new trial before waypoint mapping')
+            if set(body)!={'x','y','yaw'} or any(type(body[k]) not in (int,float) for k in body):
+                raise ValueError('Provide waypoint x, y and heading as numbers')
+            with self.lock:
+                m=self.map_data
+                if (time.monotonic()-self.freshness.get('Mission',-math.inf)>2
+                        or time.monotonic()-self.freshness.get('Map',-math.inf)>2 or m is None):
+                    raise ValueError('Wait for a fresh map and mapping status')
+            target=validate_waypoint(np.array(m['cells']).reshape(m['height'],m['width']),
+                m['resolution'],m['origin'],tuple(body[k] for k in ('x','y','yaw')))
+            generation=self.control_generation
+            self.manual=(0.,0.,0.);self.manual_pub.publish(Twist())
+            values=dict(zip(('waypoint_x','waypoint_y','waypoint_yaw'),target))
+            values['waypoint_request_time']=self.get_clock().now().nanoseconds*1e-9
+            self.write_trial_node('project_mapper',values)
+            response=self.parameter_request('project_mapper','get_parameters',GetParameters.Request(names=list(values)))
+            actual=[Parameter.from_parameter_msg(ParameterMessage(name=k,value=v)).value for k,v in zip(values,response.values)]
+            if len(actual)!=len(values) or any(type(a) is not float or not math.isclose(a,b,rel_tol=0,abs_tol=1e-8) for a,b in zip(actual,values.values())):
+                raise RuntimeError('Waypoint parameters did not match readback; no goal was started')
+            if generation!=self.control_generation:
+                raise ValueError('Stop superseded the waypoint request')
+            client=self.command_clients['start_waypoint']
+            if not client.wait_for_service(timeout_sec=1):raise RuntimeError('Mapping waypoint service is unavailable')
+            future=client.call_async(Trigger.Request());deadline=time.monotonic()+5
+            while not future.done() and time.monotonic()<deadline:time.sleep(.01)
+            if generation!=self.control_generation:
+                self.command('/api/stop',{})
+                raise ValueError('Stop superseded the waypoint request')
+            if not future.done():
+                self.command('/api/stop',{})
+                raise RuntimeError('Waypoint start timed out; Stop requested')
+            result=future.result()
+            if result.success:self.record.start('mapping')
+            return dict(success=result.success,message=result.message)
         if path=='/api/gap':
             if not body or set(body)-{'enabled','audacity'}:
                 raise ValueError('Provide enabled: true/false and/or audacity: cautious/balanced/bold')
@@ -572,6 +619,7 @@ class Console(Workflow, Node):
             self.manual_pub.publish(cmd)
 
     def destroy_node(self):
+        self.model_labels.close()
         if self.context.ok():
             self.manual_pub.publish(Twist())
         if self.stage:

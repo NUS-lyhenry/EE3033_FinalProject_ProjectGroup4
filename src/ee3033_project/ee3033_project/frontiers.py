@@ -7,7 +7,7 @@ from .core import angle_difference
 
 
 def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
-                  min_frontier_cells=5, approach_distance=0.75):
+                  min_frontier_cells=5, approach_distance=0.75, toward=None):
     planner = CoveragePlanner(data,resolution,origin,clearance=clearance)
     r,c = planner.world_to_cell(*robot[:2])
     if not planner.in_bounds(r,c):
@@ -60,6 +60,8 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                     continue
                 turn=abs(angle_difference(math.atan2(y-robot[1],x-robot[0]),robot[2]))
                 score=len(cells)*resolution/(0.5+distance+0.4*turn)
+                if toward is not None:
+                    score/=0.25+math.hypot(cx-toward[0],cy-toward[1])
                 options.append((score,(x,y,yaw)))
                 break
     return max(options,key=lambda p:p[0])[1] if options else None,valid_groups

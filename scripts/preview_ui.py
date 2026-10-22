@@ -36,6 +36,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/state':return self.reply(200,preview_state())
         if path=='/api/map':return self.reply(200,None)
         if path=='/api/maps':return self.reply(200,{'maps':[]})
+        if path=='/api/labels':return self.reply(200,dict(ready=True,model='SIMULATED labels',labels=['bottle','cup'],error=None))
         if path=='/api/result':return self.reply(200,{'simulated':True,'mission':preview_state()['mission']})
         return self.reply(404,{'error':'No live robot data in preview'})
     def do_POST(self):self.reply(403,{'error':'Read-only preview cannot send robot commands'})

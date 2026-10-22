@@ -12,9 +12,9 @@ a duplicate tunnel or driver. See README for exact launch commands.
    are not calibration evidence.
 2. Check exactly one `/cmd_vel` publisher (the project gate), no competing SLAM/
    AMCL transform, fresh lidar/odometry/TF, and the actual map/save directory.
-3. Open the browser. Select Cautious, Balanced or Bold while stopped, then
+3. Open **Navigation settings**. Select Cautious, Balanced or Bold while stopped, then
    configure gap blocking; verify global/local
-   radii and the mapping/search clearance. Apply temporary trial limits only in
+   radii, mapping/search clearance and turn-stop distance. Apply temporary trial limits only in
    idle mapping. Confirm no control fault. Defaults return after restart.
 4. Have the examiner confirm intervention rules and return position tolerance.
    Record the deployed local commit and map path in TESTING's trial table.
@@ -22,18 +22,23 @@ a duplicate tunnel or driver. See README for exact launch commands.
 ## Mapping, then mission
 
 1. Launch `assessment.launch.py` with the persistent map/results directories and
-   `allow_motion:=true` only for the prepared robot. Open the UI and **Load
+   `allow_motion:=true` only for the prepared robot. Open **Mapping** and **Load
    mapping**. The combined timer starts as the mapping stack loads; the UI's
    separate stage timer is still shown. Keep an examiner stopwatch as reference.
 2. Keep the target absent during mapping. Start automatic mapping, or use manual
    mapping only as permitted. Save in a new directory. Inspect and mark the map
    reviewed; `MAPPED_PARTIAL` remains partial after review.
+   For a mapping waypoint, stop automation, drag on the map to select position
+   and final facing (or enter x/y/heading), then **Go & map**. Wait for verified
+   arrival or a reported failure. SLAM stays live; **Save a new map** remains
+   explicit. An unexplored point is approached through mapped-free space.
    Failed exploration goals are deferred until other reachable areas have been
    explored, then retried once using the current map. Watch the deferred count
    and final retry pass in the mapping panel. Stop and sensor/cancellation faults
    still halt the run; this policy does not restart failed nodes.
-3. Select that trial's saved map. After placing the target, choose the actual
-   model class, physically validated coordinate method and required return
+3. Open **Mission** and select that trial's saved map. After placing the target,
+   choose an actual model class from the dropdown (no free-text labels),
+   physically validated coordinate method and required return
    tolerance. **Load selected map for mission** stops the owned SLAM/Nav2 stage
    before loading AMCL and the mission stack. The console stays open. Do not run
    any second mapping/localization or velocity writer alongside it.
@@ -42,7 +47,7 @@ a duplicate tunnel or driver. See README for exact launch commands.
    edits or manual target coordinates are available in stage 2.
 5. Completion requires the target report, return within tolerance and the
    stationary hold. `NOT_FOUND`, `FAILED`, or an unverified Nav2 success is not a
-   complete mission. Download the trial JSON, preserving independent target and
+   complete mission. Open **Results** and download the trial JSON, preserving independent target and
    return reference measurements outside mission control.
 6. Inform the examiner before any restart/intervention. Nothing auto-restarts.
    **New trial** explicitly reloads fresh mapping and resets the current timer;

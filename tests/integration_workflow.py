@@ -38,6 +38,13 @@ class WorkflowIntegration(unittest.TestCase):
         self.console=Console(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
             port=0,phase='mapping',allow_motion=True,manage_stages=True,
             map_directory=str(self.map_root),session_directory=self.root.name+'/records').items()])
+        # The synthetic detector fixture has these labels; real deployments
+        # obtain them from the configured weights through /api/labels.
+        from ee3033_project.model_labels import ModelLabels
+        weights=Path(self.root.name)/'fixture.pt';weights.write_bytes(b'synthetic detector')
+        self.console.model_labels=ModelLabels(weights)
+        self.console.model_labels.signature=self.console.model_labels.identity()
+        self.console.model_labels.cache=self.console.model_labels.response(labels=['bottle','cup'])
         self.executor=MultiThreadedExecutor(num_threads=4);self.executor.add_node(self.console)
         self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
         self.base=f'http://127.0.0.1:{self.console.p["port"]}'
@@ -77,6 +84,7 @@ class WorkflowIntegration(unittest.TestCase):
         settings=dict(phase='mission',map_id=maps[0]['id'],target_class='bottle',localization_method='lidar',return_tolerance=.2)
         with self.assertRaises(HTTPError):self.post('stage',settings)
         self.post('review_map',{'map_id':maps[0]['id']})
+        with self.assertRaises(HTTPError):self.post('stage',{**settings,'target_class':'pepsi'})
         self.post('stage',settings)
         self.assertTrue(wait(lambda:self.get()['mission'].get('ready')))
         self.assertEqual(self.console.count_publishers('/cmd_vel'),1)

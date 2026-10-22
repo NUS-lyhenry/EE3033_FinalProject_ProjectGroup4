@@ -127,6 +127,7 @@ class Workflow:
             if phase not in ('mapping','mission'): raise ValueError('Select mapping or mission')
             map_path=None;selected=None;options=mission_options(body)
             if phase=='mission':
+                self.model_labels.require(options['target_class'])
                 selected=self.catalog.entry(body.get('map_id'))
                 if not selected['reviewed']: raise ValueError('Inspect and review the saved map before stage 2')
                 record=self.record.snapshot()

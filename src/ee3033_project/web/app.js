@@ -1,10 +1,23 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','VERIFYING','MAPPING','SAVING']);
+const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING']);
 const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d):'—';
 const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
+let modelLabels=null,labelKey='',labelsBusy=false;
+let waypointDraft=null;
+const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Select an audacity level and configure navigation while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
+let currentPage='overview';
+function renderPages(){
+  const route=location.hash.replace(/^#\/?/,'');currentPage=Object.hasOwn(PAGES,route)?route:'overview';
+  document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=!e.dataset.pages.split(' ').includes(currentPage));
+  document.querySelectorAll('[data-page-link]').forEach(e=>{if(e.dataset.pageLink===currentPage)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
+  $('pageTitle').textContent=PAGES[currentPage][0];$('pageDescription').textContent=PAGES[currentPage][1];
+  document.title=PAGES[currentPage][0]+' · Group 4 Assessment console';
+}
+function showPage(page){location.hash='/'+page;renderPages();draw();}
+window.addEventListener('hashchange',()=>{releaseDrive();renderPages();window.scrollTo(0,0);draw();});
 const trialFields=[['max_linear','trialLinear','m/s'],['max_angular','trialAngular','rad/s'],['goal_timeout','trialTimeout','s']];
 function feedback(message,error=false){$('feedback').textContent=message;$('feedback').classList.toggle('error',error);}
 async function get(path){const r=await fetch('/api/'+path);const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
@@ -20,6 +33,7 @@ function setupIdle(){return online&&!snapshot?.read_only&&!busy&&!snapshot?.stag
 function ready(){return online&&!snapshot?.assessment?.interrupted&&snapshot?.assessment?.finished==null&&running()&&snapshot?.health?.Mission?.ok&&snapshot?.mission?.ready!==false&&!snapshot?.control_fault&&!busy&&!snapshot?.stage?.transitioning;}
 function setPill(id,text,kind=''){const e=$(id);e.textContent=text;e.className='pill '+kind;}
 function render(){
+  renderPages();
   if(!snapshot)return;
   const s=snapshot,m=s.mission||{},active=ACTIVE.has(m.state),mapping=s.phase==='mapping',idle=setupIdle(),loaded=running(),managed=!!s.stage?.managed;
   $('previewNotice').hidden=!s.simulated;
@@ -50,8 +64,16 @@ function render(){
   $('start').disabled=!mapping||active||!s.allow_motion||!ready();
   $('saveMap').disabled=!mapping||!loaded||!idle||!s.health?.Map?.ok;
   $('mappingControls').hidden=!mapping;
+  $('waypointControls').hidden=!mapping;
+  const waypointAllowed=mapping&&loaded&&idle&&s.allow_motion&&ready()&&s.health?.Map?.ok;
+  ['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).disabled=!waypointAllowed);
+  $('goWaypoint').disabled=!waypointAllowed||!waypointDraft;
+  const selected=waypointDraft||(m.mapping_mode==='waypoint'?m.waypoint:null);
+  $('waypointStatus').textContent=selected?`${waypointDraft?'Selected waypoint':m.waypoint_verified?'Verified waypoint':'Requested waypoint'} (${fmt(selected[0])}, ${fmt(selected[1])}) m · facing ${fmt(selected[2]*180/Math.PI,0)}°`:'Select a position and final facing.';
+  $('mapTitle').textContent=currentPage==='mapping'&&mapping?'Map · drag to set waypoint and facing':currentPage==='mission'&&!mapping?'Map · drag to set initial pose':'On-site map';
   document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=!mapping||!loaded||!idle||!s.allow_motion||!!fault||!s.health?.Lidar?.ok);
-  $('loadMission').hidden=!managed;$('loadMission').disabled=!idle||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
+  const labelReady=modelLabels?.ready===true&&modelLabels.labels.includes($('targetClass').value);
+  $('loadMission').hidden=!managed;$('loadMission').disabled=!idle||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
   $('reviewMap').disabled=!mapping||!idle||!chosenMap();
   $('savedMaps').disabled=!idle;$('refreshMaps').disabled=!online||!!busy;
   const entry=chosenMap();setPill('mapQuality',entry?(entry.reviewed?'Reviewed · ':'')+entry.quality:'Unverified',entry?.reviewed?'good':'warn');
@@ -62,8 +84,11 @@ function render(){
   ['poseX','poseY','poseYaw'].forEach(id=>$(id).disabled=!poseAllowed);
   $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
   ['targetClass','localizationMethod','returnTolerance'].forEach(id=>$(id).disabled=!idle);
+  $('targetClass').disabled=!idle||!modelLabels?.ready;
+  const targetChanged=!mapping&&$('targetClass').value!==s.mission_options?.target_class;
+  $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Reload the mission to apply the selected target class.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
   $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Floor-plane projection uses the visible object bottom and calibrated camera geometry. Check it at measured floor positions before the mission.':'Lidar localization requires the target to intersect the scan plane. Validate the camera and chosen method at measured positions.';
-  $('startMission').disabled=mapping||active||!s.allow_motion||!ready()||(managed&&!s.initial_pose_sent);
+  $('startMission').disabled=mapping||active||!s.allow_motion||!ready()||!labelReady||targetChanged||(managed&&!s.initial_pose_sent);
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
   setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
   setPill('missionBadge',mapping?'Awaiting map':m.state==='COMPLETE'?'Complete':active?'In progress':'Setup',m.state==='COMPLETE'?'good':'');
@@ -110,7 +135,7 @@ function renderParameters(){
   if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
 }
 async function refreshMaps(preferred){const d=await get('maps');maps=d.maps||[];const current=$('savedMaps').value;const selected=preferred||snapshot?.selected_map?.id||((snapshot?.assessment?.maps||[]).includes(current)?current:maps.find(m=>m.path===snapshot?.saved_map)?.id)||current;const options=maps.map(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=`${m.reviewed?'Reviewed':'Unreviewed'} · ${m.quality} · ${m.id.split('/')[0]}`;return o;});if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}$('savedMaps').replaceChildren(...options);if(maps.some(m=>m.id===selected))$('savedMaps').value=selected;render();}
-async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value)});await action('stage',body);}
+async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value)});await action('stage',body);showPage(phase);}
 $('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
 $('start').onclick=()=>action('start').catch(()=>{});$('startMission').onclick=()=>action('start').catch(()=>{});
 $('stop').onclick=async()=>{releaseDrive();try{const d=await send('stop');feedback(d.message||'Stop requested');}catch(e){feedback(e.message,true);}};
@@ -118,7 +143,11 @@ $('saveMap').onclick=async()=>{try{const d=await action('save_map');await refres
 $('refreshMaps').onclick=()=>refreshMaps().catch(e=>feedback(e.message,true));$('savedMaps').onchange=render;
 $('reviewMap').onclick=async()=>{try{await action('review_map',{map_id:$('savedMaps').value});await refreshMaps();}catch(_){}};
 $('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Number($('poseY').value),yaw:Number($('poseYaw').value)*Math.PI/180}).catch(()=>{});
-$('newTrial').onclick=()=>action('new_trial').catch(()=>{});$('localizationMethod').onchange=render;
+function readWaypointDraft(){const fields=['waypointX','waypointY','waypointYaw'].map(id=>$(id).value);const values=fields.map(Number);waypointDraft=fields.every(v=>v!=='')&&values.every(Number.isFinite)?[values[0],values[1],values[2]*Math.PI/180]:null;render();}
+['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).oninput=readWaypointDraft);
+$('goWaypoint').onclick=()=>{if(waypointDraft)action('map_waypoint',{x:waypointDraft[0],y:waypointDraft[1],yaw:waypointDraft[2]}).then(()=>{waypointDraft=null;render();}).catch(()=>{});};
+$('newTrial').onclick=()=>action('new_trial').then(()=>showPage('mapping')).catch(()=>{});$('localizationMethod').onchange=render;
+$('targetClass').onchange=render;
 $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
@@ -135,7 +164,7 @@ async function pollParameters(){
 }
 async function poll(){
   try{const s=await get('state');snapshot=s;online=true;
-    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;paramTime=0;trialDirty=false;releaseDrive();}
+    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;paramTime=0;trialDirty=false;waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
     if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;}}
     if(s.map_revision!==mapRevision){mapRevision=s.map_revision;renderMap(await get('map'));}
     render();
@@ -143,23 +172,38 @@ async function poll(){
   setTimeout(poll,500);
 }
 async function pollMaps(){if(online&&!busy)try{await refreshMaps();}catch(_){}setTimeout(pollMaps,5000);}
+async function pollLabels(){
+  if(online&&!labelsBusy){labelsBusy=true;try{
+    const data=await get('labels');modelLabels=data;
+    const key=JSON.stringify([data.model,data.labels]);
+    if(key!==labelKey){labelKey=key;const current=$('targetClass').value||snapshot?.mission_options?.target_class||'cup';
+      const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=data.ready?'Select a target class':'Model labels unavailable';
+      const options=(data.labels||[]).map(label=>{const option=document.createElement('option');option.value=label;option.textContent=label;return option;});
+      $('targetClass').replaceChildren(placeholder,...options);
+      if(data.labels?.includes(current))$('targetClass').value=current;
+    }
+  }catch(e){modelLabels={ready:false,labels:[],error:e.message};}finally{labelsBusy=false;render();}}
+  setTimeout(pollLabels,5000);
+}
 function cameraTick(){if(online&&snapshot?.camera_source)$('camera').src='/api/image.jpg?t='+Date.now();setTimeout(cameraTick,800);}
 function releaseDrive(){if(driveTimer)clearInterval(driveTimer);driveTimer=null;if(driveRunning){driveRunning=false;send('teleop',{linear:0,angular:0}).catch(()=>{});}}
 for(const button of document.querySelectorAll('[data-drive]')){button.onpointerdown=e=>{if(button.disabled)return;e.preventDefault();releaseDrive();button.setPointerCapture(e.pointerId);const [linear,angular]=button.dataset.drive.split(',').map(Number);driveRunning=true;const tick=()=>send('teleop',{linear,angular}).catch(e=>{releaseDrive();feedback(e.message,true);});tick();driveTimer=setInterval(tick,100);};button.onpointerup=button.onpointercancel=button.onlostpointercapture=releaseDrive;}
 window.addEventListener('blur',releaseDrive);document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseDrive();});
 function point(x,y){const [ox,oy,a]=mapData.origin,dx=x-ox,dy=y-oy;return[(Math.cos(a)*dx+Math.sin(a)*dy)/mapData.resolution,mapData.height-(-Math.sin(a)*dx+Math.cos(a)*dy)/mapData.resolution];}
 function worldPoint(x,y){const [ox,oy,a]=mapData.origin,dx=x*mapData.resolution,dy=(mapData.height-y)*mapData.resolution;return[ox+Math.cos(a)*dx-Math.sin(a)*dy,oy+Math.sin(a)*dx+Math.cos(a)*dy];}
-function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),ctx=canvas.getContext('2d'),wrap=canvas.parentElement,scale=Math.min((wrap.clientWidth-28)/mapData.width,(wrap.clientHeight-28)/mapData.height);canvas.width=mapData.width*3;canvas.height=mapData.height*3;canvas.style.width=mapData.width*scale+'px';canvas.style.height=mapData.height*scale+'px';ctx.scale(3,3);ctx.imageSmoothingEnabled=false;ctx.drawImage(mapImage,0,0);
+function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),ctx=canvas.getContext('2d'),wrap=canvas.parentElement;if(wrap.clientWidth<1||wrap.clientHeight<1)return;const scale=Math.min((wrap.clientWidth-28)/mapData.width,(wrap.clientHeight-28)/mapData.height);canvas.width=mapData.width*3;canvas.height=mapData.height*3;canvas.style.width=mapData.width*scale+'px';canvas.style.height=mapData.height*scale+'px';ctx.scale(3,3);ctx.imageSmoothingEnabled=false;ctx.drawImage(mapImage,0,0);
   function line(points,color,dash=[]){if(!points?.length)return;ctx.beginPath();ctx.setLineDash(dash);points.forEach((p,i)=>{const [x,y]=point(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle=color;ctx.lineWidth=.8;ctx.stroke();ctx.setLineDash([]);}
   function dot(p,color,r=2){if(!p)return;const[x,y]=point(...p);ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
   line(snapshot.route,'#bca6d8',[1.5,2]);line(snapshot.path,'#52cfaa');const m=snapshot.mission;dot(m.home,'#ce92df',2.3);if(m.target)dot([m.target.x,m.target.y],'#ecba59',2.8);
+  const waypoint=waypointDraft||(m.mapping_mode==='waypoint'?m.waypoint:null);
+  if(waypoint){const[x,y]=point(...waypoint),a=-(waypoint[2]-mapData.origin[2]);ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.beginPath();ctx.arc(0,0,1.6,0,Math.PI*2);ctx.moveTo(0,0);ctx.lineTo(7,0);ctx.lineTo(4,-1.5);ctx.moveTo(7,0);ctx.lineTo(4,1.5);ctx.strokeStyle='#ecba59';ctx.lineWidth=.7;ctx.stroke();ctx.restore();}
   if(snapshot.pose){const[x,y]=point(...snapshot.pose);ctx.save();ctx.translate(x,y);ctx.rotate(-(snapshot.pose[2]-mapData.origin[2]));ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(-2.5,-2);ctx.lineTo(-2.5,2);ctx.closePath();ctx.fillStyle='#5dbaec';ctx.fill();ctx.restore();}
   if(drag){ctx.beginPath();ctx.moveTo(...drag.start);ctx.lineTo(...drag.end);ctx.strokeStyle='#ecba59';ctx.stroke();}
 }
 function renderMap(m){mapData=m;mapImage=null;$('mapEmpty').hidden=!!m;if(!m){$('map').getContext('2d').clearRect(0,0,$('map').width,$('map').height);return;}$('mapScale').textContent=`${fmt(m.width*m.resolution,1)} × ${fmt(m.height*m.resolution,1)} m · ${fmt(m.resolution)} m/cell`;mapImage=document.createElement('canvas');mapImage.width=m.width;mapImage.height=m.height;const ctx=mapImage.getContext('2d'),pixels=ctx.createImageData(m.width,m.height);for(let r=0;r<m.height;r++)for(let c=0;c<m.width;c++){const v=m.cells[r*m.width+c],i=((m.height-1-r)*m.width+c)*4;pixels.data.set([...(v<0?[48,65,75]:v>=50?[14,29,36]:[196,210,211]),255],i);}ctx.putImageData(pixels,0,0);draw();}
 function canvasPosition(e){const r=$('map').getBoundingClientRect();return[(e.clientX-r.left)/r.width*mapData.width,(e.clientY-r.top)/r.height*mapData.height];}
-$('map').onpointerdown=e=>{if(!mapData||$('setPose').disabled)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p};draw();};
+$('map').onpointerdown=e=>{const mode=currentPage==='mapping'&&!$('waypointX').disabled?'waypoint':currentPage==='mission'&&!$('setPose').disabled?'pose':null;if(!mapData||!mode)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p,mode};draw();};
 $('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
-$('map').onpointerup=()=>{if(!drag)return;const a=worldPoint(...drag.start),b=worldPoint(...drag.end);$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=(Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI).toFixed(0);drag=null;draw();feedback('Start pose selected. Press Set initial pose to send it.');};
+$('map').onpointerup=()=>{if(!drag)return;const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
 $('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);
-poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);cameraTick();
+poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollLabels,500);cameraTick();

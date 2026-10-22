@@ -16,7 +16,7 @@ import time
 
 import yaml
 
-ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING',
+ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
                     'VERIFYING','MAPPING','SAVING'))
 
 
@@ -191,7 +191,7 @@ def mission_options(values):
     target = values.get('target_class','cup')
     method = values.get('localization_method','lidar')
     tolerance = values.get('return_tolerance',.20)
-    if not isinstance(target,str) or not re.fullmatch(r'[a-z][a-z _-]{0,39}',target):
+    if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
         raise ValueError('Use the detector class label, for example cup or bottle')
     if method not in ('lidar','ground_plane'):
         raise ValueError('Select lidar or ground_plane localization')

@@ -48,6 +48,10 @@ jobs:
           colcon build --symlink-install --packages-select ee3033_project
           source install/setup.bash
           ROS_DOMAIN_ID=94 python3 tests/integration_console.py
+          ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
+          ROS_DOMAIN_ID=96 python3 tests/integration_mapping_retry.py
+          ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
+          ROS_DOMAIN_ID=98 python3 tests/integration_waypoint.py
           ROS_DOMAIN_ID=97 python3 tests/integration_turning_nav2.py
           ROS_DOMAIN_ID=92 GROUP4_GAP_RESOLUTION=.05 python3 tests/integration_gap_nav2.py
           ROS_DOMAIN_ID=91 GROUP4_GAP_RESOLUTION=.01 python3 tests/integration_gap_nav2.py

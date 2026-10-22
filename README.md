@@ -20,6 +20,8 @@ specific instance among several cups.
   distance plus stationary-odometry verification at home.
 - Browser operator console with live map, annotated video, state, target
   coordinates/confidence, coverage, event log, initial pose setup, and Start/Stop.
+- Stage-1 mapping waypoints with click-drag position and final facing, safe
+  approaches toward unexplored areas, and independent arrival verification.
 - One final velocity gate with command, lidar, and mission-heartbeat deadlines.
   Manual control is restricted to the mapping stage. Motion defaults to disabled.
 - Stopped-only narrow-gap blocking with verified global/local footprints,
@@ -74,14 +76,19 @@ Without `allow_motion:=true`, the console can load services but rejects motion
 starts. The console initially starts no hardware. Open
 `http://127.0.0.1:8765` through SSH forwarding and use this sequence:
 
-1. **Load mapping** with the target absent. The combined timer starts here,
+The sidebar (or mobile tabs) separates **Overview**, **Mapping**, **Mission**,
+**Navigation settings**, and **Results**. Direct links such as `/#/mapping` open
+the corresponding page. Stop, connection, battery and stage readiness remain
+available across pages; the live map appears on Overview, Mapping and Mission.
+
+1. On **Mapping**, **Load mapping** with the target absent. The combined timer starts here,
    because SLAM is constructing the map even before the first motion command.
-2. **Start automatic mapping**, or use permitted hold-to-drive controls while
+2. **Start automatic mapping**, use **Go & map** waypoints, or permitted hold-to-drive controls while
    automatic mapping is inactive. **Stop robot** cancels and disables motion.
 3. Save a new map if needed, inspect accessible and missing areas, select it and
    **Mark map reviewed**. Review changes metadata only; a partial map stays
    labelled partial. Original map pixels and YAML remain unchanged.
-4. After the target is placed, select the detector class, a validated coordinate
+4. On **Mission**, after the target is placed, select the detector class, a validated coordinate
    method and the examiner's return tolerance. **Load selected map for mission**
    stops the owned mapping launch, verifies its processes and ROS publishers
    have disappeared, then starts saved-map localization and the mission stack.
@@ -89,7 +96,7 @@ starts. The console initially starts no hardware. Open
 5. Establish the assigned **initial pose** in the loaded map. Drag from position
    toward heading, or enter that start pose. **Start autonomous mission** records
    home and begins the existing search → report → return → stationary-stop logic.
-6. Read target `(x, y)` in metres in `map`, the return distance/tolerance and the
+6. On **Results**, read target `(x, y)` in metres in `map`, the return distance/tolerance and the
    stationary verification. **Download trial JSON** exports the record without
    console tokens. **New trial** stops the idle owned stage and loads fresh SLAM;
    earlier maps and trial directories are preserved.
@@ -123,6 +130,15 @@ python3 scripts/preview_ui.py
 
 The standalone stage launch procedures below remain available.
 
+The target selector reads `model.names` from the configured detection weights,
+without a hard-coded list or free-text target entry. An isolated bounded process
+reads the metadata so the console does not retain another Torch model. Metadata
+is cached until the weight file changes; missing/unreadable weights leave mission
+setup disabled. The server rejects labels outside that model, and Perception
+checks the selected class again when it loads the weights. Standard YOLO26n uses
+COCO labels such as cup, bottle, bowl, book and chair; it has no Pepsi brand label.
+Inspect actual detections before choosing the assessment target class.
+
 ## Stage 1 — construct a new map
 
 ```bash
@@ -138,6 +154,23 @@ the resulting map before the autonomous search. Manual mapping is also available
 through the hold-to-drive controls when automatic mapping is inactive and the
 examiner permits it. Releasing the button or losing the browser stops manual
 commands within the deadman timeout.
+
+For **Waypoint mapping**, stop automatic mapping, then drag on the Mapping
+page's map from the desired position toward the final facing. Alternatively,
+enter waypoint x/y in metres and facing in degrees. The arrow previews the goal;
+**Go & map** starts it. A point in unknown space is approached via reachable
+mapped-free frontiers biased toward that point while SLAM continues updating.
+The robot never receives a driving goal in unknown or occupied space. Once the
+chosen point becomes reachable, navigation reaches it and Nav2 Spin establishes
+the requested facing. Fresh pose and stationary odometry must confirm position
+within 0.20 m and heading within 0.15 rad before `WAYPOINT_REACHED` is reported.
+SLAM remains live and the car stays there; save a map explicitly when finished.
+
+Occupied/outside-map goals are rejected. No mapped approach, sensor faults,
+unverified arrival and action timeouts stop the attempt. Stop also invalidates
+an older queued waypoint request, including late turn acceptance. Position and
+facing controls are confined to stage 1; mission-stage map dragging only sets
+the assigned localization pose before autonomous Start.
 
 To save another snapshot without overwriting any map, use **Save a new map** or:
 
