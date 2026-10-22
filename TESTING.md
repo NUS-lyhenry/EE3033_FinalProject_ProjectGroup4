@@ -9,7 +9,7 @@ with measured results after each room or sandbox trial.
 detector, target filter, velocity gate, Nav2 configuration and installed lab
 drivers. A persistent console now coordinates the two stages.
 
-- 78 pure Python tests pass on the development computer (Python 3.12), including
+- 79 pure Python tests pass on the development computer (Python 3.12), including
   scan handling, navigation bounds, continuous timing, atomic results, saved-map
   validation/review, owned process shutdown and cancellation without auto-restart.
 - Nine Humble integration scenarios pass: target found/return; no target;
@@ -55,6 +55,30 @@ checked in both global and local costmaps before invoking the actual NavFn actio
 No chassis output publisher exists in this fixture.
 
 ## Physical validation
+
+2026-10-22: robot rediscovered at its current LAN address, existing Humble
+container restarted, and the assessment UI deployed to the separate project
+folder. Original lab programs, PID and maps were preserved. Source backup:
+`/home/balance/ros2_ws/group4_backups/pre_basic_a279a8e_20261022.tar.gz`.
+The live UI was opened in Firefox. With the target removed and operator readiness
+confirmed, one frontier goal succeeded, but the mapping return timed out. The
+93.8 s run saved `onsite_6cw1axr_/map.yaml` as **partial** in the persistent map
+directory. The operator confirmed unexplored areas remained. After explicit
+Stop, 499 sampled final velocity messages were zero; the gate was the sole
+publisher. Battery was approximately 11.24–11.27 V.
+
+A 25 s moving diagnostic saw rear as well as front returns across a 359.2 degree
+scan. Rotation was blocked by the existing 0.16 m clearance check in 36/244 scans;
+the physical source of close rear returns remains unresolved. Separately,
+replaying the saved map found diagonal frontier chains split into fragments of
+at most four cells and discarded by the minimum-five-cell filter. Eight-neighbour
+frontier grouping fixes that loss while retaining four-neighbour route
+reachability and the same footprint clearance. A synthetic slanted-boundary
+regression and all nine native ROS scenarios pass. Fresh physical validation
+of that fix is pending. The complete physical target-search/return remains pending.
+
+GitHub publication succeeded on 2026-10-22 after device authorization added the
+workflow scope required for the repository's CI file.
 
 2026-10-17: deployed the package in its separate Humble overlay. The live browser
 UI displayed the current camera and new SLAM map. Battery was approximately

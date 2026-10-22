@@ -23,5 +23,7 @@ def generate_launch_description():
     return LaunchDescription([
         *[DeclareLaunchArgument(name,default_value=value) for name,value in defaults.items()],
         Node(package='ee3033_project',executable='console',name='project_console',
-             output='screen',parameters=[params]),
+             # The console gives its owned ROS stage up to 12 s to shut down.
+             # Let it finish that cleanup before launch escalates the signal.
+             sigterm_timeout='20',output='screen',parameters=[params]),
     ])
