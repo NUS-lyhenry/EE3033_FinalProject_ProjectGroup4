@@ -1,0 +1,24 @@
+<!--
+  Keep path following and 1 Hz replanning. On failure, refresh both costmaps,
+  hold for one second so fresh observations can arrive, and try once more.
+  A persistent failure is returned to the mapper/mission so it can defer this
+  goal. Recovery itself never spins or reverses the balancing robot; normal
+  heading changes remain the collision-checked controller's responsibility.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="1" name="BoundedNavigationRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath"/>
+      </PipelineSequence>
+      <Sequence name="RefreshAndPause">
+        <ClearEntireCostmap name="ClearLocalCostmap" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
+        <Wait wait_duration="1"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

@@ -260,6 +260,13 @@ rejected by this policy rather than silently treated as a circular footprint.
 These settings reset to Bold with gap blocking OFF when the stage reloads.
 The legacy gap-only API preserves the currently selected level.
 
+Navigation recovery refreshes both costmaps, waits one second for fresh
+observations, and retries the goal once. Persistent planning/controller failure
+then returns to the mapper or mission. Recovery does not command a fixed spin
+or backup. The controller chooses normal turns from the planned path; manual
+mapping waypoints retain their selected final facing. A physically blocked
+controller can still take its normal 18 s progress allowance to report failure.
+
 Mapping uses relaxed final heading because the lidar observes all directions;
 mission search retains its observation heading. A failed exploration goal is
 deferred while other reachable frontiers are explored. A timeout first disables
@@ -435,6 +442,7 @@ ROS_DOMAIN_ID=89 python3 tests/smoke_nav2.py
 ROS_DOMAIN_ID=90 python3 tests/integration_console.py
 ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
 ROS_DOMAIN_ID=96 python3 tests/integration_mapping_retry.py
+ROS_DOMAIN_ID=101 python3 tests/integration_recovery_nav2.py
 ROS_DOMAIN_ID=91 python3 tests/integration_gap_nav2.py
 GROUP4_GAP_RESOLUTION=.05 ROS_DOMAIN_ID=92 python3 tests/integration_gap_nav2.py
 ```

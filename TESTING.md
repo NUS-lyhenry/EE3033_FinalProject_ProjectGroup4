@@ -3,6 +3,33 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Bounded navigation recovery
+
+2026-10-22: the physical mapping logs repeatedly reported no valid path,
+followed by the stock Nav2 recovery sequence: fixed 1.57 rad spins, five-second
+waits and 0.30 m backups. Some spins/backups aborted on collision checks. These
+logs establish the repeated recovery commands, without establishing the physical
+cause of the blocked path or proving that every observed turn was a recovery.
+
+The project now installs its own NavigateToPose tree for both stages. It keeps
+1 Hz replanning and the existing path controller. A failure refreshes both
+costmaps, waits one second for new observations, and retries once. Persistent
+failure returns to the mapper/mission instead of initiating recovery spins or
+backups. Explicit waypoint-facing Spin and normal collision-checked path turns
+remain available. The production controller's 18 s progress allowance remains.
+
+All 129 algorithm checks pass. The real Humble navigator/planner/controller
+fixture on isolated domain101 verifies Nav2-only lifecycle reload while its
+map/TF/chassis fixture stays running; persistent no-path abort in 1.54 s with
+zero movement; successful navigation after a temporary blockage, including
+clockwise path alignment from a 2 rad initial heading; frozen-chassis abort
+after one retry; and cancellation during the pause with no successor goal.
+No recovery Spin or BackUp action and no /cmd_vel publisher occur. Only the
+synthetic stall test shortens progress allowance to 1.5 s (4.65 s measured abort).
+All eight native mapper retry/cancellation cases and all six native manual
+waypoint position/facing cases also pass on isolated domains96 and98.
+These are software checks, not a new physical navigation trial.
+
 ## Stationary-window verification for the balancing robot
 
 2026-10-22: the Bold run in `mission_2dlna35_` confirmed the bottle at

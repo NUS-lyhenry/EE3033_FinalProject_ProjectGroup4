@@ -55,6 +55,7 @@ jobs:
           ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
           ROS_DOMAIN_ID=98 python3 tests/integration_waypoint.py
           ROS_DOMAIN_ID=97 python3 tests/integration_turning_nav2.py
+          ROS_DOMAIN_ID=101 python3 tests/integration_recovery_nav2.py
           ROS_DOMAIN_ID=92 GROUP4_GAP_RESOLUTION=.05 python3 tests/integration_gap_nav2.py
           ROS_DOMAIN_ID=91 GROUP4_GAP_RESOLUTION=.01 python3 tests/integration_gap_nav2.py
       - uses: actions/upload-artifact@v4
@@ -63,5 +64,6 @@ jobs:
           name: native-navigation-logs
           path: |
             /tmp/group4_turning_nav2.log
+            /tmp/group4_recovery_nav2.log
             /tmp/group4_gap_nav2.log
           if-no-files-found: ignore

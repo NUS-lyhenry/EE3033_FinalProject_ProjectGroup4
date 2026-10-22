@@ -8,6 +8,7 @@ setup(
         ('share/ee3033_project', ['package.xml']),
         ('share/ee3033_project/launch', glob('launch/*.launch.py')),
         ('share/ee3033_project/config', glob('config/*.yaml')),
+        ('share/ee3033_project/behavior_trees', glob('behavior_trees/*.xml')),
         ('share/ee3033_project/rviz', glob('rviz/*.rviz')),
         ('share/ee3033_project/web', glob('web/*')),
     ],

@@ -12,8 +12,9 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    default = os.path.join(get_package_share_directory('ee3033_project'),
-                           'config', 'navigation.yaml')
+    share = get_package_share_directory('ee3033_project')
+    default = os.path.join(share, 'config', 'navigation.yaml')
+    recovery_tree = os.path.join(share, 'behavior_trees', 'navigate_with_bounded_recovery.xml')
     config = LaunchConfiguration('nav_config')
     mapping = LaunchConfiguration('mapping_mode')
     servers = [
@@ -24,12 +25,15 @@ def generate_launch_description():
         ('nav2_bt_navigator', 'bt_navigator'),
     ]
     def start_servers(context):
-        overrides = ({'goal_checker.yaw_goal_tolerance': 3.14159,
-                      'FollowPath.rotate_to_goal_heading': False}
-                     if mapping.perform(context)=='true' else {})
+        overrides = {
+            'controller_server': ({'goal_checker.yaw_goal_tolerance': 3.14159,
+                                   'FollowPath.rotate_to_goal_heading': False}
+                                  if mapping.perform(context)=='true' else {}),
+            'bt_navigator': {'default_nav_to_pose_bt_xml': recovery_tree},
+        }
         return [Node(package=package, executable=name, name=name,
                      output='screen', parameters=[config, {'use_sim_time': False},
-                                                  overrides if name=='controller_server' else {}],
+                                                  overrides.get(name,{})],
                      remappings=[('cmd_vel', '/project/nav_cmd_vel')])
                 for package,name in servers]
 
