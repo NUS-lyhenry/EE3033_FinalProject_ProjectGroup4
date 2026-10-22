@@ -153,6 +153,23 @@ rollback locks console driving until a successful reapply. Bounds are
 0.04–0.18 m/s, 0.15–0.60 rad/s, and 20–120 s. These settings are temporary until
 restart; they do not alter balance PID, obstacle clearances, or lab files.
 
+The **Audacity level** panel sets the planning reserve for automatic mapping
+and mission navigation. **Cautious** is the original behaviour and remains the
+default. Configure a level while mapping is idle or before mission Start.
+
+| Level | Centre-to-boundary clearance | Nominal opening, gap blocking OFF |
+|---|---|---|
+| 1 · Cautious | 0.22 m | 0.44 m |
+| 2 · Balanced | 0.18 m | 0.36 m |
+| 3 · Bold | 0.14 m | About 0.30 m, limited by the padded Nav2 footprint |
+
+The UI selects a level only after verifying live parameters. It displays each
+level's clearance and opening including any enabled gap reserve. Levels change
+the mapper/search reachability reserve; the collision radius, speed limits,
+lidar mask, obstacle stop and 0.16 m rotation check retain their existing values.
+In particular, Bold does not guarantee passage through a 0.28 m physical gap.
+Occupied and unknown cells still bound reachable planning space.
+
 The **Narrow-gap blocking** button is available in both stages. Configure it
 while mapping is idle or before starting stage 2. ON selects a 0.18 m virtual
 radius in both Nav2 costmaps, from the estimated 0.20 m body width and 0.08 m
@@ -160,11 +177,12 @@ reserve on each side. OFF retains the original 0.14 m collision radius. Both
 include 0.01 m footprint padding. This is a route policy; it does not edit the
 SLAM map, change the scan mask, or disable obstacle/deadman protection.
 
-The 0.36 m nominal opening is not a centimetre-accurate fit guarantee: padding,
-footprint discretization, and the 0.05 m grid affect passage rejection. Frontier
-and search reachability also retain conservative center-to-obstacle clearance:
-0.26 m ON and 0.22 m OFF. Consequently their reachable areas can be smaller than
-Nav2's. The UI shows these live values. Only lateral 2D clearance is considered;
+Padding, footprint discretization, and the 0.05 m grid affect passage rejection.
+Gap blocking adds 0.04 m to the selected level's centre-to-boundary clearance:
+0.26/0.22/0.18 m for Cautious/Balanced/Bold. Nominal combined openings are about
+0.52/0.44/0.38 m with blocking ON. The UI shows these live values, which are
+planning estimates rather than centimetre-accurate fit guarantees. Only lateral
+2D clearance is considered;
 objects outside the lidar plane may remain unseen. Physical body measurements
 and passage trials remain required.
 
@@ -173,7 +191,8 @@ nodes, and attempts rollback on any rejection. An unverified gap rollback locks
 console driving independently of trial-slider faults; a successful gap reapply
 is needed to clear it. Custom polygon footprints or disabled inflation are
 rejected by this policy rather than silently treated as a circular footprint.
-These settings reset on process restart.
+These settings reset to Cautious with gap blocking OFF when the stage reloads.
+The legacy gap-only API preserves the currently selected level.
 
 Mapping uses relaxed final heading because the lidar observes all directions;
 mission search retains its observation heading. A failed exploration goal is

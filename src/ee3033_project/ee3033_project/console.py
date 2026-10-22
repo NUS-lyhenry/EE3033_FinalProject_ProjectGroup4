@@ -390,10 +390,12 @@ class Console(Workflow, Node):
                     raise RuntimeError(f'{name}: invalid {key} readback')
         return result
 
-    def gap_settings(self, enabled=None):
+    def gap_settings(self, enabled=None, audacity=None):
         phase = self.p['phase']
-        if enabled is not None:
-            expected = gap.parameter_plan(enabled,phase)
+        changing = enabled is not None or audacity is not None
+        if audacity is not None:
+            gap.validate_audacity(audacity)
+        if changing:
             with self.lock:
                 idle = self.state['state'] in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL')
                 if (not idle or time.monotonic()-self.freshness.get('Mission',-math.inf)>2
@@ -403,11 +405,16 @@ class Console(Workflow, Node):
             self.manual_pub.publish(Twist())
         try:
             original = self.read_gap_nodes()
-            gap.describe(original,phase)  # reject unsupported geometry before any write
+            current = gap.describe(original,phase)  # reject unsupported geometry before any write
         except (RuntimeError,ValueError) as exc:
             self.gap_fault = 'Gap policy unavailable; driving locked: '+str(exc)
             raise RuntimeError(self.gap_fault) from exc
-        if enabled is not None:
+        if changing:
+            if enabled is None:
+                enabled = current['enabled']
+                if enabled is None:
+                    raise ValueError('Reapply both audacity and narrow-gap blocking to synchronize settings')
+            expected = gap.parameter_plan(enabled,phase,audacity or current['audacity'] or 'cautious')
             attempted = []
             try:
                 for name,entries in expected.items():
@@ -437,7 +444,7 @@ class Console(Workflow, Node):
         if not data['synchronized']:
             self.gap_fault = 'Gap parameters differ across nodes; driving locked; reapply gap policy'
         data.update(success=True,fault=self.gap_fault,
-                    message='Gap policy applied and verified; temporary until restart' if enabled is not None else '')
+                    message='Navigation policy applied and verified; temporary until restart' if changing else '')
         return data
 
     def command(self,path,body):
@@ -488,10 +495,13 @@ class Console(Workflow, Node):
         if path=='/api/trial':
             return self.trial_settings(body)
         if path=='/api/gap':
-            if not isinstance(body,dict) or set(body)!={'enabled'}:
-                raise ValueError('Provide only enabled: true or false')
-            gap.parameter_plan(body['enabled'],self.p['phase'])
-            return self.gap_settings(body['enabled'])
+            if not body or set(body)-{'enabled','audacity'}:
+                raise ValueError('Provide enabled: true/false and/or audacity: cautious/balanced/bold')
+            if 'enabled' in body and type(body['enabled']) is not bool:
+                raise ValueError('enabled must be true or false')
+            if 'audacity' in body:
+                gap.validate_audacity(body['audacity'])
+            return self.gap_settings(body.get('enabled'),body.get('audacity'))
         if path=='/api/initial_pose':
             if active or self.p['phase']!='mission':
                 raise ValueError('Initial pose is only available before the autonomous mission')

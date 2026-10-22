@@ -85,10 +85,10 @@ def main():
                 msg.info.width=msg.info.height=n;msg.info.resolution=resolution
                 msg.info.origin.position.x=msg.info.origin.position.y=-1.5;msg.info.origin.orientation.w=1.
                 msg.data=grid.ravel().tolist();maps.publish(msg)
-            def post(enabled):
-                req=Request(base+'/api/gap',json.dumps({'enabled':enabled}).encode(),
+            def post(enabled,audacity='cautious'):
+                req=Request(base+'/api/gap',json.dumps({'enabled':enabled,'audacity':audacity}).encode(),
                     {'Content-Type':'application/json','X-Project-Token':console.token},method='POST')
-                result=json.load(urlopen(req,timeout=20));assert result['synchronized'];return result
+                result=json.load(urlopen(req,timeout=20));assert result['synchronized'] and result['audacity']==audacity;return result
             def center_cost(name):
                 grid=wait(getters[name].call_async(GetCostmap.Request())).map
                 m=grid.metadata
@@ -113,8 +113,11 @@ def main():
                         assert time.monotonic()<deadline,'Inactive '+name;time.sleep(.2)
                 assert planner.wait_for_server(timeout_sec=10)
                 for client in getters.values(): assert client.wait_for_service(timeout_sec=5)
-                for width,enabled,passable in [(narrow,False,True),(narrow,True,False),(.70,True,True),(.20,False,False),(narrow,False,True)]:
-                    publish_passage(width);post(enabled)
+                for width,enabled,audacity,passable in [
+                        (narrow,False,'cautious',True),(narrow,False,'balanced',True),(narrow,False,'bold',True),
+                        (narrow,True,'bold',False),(.70,True,'balanced',True),
+                        (.20,False,'bold',False),(narrow,False,'cautious',True)]:
+                    publish_passage(width);post(enabled,audacity)
                     # Wait for inflation to reflect changed footprint and a fresh map.
                     deadline=time.monotonic()+8
                     while True:
@@ -122,7 +125,7 @@ def main():
                         if all((cost<253)==passable for cost in costs.values()): break
                         assert time.monotonic()<deadline,(width,enabled,costs);time.sleep(.15)
                     assert plan()==passable,(width,enabled,costs)
-                    print(f'PASS native NavFn: grid={resolution} opening={width:.2f} m reserve={enabled} passable={passable} costs={costs}',flush=True)
+                    print(f'PASS native NavFn: grid={resolution} opening={width:.2f} m reserve={enabled} audacity={audacity} passable={passable} costs={costs}',flush=True)
                 assert world.count_publishers('/cmd_vel')==0,'Fixture must not connect to chassis output'
                 print('PASS: real global/local inflation and native NavFn ON/OFF; no chassis output',flush=True)
             finally:

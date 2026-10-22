@@ -12,7 +12,8 @@ a duplicate tunnel or driver. See README for exact launch commands.
    are not calibration evidence.
 2. Check exactly one `/cmd_vel` publisher (the project gate), no competing SLAM/
    AMCL transform, fresh lidar/odometry/TF, and the actual map/save directory.
-3. Open the browser. Configure gap blocking while stopped; verify global/local
+3. Open the browser. Select Cautious, Balanced or Bold while stopped, then
+   configure gap blocking; verify global/local
    radii and the mapping/search clearance. Apply temporary trial limits only in
    idle mapping. Confirm no control fault. Defaults return after restart.
 4. Have the examiner confirm intervention rules and return position tolerance.

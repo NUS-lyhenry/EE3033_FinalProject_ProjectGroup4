@@ -9,7 +9,7 @@ with measured results after each room or sandbox trial.
 detector, target filter, velocity gate, Nav2 configuration and installed lab
 drivers. A persistent console now coordinates the two stages.
 
-- 79 pure Python tests pass on the development computer (Python 3.12), including
+- 94 pure Python tests pass on the development computer (Python 3.12), including
   scan handling, navigation bounds, continuous timing, atomic results, saved-map
   validation/review, owned process shutdown and cancellation without auto-restart.
 - Nine Humble integration scenarios pass: target found/return; no target;
@@ -24,7 +24,7 @@ drivers. A persistent console now coordinates the two stages.
   Start/Stop services, session/origin checks, autonomous lockout, motion-disable,
   live trial readback/limits/rollback/active lockout, battery freshness, and narrow-gap
   transactions in both stages including rejected writes and unverified rollback lockout.
-- Ten browser checks pass: complete two-stage map/save/review/pose/search/return
+- Thirteen browser checks pass: complete two-stage map/save/review/pose/search/return
   flow, simulated read-only preview, active-stage restrictions, false-success
   rejection, stale/offline telemetry, retained optional controls, Stop during
   stage loading, deferred-frontier/retry display, and mobile layout. Fixtures are simulated; they are not physical
@@ -47,6 +47,18 @@ drivers. A persistent console now coordinates the two stages.
   not successful physical exploration. The original nine ROS scenarios and two
   workflow checks are also rerun for this change.
 
+2026-10-22 audacity controls: Cautious retains the original 0.22 m planning
+clearance; Balanced selects 0.18 m and Bold 0.14 m. The additional pure checks
+cover both stages, both reserve states, invalid profiles, inconsistent readback,
+unchanged collision envelopes and connectivity through 0.30/0.40/0.50 m synthetic
+corridors. Browser checks exercise every tier in both stages, reserve retention,
+active lockout, rejected changes and mobile layout. The three native Humble
+console cases were rerun on isolated domain 94, including all six policy
+combinations in mapping and mission, rollback after a simulated write rejection
+at each level, legacy toggle retention and active-state rejection. These tests
+do not issue motion commands on physical domain 6. Physical passage performance
+at Balanced/Bold has not been demonstrated.
+
 Native Humble narrow-passage tests pass on isolated domains 91 and 92. Both
 costmaps use synthetic static obstacles and the actual project inflation policy;
 NavFn computes paths through the synthetic room. This does not validate physical
@@ -62,6 +74,13 @@ body geometry or sensor visibility.
 Each run switches OFF again and verifies the narrow passage reopens. Costs are
 checked in both global and local costmaps before invoking the actual NavFn action.
 No chassis output publisher exists in this fixture.
+
+The audacity change was also checked with native NavFn at both resolutions:
+the original narrow passage remains passable with reserve OFF at all three
+levels, becomes blocked with reserve ON even at Bold, and a 0.20 m passage
+remains blocked at Bold. Both costmaps retain their original collision radius
+and padding. This verifies that reducing the planning reserve does not reduce
+the Nav2 collision envelope.
 
 ## Physical validation
 

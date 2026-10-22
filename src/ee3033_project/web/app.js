@@ -88,6 +88,16 @@ function render(){
 }
 function renderParameters(){
   const idle=setupIdle(),fresh=Date.now()-paramTime<8000,mapping=snapshot?.phase==='mapping';
+  const policyReady=idle&&fresh&&!!gap&&!parametersBusy&&(mapping||snapshot?.mission?.state==='WAITING');
+  document.querySelectorAll('[data-audacity]').forEach(button=>{
+    const level=button.dataset.audacity,option=gap?.audacity_options?.find(p=>p.id===level);
+    button.disabled=!policyReady||!option;
+    button.setAttribute('aria-pressed',String(fresh&&gap?.audacity===level&&gap?.synchronized===true));
+    button.querySelector('small').textContent=option?`${fmt(option.clearance*100,0)} cm clearance · ~${fmt(option.nominal_min_opening*100,0)} cm opening`:'Waiting for live settings';
+  });
+  const label=gap?.audacity_options?.find(p=>p.id===gap?.audacity)?.label;
+  setPill('audacityLive',fresh&&label?label:'Unverified',fresh&&gap?.synchronized?'good':'warn');
+  $('audacityStatus').textContent=parametersBusy?'Applying and verifying navigation settings…':!fresh?'Load a stage and wait for live settings.':gap?.fault||`Live: ${label||'unsynchronized'}. Applies to automatic mapping and mission navigation. Configure while stopped${mapping?'.':', before mission Start.'}`;
   $('gapToggle').disabled=!idle||!fresh||!gap||parametersBusy||(!mapping&&snapshot?.mission?.state!=='WAITING');
   $('gapToggle').setAttribute('aria-pressed',String(gap?.enabled===true));
   $('gapToggle').textContent=gap?.enabled===true?'Narrow-gap blocking: ON · Disable':gap?.enabled===false?'Narrow-gap blocking: OFF · Enable':'Synchronize gap policy: Enable';
@@ -112,6 +122,12 @@ $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.crea
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 $('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
+document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=async()=>{
+  parametersBusy=true;
+  try{gap=await action('gap',{audacity:button.dataset.audacity,enabled:gap.enabled===true});paramTime=Date.now();}
+  catch(_){paramTime=0;}
+  finally{parametersBusy=false;render();}
+});
 async function pollParameters(){
   if(online&&snapshot?.health?.Mission?.ok&&running()&&!busy&&!parametersBusy&&!snapshot.stage?.transitioning){const generation=snapshot.control_generation;try{const g=await get('gap');let t=null;if(snapshot.phase==='mapping')t=await get('trial');if(generation===snapshot.control_generation){gap=g;trial=t;paramTime=Date.now();if(t)trialFields.forEach(([k,id])=>{if(!trialDirty)$(id).value=t.values[k];});}}catch(e){paramTime=0;$('gapStatus').textContent=e.message;}renderParameters();}
   setTimeout(pollParameters,4000);

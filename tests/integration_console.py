@@ -133,8 +133,10 @@ class ConsoleTests(unittest.TestCase):
             for node in nodes: executor.add_node(node)
             thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
             base=f'http://127.0.0.1:{console.p["port"]}'
-            def post(value,token=console.token):
-                request=Request(base+'/api/gap',json.dumps({'enabled':value}).encode(),
+            def post(value,token=console.token,audacity=None):
+                body={'enabled':value}
+                if audacity is not None: body['audacity']=audacity
+                request=Request(base+'/api/gap',json.dumps(body).encode(),
                     {'Content-Type':'application/json','X-Project-Token':token},method='POST')
                 return json.load(urlopen(request,timeout=20))
             try:
@@ -144,6 +146,23 @@ class ConsoleTests(unittest.TestCase):
                 with self.assertRaises(HTTPError): post(True,token='')
                 for invalid in (None,1,'true'):
                     with self.assertRaises(HTTPError): post(invalid)
+                with self.assertRaises(HTTPError): post(False,audacity='fast')
+                for enabled in (False,True):
+                    for level,clearance in [('cautious',.22),('balanced',.18),('bold',.14)]:
+                        response=post(enabled,audacity=level)
+                        self.assertEqual(response['audacity'],level)
+                        self.assertTrue(response['synchronized'])
+                        self.assertAlmostEqual(consumer.get_parameter('clearance').value,clearance+(.04 if enabled else 0))
+                        for node in costmaps:
+                            self.assertAlmostEqual(node.get_parameter('robot_radius').value,.18 if enabled else .14)
+                        reject[0]=True
+                        with self.assertRaises(HTTPError): post(not enabled,audacity='balanced' if level!='balanced' else 'bold')
+                        restored=json.load(urlopen(base+'/api/gap',timeout=15))
+                        self.assertEqual(restored['audacity'],level)
+                        self.assertEqual(restored['enabled'],enabled)
+                        self.assertIsNone(console.gap_fault)
+                self.assertTrue(post(False)['audacity']=='bold') # legacy toggle preserves the selected tier
+                self.assertTrue(post(False,audacity='cautious')['synchronized'])
                 self.assertTrue(post(True)['synchronized'])
                 self.assertAlmostEqual(consumer.get_parameter('clearance').value,.26)
                 if phase=='mapping':
@@ -169,6 +188,7 @@ class ConsoleTests(unittest.TestCase):
                 consumer.state='MAPPING' if phase=='mapping' else 'SEARCHING'
                 console.on_status(String(data=json.dumps({'state':consumer.state,'reason':'Synthetic active'})))
                 with self.assertRaises(HTTPError): post(True)
+                with self.assertRaises(HTTPError): post(False,audacity='bold')
                 self.assertFalse(consumer.set_parameters_atomically([Parameter('clearance',value=.26)]).successful)
                 # Stop remains independent of the transaction lock.
                 self.assertTrue(console.control_lock.acquire(timeout=.1));console.control_lock.release()
