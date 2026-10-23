@@ -294,6 +294,25 @@ competing `map -> odom_combined` transform publishers.
 
 ## Stage 2 — autonomous target search and return
 
+Search chooses each next viewpoint online from the actual unobserved cells,
+ranking new visibility against estimated travel, heading changes and observation
+time. Travel cost uses straight-line distance, so it is not a Nav2 path-time
+guarantee. A successful navigation action alone does not credit coverage: the car
+must be aligned at the viewpoint and receive at least three distinct fresh YOLO
+frames captured after arrival. A detected but unconfirmed/unlocalized candidate
+keeps the area uncredited. Observation or alignment failures retry at most twice
+before moving on without claiming coverage. Existing confirmation, cancellation,
+return and velocity-gate checks still apply.
+
+All generated candidates are retained, including those used in the offline
+reference route. `max_candidates` (250) is a diagnostic threshold; the separate
+`candidate_limit` (1000) explicitly rejects excessive candidate counts instead of
+silently discarding views. Preparation observes the 45-second planning deadline
+and operator cancellation. Increase viewpoint spacing if that budget is exceeded.
+Results include unobserved/unobservable cells, available viewpoints, observation
+retries and why search ended. Reaching the viewpoint/time limit or exhausting
+candidates does not establish that the target is absent.
+
 Place the car at its assigned starting area after the target is placed. Launch:
 
 ```bash

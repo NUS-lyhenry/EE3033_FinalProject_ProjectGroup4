@@ -1,6 +1,7 @@
 """Map-derived camera viewpoints; no assessment coordinates are encoded."""
 from dataclasses import dataclass
 import math
+import time
 import numpy as np
 from scipy.ndimage import distance_transform_edt, label
 from .core import angle_difference
@@ -17,13 +18,14 @@ class Viewpoint:
 class CoveragePlanner:
     def __init__(self, data, resolution, origin, clearance=0.20, spacing=0.65,
                  view_range=2.0, fov=1.35, headings=4, max_candidates=250,
-                 max_goals=120, coverage_fraction=0.98):
+                 max_goals=120, coverage_fraction=0.98, candidate_limit=1000):
         self.grid = np.asarray(data, dtype=int)
         self.resolution = float(resolution)
         self.origin = origin
         if (self.grid.ndim != 2 or resolution <= 0 or clearance <= 0
                 or spacing <= 0 or view_range <= 0 or not 0 < fov < 2*math.pi
-                or headings < 2 or max_candidates < 1 or max_goals < 1):
+                or headings < 2 or max_candidates < 1 or max_goals < 1
+                or candidate_limit < 1 or not 0 < coverage_fraction <= 1):
             raise ValueError('Invalid coverage parameters')
         self.free = (self.grid >= 0) & (self.grid < 25)
         # Treat beyond-map space as an obstacle, including fully free test maps.
@@ -35,11 +37,15 @@ class CoveragePlanner:
         self.fov = fov
         self.headings = headings
         self.max_candidates = max_candidates
+        self.candidate_limit = candidate_limit
         self.max_goals = max_goals
         self.fraction = coverage_fraction
         self.target_cells = set()
         self.coverable = set()
         self.truncated = False
+        self.options = ()
+        self.unobservable = set()
+        self.candidate_threshold_exceeded = False
 
     def world_to_cell(self, x, y):
         ox, oy, yaw = self.origin
@@ -72,7 +78,17 @@ class CoveragePlanner:
                     cells.add((r, c))
         return frozenset(cells)
 
-    def plan(self, start_x, start_y):
+    def prepare(self, start_x, start_y, deadline=None, cancel=None):
+        """Build stable candidates; stop cooperatively on timeout or operator Stop."""
+        def check_budget():
+            if cancel is not None and cancel.is_set():
+                raise RuntimeError('Search planning canceled')
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError('Search planning time limit exceeded')
+
+        check_budget()
+        self.truncated = False
+        self.options = ()
         row, col = self.world_to_cell(start_x, start_y)
         if not self.in_bounds(row, col) or not self.safe[row, col]:
             raise ValueError('Starting pose is not in free space with robot clearance')
@@ -90,23 +106,33 @@ class CoveragePlanner:
                       for r in range(0, self.grid.shape[0], stride)
                       for c in range(0, self.grid.shape[1], stride)
                       if reachable[r, c] and (r, c) != (row, col)]
-        if len(candidates) > self.max_candidates:
-            # Uniformly subsample, retaining the starting point.
-            indices = np.linspace(0, len(candidates)-1, self.max_candidates, dtype=int)
-            candidates = [candidates[i] for i in indices]
-            self.truncated = True
+        # Preserve all candidates: uniform truncation silently removes critical
+        # corner viewpoints. max_candidates is now a warning threshold only.
+        self.candidate_threshold_exceeded = len(candidates) > self.max_candidates
+        if len(candidates) > self.candidate_limit:
+            raise ValueError('Too many search candidates; increase viewpoint_spacing or the explicit candidate_limit')
         options = []
         self.coverable = set()
         for r, c in candidates:
+            check_budget()
             x, y = self.cell_to_world(r, c)
             for k in range(self.headings):
+                check_budget()
                 yaw = 2*math.pi*k/self.headings + self.origin[2]
                 visible = self.visible(r, c, yaw)
                 if visible:
                     options.append(Viewpoint(x, y, yaw, visible))
                     self.coverable.update(visible)
+        # plan() consumes its own working copy, never the runtime candidate pool.
+        self.options = tuple(options)
+        self.unobservable = self.target_cells - self.coverable
         if not self.coverable:
             raise ValueError('No camera viewpoints can be generated')
+        check_budget()
+        return self.options
+
+    def plan(self, start_x, start_y):
+        options = list(self.prepare(start_x, start_y))
         seen, route = set(), []
         x, y = start_x, start_y
         while options and len(seen) < self.fraction * len(self.coverable):
@@ -122,6 +148,38 @@ class CoveragePlanner:
                 self.truncated = len(seen) < self.fraction * len(self.coverable)
                 break
         return route
+
+    def next_viewpoint(self, x, y, observed, excluded=(), yaw=None,
+                       linear_speed=0.12, angular_speed=0.4,
+                       observation_seconds=3.0):
+        """Select new visible cells per estimated second of movement and observation.
+
+        Estimate only: Nav2 may take longer around obstacles. The current yaw
+        is optional for compatibility with existing callers/tests.
+        """
+        observed = set(observed)
+        excluded = set(excluded)
+        best, best_score = None, -1.0
+        for index, v in enumerate(self.options):
+            if index in excluded:
+                continue
+            gain = len(v.visible - observed)
+            if gain == 0:
+                continue
+            dx, dy = v.x-x, v.y-y
+            distance = math.hypot(dx, dy)
+            # Travel and final orientation matter; avoid rewarding extra stops.
+            travel = distance / max(0.01, linear_speed)
+            heading = math.atan2(dy, dx) if distance > 0.05 else (yaw if yaw is not None else v.yaw)
+            rotation = abs(angle_difference(v.yaw, heading))
+            if yaw is not None:
+                rotation += abs(angle_difference(heading, yaw))
+            turn = rotation / max(0.05, angular_speed)
+            cost = max(0.0, observation_seconds) + travel + turn + 1.0
+            score = gain / cost
+            if score > best_score:
+                best, best_score = index, score
+        return best
 
 
 def returned_home(current, home, tolerance):

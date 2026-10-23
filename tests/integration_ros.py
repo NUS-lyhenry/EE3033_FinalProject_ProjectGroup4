@@ -158,8 +158,11 @@ class FakeRobot(Node):
         scan.range_min,scan.range_max = 0.08,8.0
         scan.ranges = [3.0]*100
         self.scan_pub.publish(scan)
-        self.status_pub.publish(String(data=json.dumps({'stamp':time.time(),'ready':True,
-                                                        'target_class':'bottle'})))
+        self.status_pub.publish(String(data=json.dumps(self.perception_status())))
+
+    def perception_status(self):
+        return {'stamp':time.time(), 'ready':True, 'target_class':'bottle',
+                'detected_candidates':0}
 
     def make_odometry(self, stamp):
         odom=Odometry()
