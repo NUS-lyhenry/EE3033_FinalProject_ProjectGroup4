@@ -3,6 +3,29 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Automatic camera setup from one distance
+
+2026-10-23: runtime code7fb812b adds a mapped-area preparation workflow taking
+bottle height, diameter and one floor range. It automatically centres the bottle,
+collects 18 timestamped views, jointly fits camera height/focal lengths/pitch/yaw
+and bottle bearing, checks two held-out translation positions, and saves a
+profile. The main console loads the selected reviewed map and AMCL, reusing only
+a fresh robot pose on that exact map when available. Manual measured calibration
+remains available in Advanced panels.
+
+178 pure tests and32 browser tests pass. The isolated native ROS test on desktop
+Jazzy/domain108 passes automatic HTTP collection through the real calibration
+node and velocity gate, a virtual robot, future-dated AMCL TF, profile saving,
+heartbeat loss and localization-jump stops. The native test uses320×240 synthetic
+images; math and browser checks also cover640×480. Dedicated camera workers keep
+encoding/inference and graph discovery outside the ROS control executor.
+
+This version has not been deployed to or physically tested on the robot: the
+operator confirmed it is powered off. On-robot Humble verification and a measured
+field trial remain pending. Held-out pose checks establish consistency with robot
+pose estimates, not independent surveyed map-frame accuracy. No physical motion
+was commanded during development.
+
 ## Integrated one-time camera setup
 
 2026-10-23: deployed runtime05b6a6b with Camera setup in the main console. The
