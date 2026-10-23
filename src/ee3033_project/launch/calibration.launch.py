@@ -14,14 +14,20 @@ from launch_ros.parameter_descriptions import ParameterValue
 def start(context):
     import rclpy
     from rclpy.context import Context
+    from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node as GraphNode
     graph_context = Context()
-    rclpy.init(context=graph_context)
+    # Launch's argv contains launch arguments, not ROS remaps. Use this
+    # context's executor explicitly: Humble's global executor uses the default
+    # (uninitialized) context and cannot spin a node from this private context.
+    rclpy.init(args=[], context=graph_context)
     probe = GraphNode('project_calibration_preflight', context=graph_context)
+    executor = SingleThreadedExecutor(context=graph_context)
+    executor.add_node(probe)
     try:
         deadline = time.monotonic()+2.
         while time.monotonic() < deadline:
-            rclpy.spin_once(probe, timeout_sec=.1)
+            executor.spin_once(timeout_sec=.1)
         conflicts = [topic for topic in ('/cmd_vel', '/project/nav_cmd_vel',
                      '/project/drive_enabled', '/project/mission_status') if probe.count_publishers(topic)]
         names = probe.get_node_names()
@@ -34,6 +40,7 @@ def start(context):
         if conflicts:
             raise RuntimeError('Stop the existing robot stack before calibration: '+', '.join(conflicts))
     finally:
+        executor.shutdown()
         probe.destroy_node()
         rclpy.shutdown(context=graph_context)
     share = get_package_share_directory('ee3033_project')

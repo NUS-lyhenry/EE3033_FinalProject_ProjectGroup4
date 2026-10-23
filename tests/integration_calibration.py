@@ -3,6 +3,7 @@
 Run ONLY on an isolated domain. No real camera, weights, or robot are used.
 """
 import json
+import importlib.util
 import math
 import os
 from pathlib import Path
@@ -264,6 +265,39 @@ class MissionProjection(unittest.TestCase):
         point = Perception.locate(node, sample(.93, .015)['box'], image, None, [scan])
         self.assertIsNotNone(point)
         np.testing.assert_allclose(point[:2], [2., 4.], atol=.025)
+
+
+class CalibrationLaunch(unittest.TestCase):
+    def module(self):
+        path = Path(__file__).resolve().parents[1]/'src/ee3033_project/launch/calibration.launch.py'
+        spec = importlib.util.spec_from_file_location('calibration_launch_fixture', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def context(self):
+        from launch import LaunchContext
+        context = LaunchContext()
+        context.launch_configurations.update(base='false', lidar='false', camera='false')
+        return context
+
+    def test_preflight_works_without_an_initialized_default_ros_context(self):
+        # Construct actions only; do not execute drivers, gate, or detector.
+        self.assertFalse(rclpy.ok())
+        actions = self.module().start(self.context())
+        self.assertEqual(len(actions), 3)
+        self.assertFalse(rclpy.ok())
+
+    def test_preflight_rejects_existing_command_publisher(self):
+        rclpy.init()
+        other = Node('calibration_conflicting_publisher')
+        other.create_publisher(Twist, '/cmd_vel', 10)
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'existing robot stack'):
+                self.module().start(self.context())
+        finally:
+            other.destroy_node()
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
