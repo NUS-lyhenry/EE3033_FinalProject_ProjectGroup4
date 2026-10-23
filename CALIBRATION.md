@@ -137,7 +137,7 @@ python3 scripts/simulate_calibration.py
 # http://127.0.0.1:8791
 ```
 
-Keep the example setup values. Use Next bottle position, Freeze stable bottle
+Keep the example setup values. Use Next bottle position, Capture bottle
 image, Fill reference measurement, then Record frozen measurement for positions
 1–6. Fit the model, check Independent validation sample, and record positions 7–8.
 The simulation uses the real fitting/validation functions, creates no ROS nodes,
@@ -149,3 +149,27 @@ JPEG locally and retries stalled requests. Use Resume live camera to leave a fro
 view. Calibration settling allows mean speeds up to 0.06 m/s and 0.20 rad/s over
 one second, with bounded 0.08 m XY span and 0.20 rad heading span. Fresh zero final
 commands are still required; the mission return-stop verifier is unchanged.
+
+## One-time setup in the main console
+
+Open **Camera setup** in the main console (`/#/calibration`) and select Start
+camera setup. This preparation stage owns its sensor drivers and velocity gate;
+loading mapping or a mission first stops that stage. Calibration does not start
+the assessment timer. The main Stop button also stops camera positioning.
+
+Save a validated profile once. The console discovers validated profiles in its
+`calibration_directory` (default `~/ee3033_calibrations`) after each restart and
+forwards the latest valid profile into mission perception. Invalid and simulated
+profiles are ignored. Camera-only calibrated floor projection becomes the default
+unless the operator explicitly chooses another method. Recalibrate if the mount,
+lens settings or resolution changes. The embedded panel needs both console8765
+and calibration8780 forwarded through SSH.
+
+Calibration capture now permits bounded balancing motion over a 0.35 second window
+(mean linear speed<= 0.18 m/s, mean yaw rate<= 0.60 rad/s, XY span <= 0.15 m,
+heading span <= 0.45 rad). It still requires fresh sensors, zero final movement
+commands and idle positioning controls. One fresh detected image is captured;
+the image and its box remain paired. The earlier multi-frame outline-jitter gate
+is removed. Check the frozen outline, measure its position, and use independent
+validation to assess accuracy. This policy does not modify mission return-stop
+verification.

@@ -53,6 +53,7 @@ def start(context):
                 max_linear=.04, max_angular=.15, rotation_clearance=.16)]),
         Node(package='ee3033_project', executable='camera_calibration', output='screen', parameters=[{
             'allow_motion': motion, 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
+            'parent_port': ParameterValue(LaunchConfiguration('parent_port'), value_type=int),
             **{key: ParameterValue(LaunchConfiguration(key), value_type=str)
                for key in ('model', 'target_class', 'output_directory')},
         }]),
@@ -62,6 +63,6 @@ def start(context):
 def generate_launch_description():
     defaults = dict(allow_motion='false', base='true', lidar='true', camera='true', port='8780',
                     model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
-                    output_directory='~/ee3033_calibrations')
+                    output_directory='~/ee3033_calibrations', parent_port='8765')
     return LaunchDescription([*[DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()],
                               OpaqueFunction(function=start)])

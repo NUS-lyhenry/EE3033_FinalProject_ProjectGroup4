@@ -51,8 +51,9 @@ class Console(Workflow, Node):
                                    'session_directory':'~/ee3033_results/assessment',
                                    'manage_stages':False,'stage_base':True,'stage_lidar':True,
                                    'stage_camera':True,'model':'/home/ros2_ws/weights/yolo26n.pt',
-                                   'software_version':'development','calibration_file':''})
-        if self.p['phase'] not in ('mapping','mission'):
+                                   'software_version':'development','calibration_file':'',
+                                   'calibration_directory':'~/ee3033_calibrations','calibration_port':8780})
+        if self.p['phase'] not in ('mapping','mission','calibration'):
             raise ValueError('phase must be mapping or mission')
         self.lock = threading.Lock()
         self.control_lock = threading.Lock()
@@ -471,6 +472,8 @@ class Console(Workflow, Node):
         workflow=self.workflow_command(path,body)
         if workflow is not None:
             return workflow
+        if self.p['phase']=='calibration' and path!='/api/stop':
+            raise ValueError('Use the camera setup controls, or load a mapping/mission stage')
         if self.stage and self.stage.loading and path!='/api/stop':
             raise ValueError('Wait for the stage transition to finish')
         with self.lock:

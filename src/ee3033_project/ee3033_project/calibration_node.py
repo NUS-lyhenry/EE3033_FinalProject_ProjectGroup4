@@ -23,6 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
 from std_msgs.msg import Bool
+from std_srvs.srv import Trigger
 
 from .calibration import (camera_model, fit_profile, save_profile, validate_holdout,
                           validate_sample, validate_setup)
@@ -41,8 +42,8 @@ class CalibrationNode(Node):
             image_topic='/image_raw', camera_info_topic='/camera_info',
             output_directory='~/ee3033_calibrations', image_size=320,
             preview_fps=8., preview_quality=65,
-            settle_seconds=1., settle_linear_limit=.06, settle_angular_limit=.20,
-            settle_position_span=.08, settle_heading_span=.20))
+            settle_seconds=.35, settle_linear_limit=.18, settle_angular_limit=.60,
+            settle_position_span=.15, settle_heading_span=.45, parent_port=8765))
         import torch
         from ultralytics import YOLO
         torch.set_num_threads(1)
@@ -77,6 +78,7 @@ class CalibrationNode(Node):
         self.graph_ok = False
         self.command_pub = self.create_publisher(Twist, '/project/nav_cmd_vel', 10)
         self.enable_pub = self.create_publisher(Bool, '/project/drive_enabled', LATCHED)
+        self.create_service(Trigger, '/project/stop', self.on_stop)
         self.create_subscription(Image, self.p['image_topic'], self.on_image, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, self.p['camera_info_topic'], self.on_info, qos_profile_sensor_data)
         self.create_subscription(Odometry, '/odom', self.on_odom, qos_profile_sensor_data)
@@ -148,13 +150,28 @@ class CalibrationNode(Node):
         return {name: now-self.fresh.get(name, -math.inf) < limit for name, limit in
                 [('camera', 1.), ('odometry', .3), ('lidar', .4), ('output', .3), ('ownership', .8)]}
 
-    def require_stationary(self):
+    def capture_status(self):
         settled = self.stationary.evaluate(self.get_clock().now().nanoseconds*1e-9)
-        if self.motion.mode != 'idle' or not settled['verified'] or time.monotonic()-self.last_moving < 1.:
-            raise ValueError('Wait for the calibration settling window: '+settled['reason'])
-        if (not all(self.health().values()) or not self.graph_ok or self.final is None
-                or any(not math.isfinite(v) or abs(v) > 1e-5 for v in self.final)):
-            raise ValueError('Fresh camera, odometry, lidar, zero output and exclusive control are required')
+        reason = 'Gentle balancing motion is allowed; capture a clear bottle image.'
+        ready = True
+        if self.motion.mode != 'idle' or time.monotonic()-self.last_moving < .2:
+            ready, reason = False, 'Finish commanded driving/turning before capture'
+        elif (not all(self.health().values()) or not self.graph_ok or self.final is None
+              or any(not math.isfinite(v) or abs(v) > 1e-5 for v in self.final)):
+            ready, reason = False, 'Fresh sensors, zero final commands and exclusive control are required'
+        elif not settled['verified']:
+            ready, reason = False, 'Checking bounded balancing motion: '+settled['reason']
+        return dict(ready=ready, reason=reason, balancing_allowed=True, window=settled)
+
+    def require_stationary(self):
+        status = self.capture_status()
+        if not status['ready']:
+            raise ValueError(status['reason'])
+
+    def on_stop(self, request, response):
+        self.command('/api/calibration/stop', {})
+        response.success, response.message = True, 'Camera positioning stopped'
+        return response
 
     def preview(self):
         """Encode live JPEGs independently of the slower detection callback."""
@@ -255,6 +272,7 @@ class CalibrationNode(Node):
                 allow_motion=self.p['allow_motion'], read_only=False, health=self.health(),
                 ownership=self.graph_ok, motion=self.motion.mode, motion_reason=self.motion.reason,
                 stationary=self.stationary.evaluate(self.get_clock().now().nanoseconds*1e-9),
+                capture=self.capture_status(),
                 preview=dict(sequence=self.preview_sequence,
                     age=round(time.monotonic()-self.preview_time, 2) if math.isfinite(self.preview_time) else None,
                     fresh=time.monotonic()-self.preview_time < 1., fps=self.p['preview_fps']),
@@ -315,17 +333,14 @@ class CalibrationNode(Node):
             elif path == '/api/calibration/freeze':
                 if not self.setup or not self.camera:
                     raise ValueError('Save the setup and wait for a camera image first')
-                frames = [d for d in list(self.detections)[-3:]
-                          if time.monotonic()-d['time'] < 4. and d['time'] > self.last_moving+.2]
-                if len(frames) < 3 or any(d['box'] is None for d in frames) or self.target() is None:
-                    raise ValueError('Keep exactly one bottle visible for three recent detections')
-                boxes = np.array([d['box'] for d in frames])
-                if float(np.ptp(boxes, axis=0).max()) > 18:
-                    raise ValueError('Bottle image is moving; wait for a stable view')
-                # Use the last frame's box and JPEG together. Stability is checked
-                # across frames; never attach median pixels to a different image.
+                if self.target() is None or self.detections[-1]['time'] < self.last_moving+.2:
+                    raise ValueError('Keep exactly one bottle fully visible for a fresh detection')
+                frame = self.detections[-1]
+                # A single timestamped image avoids requiring a fixed silhouette
+                # while the body balances. Its box and JPEG stay paired.
                 self.frozen = dict(id=secrets.token_hex(8), time=time.monotonic(),
-                                   box=frames[-1]['box'], jpeg=frames[-1]['jpeg'])
+                                   box=frame['box'], jpeg=frame['jpeg'])
+                self.reason = 'Captured with balancing allowed. Check the outline and measure this position.'
             elif path == '/api/calibration/sample':
                 if not self.frozen or body.get('freeze_id') != self.frozen['id'] or time.monotonic()-self.frozen['time'] > 120:
                     raise ValueError('Freeze a fresh image before recording a measurement')
@@ -380,7 +395,7 @@ class CalibrationNode(Node):
                 self.send_response(status)
                 for name, value in [('Content-Type', kind), ('Content-Length', str(len(body))),
                                     ('Cache-Control', 'no-store'), ('X-Content-Type-Options', 'nosniff'),
-                                    ('X-Frame-Options', 'DENY')]:
+                                    ('Content-Security-Policy', "frame-ancestors 'self' http://127.0.0.1:"+str(node.p['parent_port'])+' http://localhost:'+str(node.p['parent_port']))]:
                     self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(body)

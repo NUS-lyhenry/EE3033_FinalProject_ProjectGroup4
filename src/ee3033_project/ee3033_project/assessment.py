@@ -17,7 +17,7 @@ import time
 import yaml
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
-                    'VERIFYING','MAPPING','SAVING'))
+                    'VERIFYING','MAPPING','SAVING','CALIBRATING'))
 
 
 def utc_now():
@@ -88,6 +88,8 @@ class TrialRecord:
                 self.persist()
 
     def status(self, phase, status):
+        if phase=='calibration':
+            return
         with self.lock:
             if status.get('state') in ACTIVE and status['state']!='CANCELING':
                 self.start(phase)
@@ -209,6 +211,8 @@ class StageProcess:
         self.hardware = hardware or dict(base=True,lidar=True,camera=True)
         self.model = model
         self.calibration_file = calibration_file
+        self.calibration_directory = '~/ee3033_calibrations'
+        self.calibration_port, self.console_port = 8780, 8765
         self.popen = popen
         self.process = None
         self.log = None
@@ -245,16 +249,21 @@ class StageProcess:
     def launch(self, phase, map_path=None, options=None, map_directory=None):
         if self.process is not None:
             raise RuntimeError('Stop the previous stage before loading another')
-        if phase not in ('mapping','mission'): raise ValueError('Invalid stage')
+        if phase not in ('mapping','mission','calibration'): raise ValueError('Invalid stage')
         if self.cancel.is_set(): return False
         self.root.mkdir(parents=True,exist_ok=True)
         directory=Path(tempfile.mkdtemp(prefix=phase+'_',dir=self.root))
         self.log=directory/'launch.log'
-        args=['ros2','launch','ee3033_project',phase+'.launch.py','console:=false',
-              'allow_motion:='+str(bool(self.allow_motion)).lower(),
-              'map_directory:='+str(map_directory)]
+        args=['ros2','launch','ee3033_project',phase+'.launch.py',
+              'allow_motion:='+str(bool(self.allow_motion)).lower()]
+        if phase=='calibration':
+            args += ['port:='+str(self.calibration_port), 'parent_port:='+str(self.console_port),
+                     'output_directory:='+str(self.calibration_directory)]
+            if self.model: args.append('model:='+self.model)
+        else:
+            args += ['console:=false','map_directory:='+str(map_directory)]
         for name,enabled in self.hardware.items():
-            if name!='camera' or phase=='mission': args.append(name+':='+str(bool(enabled)).lower())
+            if name!='camera' or phase in ('mission','calibration'): args.append(name+':='+str(bool(enabled)).lower())
         if phase=='mission':
             if map_path is None: raise ValueError('A reviewed saved map is required')
             options=mission_options(options or {})

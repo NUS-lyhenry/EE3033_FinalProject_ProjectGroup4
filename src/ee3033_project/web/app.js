@@ -1,14 +1,16 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING']);
+const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING','CALIBRATING']);
 const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d):'—';
 const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
 let modelLabels=null,labelKey='',labelsBusy=false;
 let waypointDraft=null;
+let coordinateMethodChosen=false;
 const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Select an audacity level and configure navigation while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
 let currentPage='overview';
+PAGES.calibration=['Camera setup','Calibrate once, then reuse the saved profile automatically for future missions.'];
 function renderPages(){
   const route=location.hash.replace(/^#\/?/,'');currentPage=Object.hasOwn(PAGES,route)?route:'overview';
   document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=!e.dataset.pages.split(' ').includes(currentPage));
@@ -16,6 +18,7 @@ function renderPages(){
   $('pageTitle').textContent=PAGES[currentPage][0];$('pageDescription').textContent=PAGES[currentPage][1];
   document.querySelector('.workspace-grid').classList.toggle('mapping-view',currentPage==='mapping');
   document.title=PAGES[currentPage][0]+' · Group 4 Assessment console';
+  document.querySelector('.stepper').hidden=currentPage==='calibration';
 }
 function showPage(page){location.hash='/'+page;renderPages();draw();}
 window.addEventListener('hashchange',()=>{releaseDrive();renderPages();window.scrollTo(0,0);draw();});
@@ -41,7 +44,19 @@ function render(){
   $('stop').disabled=!!s.read_only;
   setPill('connection',online?'Connected':'Disconnected',online?'good':'bad');
   $('connectionBanner').hidden=online;
-  $('phase').textContent=mapping?'Stage 1 · Mapping':'Stage 2 · Autonomous';
+  const calibrating=s.phase==='calibration';
+  $('phase').textContent=calibrating?'Preparation · Camera setup':mapping?'Stage 1 · Mapping':'Stage 2 · Autonomous';
+  const calibration=s.camera_calibration;
+  if(calibration?.ready&&s.phase!=='mission'&&!coordinateMethodChosen)$('localizationMethod').value='ground_plane';
+  setPill('calibrationBadge',calibration?.ready?'Saved calibration ready':'Not calibrated',calibration?.ready?'good':'');
+  $('calibrationSummary').textContent=calibration?.message||'Calibrate once, save the validated profile, and subsequent missions will use it automatically.';
+  $('calibrationProfile').textContent=calibration?.path||'';
+  $('loadCalibration').textContent=calibrating&&loaded?'Camera setup loaded':calibration?.ready?'Recalibrate camera':'Start camera setup';
+  $('loadCalibration').disabled=!idle||!managed||(calibrating&&loaded);
+  const frame=$('calibrationFrame'),showCalibration=currentPage==='calibration'&&calibrating&&s.calibration_live?.ready;
+  frame.hidden=!showCalibration;
+  if(showCalibration&&!frame.hasAttribute('src'))frame.src=`http://${location.hostname}:${s.calibration_port||8780}/?embedded=1`;
+  if(!showCalibration&&frame.hasAttribute('src'))frame.removeAttribute('src');
   setPill('battery',s.battery?.voltage!=null?`Battery ${fmt(s.battery.voltage)} V${s.battery.fresh?'':' · stale'}`:'Battery —',s.battery?.fresh?'good':'warn');
   $('battery').title=s.battery?.age!=null?`Measured voltage · ${s.battery.age} s old`:'Waiting for battery telemetry';
   setPill('motion',s.allow_motion?'Motion enabled':'Motion disabled',s.allow_motion?'good':'');
@@ -59,7 +74,7 @@ function render(){
   const fault=s.control_fault||s.workflow_fault||s.stage?.fault;
   $('faultBanner').hidden=!fault;$('faultBanner').textContent=fault||'';
   $('reason').textContent=s.stage?.transitioning?'Changing stage; waiting for shutdown and fresh services…':m.readiness_reason&&m.state==='WAITING'?m.readiness_reason:m.reason||'Load a stage to begin.';
-  $('health').replaceChildren(...(mapping?['Map','Lidar','Odometry','Mission']:['Map','Lidar','Odometry','AMCL','YOLO','Mission']).map(name=>{const h=s.health?.[name],e=document.createElement('span');e.className='check '+(h?.ok?'ok':'bad');e.textContent=`${h?.ok?'●':'○'} ${name}`;e.title=h?`Last received ${h.age} s ago`:'No fresh status';return e;}));
+  $('health').replaceChildren(...(calibrating?['Lidar','Odometry']:mapping?['Map','Lidar','Odometry','Mission']:['Map','Lidar','Odometry','AMCL','YOLO','Mission']).map(name=>{const h=s.health?.[name],e=document.createElement('span');e.className='check '+(h?.ok?'ok':'bad');e.textContent=`${h?.ok?'●':'○'} ${name}`;e.title=h?`Last received ${h.age} s ago`:'No fresh status';return e;}));
   $('loadMapping').hidden=!managed;$('loadMapping').disabled=!idle;
   $('start').hidden=!mapping;$('start').textContent='Start automatic mapping';
   $('start').disabled=!mapping||active||!s.allow_motion||!ready();
@@ -80,7 +95,7 @@ function render(){
   const entry=chosenMap();setPill('mapQuality',entry?(entry.reviewed?'Reviewed · ':'')+entry.quality:'Unverified',entry?.reviewed?'good':'warn');
   $('savedMap').textContent=entry?.path||s.saved_map||m.saved_map||'Every save uses a new directory.';
   $('mapReviewNote').textContent=entry?.quality==='partial'?'Partial map: review accessible and missing regions before use.':'Review records your inspection. Partial and unverified maps remain labelled.';
-  const poseAllowed=!mapping&&idle&&loaded&&(!managed||!m.home)&&m.state==='WAITING';
+  const poseAllowed=s.phase==='mission'&&idle&&loaded&&(!managed||!m.home)&&m.state==='WAITING';
   $('setPose').disabled=!poseAllowed||!s.health?.Map?.ok;
   ['poseX','poseY','poseYaw'].forEach(id=>$(id).disabled=!poseAllowed);
   $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
@@ -89,7 +104,7 @@ function render(){
   const targetChanged=!mapping&&$('targetClass').value!==s.mission_options?.target_class;
   $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Reload the mission to apply the selected target class.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
   $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Floor-plane projection uses the visible object bottom and calibrated camera geometry. Check it at measured floor positions before the mission.':'Lidar localization requires the target to intersect the scan plane. Validate the camera and chosen method at measured positions.';
-  $('startMission').disabled=mapping||active||!s.allow_motion||!ready()||!labelReady||targetChanged||(managed&&!s.initial_pose_sent);
+  $('startMission').disabled=s.phase!=='mission'||active||!s.allow_motion||!ready()||!labelReady||targetChanged||(managed&&!s.initial_pose_sent);
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
   setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
   setPill('missionBadge',mapping?'Awaiting map':m.state==='COMPLETE'?'Complete':active?'In progress':'Setup',m.state==='COMPLETE'?'good':'');
@@ -147,7 +162,8 @@ $('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Num
 function readWaypointDraft(){const fields=['waypointX','waypointY','waypointYaw'].map(id=>$(id).value);const values=fields.map(Number);waypointDraft=fields.every(v=>v!=='')&&values.every(Number.isFinite)?[values[0],values[1],values[2]*Math.PI/180]:null;render();}
 ['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).oninput=readWaypointDraft);
 $('goWaypoint').onclick=()=>{if(waypointDraft)action('map_waypoint',{x:waypointDraft[0],y:waypointDraft[1],yaw:waypointDraft[2]}).then(()=>{waypointDraft=null;render();}).catch(()=>{});};
-$('newTrial').onclick=()=>action('new_trial').then(()=>showPage('mapping')).catch(()=>{});$('localizationMethod').onchange=render;
+$('newTrial').onclick=()=>action('new_trial').then(()=>showPage('mapping')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
+$('loadCalibration').onclick=()=>action('stage',{phase:'calibration'}).then(()=>showPage('calibration')).catch(()=>{});
 $('targetClass').onchange=render;
 $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});

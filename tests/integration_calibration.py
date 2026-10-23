@@ -33,6 +33,7 @@ from ee3033_project.calibration_node import CalibrationNode
 from ee3033_project.perception import Perception
 from ee3033_project.ros_utils import set_yaw
 from ee3033_project.velocity_gate import VelocityGate
+from ee3033_project.console import Console
 
 
 SETUP = dict(bottle_height=.25, bottle_diameter=.065, camera_height=.21, camera_x=.07, camera_y=-.015)
@@ -144,9 +145,16 @@ class CalibrationHTTP(unittest.TestCase):
                     Parameter('allow_motion', value=True), Parameter('output_directory', value=tmp)])
             gate = VelocityGate(parameter_overrides=[Parameter('allow_motion', value=True),
                 Parameter('max_linear', value=.04), Parameter('max_angular', value=.15)])
+            console = Console(parameter_overrides=[Parameter('port',value=0),
+                Parameter('phase',value='calibration'),Parameter('session_directory',value=tmp+'/assessment'),
+                Parameter('calibration_directory',value=tmp),Parameter('calibration_port',value=node.p['port'])])
+            console.stage=SimpleNamespace(process=True,loading=False,cancel=threading.Event(),
+                calibration_file='',stop=lambda:None,
+                snapshot=lambda:dict(managed=True,phase='calibration',running=True,transitioning=False,fault=None))
+            node.p['parent_port']=console.p['port']
             sensors = Sensors()
             executor = MultiThreadedExecutor(num_threads=5)
-            for item in (node, gate, sensors):
+            for item in (node, gate, sensors, console):
                 executor.add_node(item)
             thread = threading.Thread(target=executor.spin, daemon=True)
             thread.start()
@@ -165,8 +173,9 @@ class CalibrationHTTP(unittest.TestCase):
                         error = exc.read().decode()
                         # DDS/scheduling can invalidate readiness between a GET
                         # and POST. These rejections happen before any mutation.
-                        transient = ('Wait for the calibration settling window' in error
-                                     or 'Fresh camera, odometry, lidar, zero output' in error)
+                        transient = ('Checking bounded balancing motion' in error
+                                     or 'Fresh sensors, zero final commands' in error
+                                     or 'Finish commanded driving/turning' in error)
                         if exc.code == 400 and transient and time.monotonic() < deadline:
                             time.sleep(.05)
                             continue
@@ -200,7 +209,8 @@ class CalibrationHTTP(unittest.TestCase):
                 with self.assertRaises(HTTPError):
                     post('setup', SETUP, origin='https://example.invalid')
                 post('setup', SETUP)
-                self.assertEqual(node.stationary.seconds, 1.)
+                self.assertEqual(node.stationary.seconds, .35)
+                self.assertTrue(node.capture_status()['balancing_allowed'])
                 detector.delay = 2.
                 self.assertTrue(wait(detector.entered.is_set))
                 first_sequence = node.snapshot()['preview']['sequence']
@@ -221,6 +231,11 @@ class CalibrationHTTP(unittest.TestCase):
                 saved = load_profile(node.saved)
                 self.assertTrue(saved['validated'])
                 self.assertLess(max(v['error_m'] for v in saved['validation']), .03)
+                self.assertTrue(wait(lambda:console.calibration_status['ready']))
+                self.assertEqual(console.stage.calibration_file,node.saved)
+                self.assertIsNone(console.record.snapshot()['started'])
+                self.assertIn(b'Camera setup',urlopen(f'http://127.0.0.1:{console.p["port"]}/').read())
+                self.assertIn(str(console.p['port']),urlopen(base+'/').headers['Content-Security-Policy'])
                 detector.box = sample(1., 0.)['box']
                 time.sleep(.4)
                 before = time.monotonic()
@@ -235,11 +250,15 @@ class CalibrationHTTP(unittest.TestCase):
                 post('stop')
                 with self.assertRaises(ValueError):
                     node.command('/api/calibration/move', dict(mode='forward', generation=old_generation))
+                request=Request(f'http://127.0.0.1:{console.p["port"]}/api/stop',b'{}',
+                    {'Content-Type':'application/json','X-Project-Token':console.token},method='POST')
+                self.assertTrue(json.load(urlopen(request))['success'])
+                self.assertEqual(node.motion.mode,'idle')
                 print('PASS: live preview during blocked inference, balancing-tolerant settling, real HTTP/ROS calibration and browser-loss stop')
             finally:
                 executor.shutdown(timeout_sec=3)
                 thread.join(timeout=3)
-                for item in (node, gate, sensors):
+                for item in (console, node, gate, sensors):
                     item.destroy_node()
                 rclpy.shutdown()
 

@@ -4,6 +4,7 @@ let state=null,online=false,busy=false,box=null,freezeId=null,drag=null,imageBus
 let lastImage=null,rowsKey='',lastReason='',loadedFreezeId=null;
 const canvas=$('camera'),ctx=canvas.getContext('2d');
 const n=id=>Number($(id).value);
+if(new URLSearchParams(location.search).get('embedded')==='1')document.body.classList.add('embedded');
 function message(text,error=false){$('feedback').textContent=text;$('feedback').classList.toggle('error',error);}
 async function post(name,body={}){
   if(!online||!state||state.read_only)throw Error('Reconnect to the calibration service to use controls');
@@ -21,7 +22,7 @@ function render(){
   $('connection').textContent=online?'Connected':'Disconnected';
   if(!state)return;
   const writable=online&&!state.read_only&&!busy,idle=state.motion==='idle';
-  const ready=writable&&idle&&state.ownership&&Object.values(state.health||{}).every(Boolean)&&state.stationary?.verified!==false;
+  const ready=writable&&idle&&state.ownership&&Object.values(state.health||{}).every(Boolean)&&(state.capture?state.capture.ready:state.stationary?.verified!==false);
   const demo=state.simulation_reference;
   $('preview').hidden=!state.simulated||!!demo;$('stop').disabled=!online||!!state.read_only;
   $('simulationControls').hidden=!demo;
@@ -35,12 +36,12 @@ function render(){
   if(!state.profile)$('validation').checked=false;
   const validation=state.profile?.validation||[],passed=validation.filter(v=>v.passed).length;
   $('save').disabled=!ready||validation.length<2||validation.some(v=>!v.passed);
-  $('motionReason').textContent=state.motion_reason+(idle&&state.stationary&&!state.stationary.verified?' · '+state.stationary.reason:'');
+  $('motionReason').textContent=state.motion_reason+(idle&&state.capture?' · '+state.capture.reason:idle&&state.stationary&&!state.stationary.verified?' · '+state.stationary.reason:'');
   $('cameraTitle').textContent=state.frozen?'Frozen · check the bottle outline':'Live · find one bottle';
   $('resume').hidden=!state.frozen;$('resume').disabled=!writable;
   const preview=state.preview;
   $('imageHelp').textContent=state.frozen?'Frozen measurement image. Select Resume live camera to return to video.':preview?`${preview.fresh?'Live JPEG preview':'Waiting for fresh video'} · ${preview.age==null?'no frame yet':preview.age.toFixed(1)+' s old'} · detector ${Number.isFinite(state.inference_latency)?state.inference_latency.toFixed(2)+' s':'starting'}${state.detection_error?' · '+state.detection_error:''}`:'The overlay shows the detector box. Freeze a stable image before entering measurements.';
-  $('detection').textContent=state.frozen?'Frozen':!state.detection_fresh?'No stable single target':`${state.detected_count} bottle detected`;
+  $('detection').textContent=state.frozen?'Frozen':!state.detection_fresh?'Waiting for a fresh bottle detection':`${state.detected_count} bottle detected`;
   $('boxFields').hidden=!state.frozen;
   $('trainingCount').textContent=`${state.samples.length} / 6`;
   $('validationCount').textContent=`${passed} / 2`;

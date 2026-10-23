@@ -11,9 +11,10 @@ from std_msgs.msg import String
 from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options
 from .core import stamp_seconds
 from .ros_utils import LATCHED
+from .console_calibration import CameraSetup
 
 
-class Workflow:
+class Workflow(CameraSetup):
     def init_workflow(self):
         self.catalog = MapCatalog(self.p['map_directory'])
         self.record = TrialRecord(self.p['session_directory'])
@@ -31,6 +32,7 @@ class Workflow:
             allow_motion=self.p['allow_motion'], model=self.p['model'],
             calibration_file=self.p['calibration_file'],
             hardware={name:self.p['stage_'+name] for name in ('base','lidar','camera')}) if self.p['manage_stages'] else None
+        self.init_camera_setup()
         self.create_subscription(Twist,'/cmd_vel',self.on_final_command,10)
         self.create_subscription(Odometry,'/odom',self.on_workflow_odom,qos_profile_sensor_data)
         self.create_subscription(String,'/project/mission_result',self.on_result,LATCHED)
@@ -65,6 +67,7 @@ class Workflow:
         except (ValueError,TypeError): pass
 
     def workflow_tick(self):
+        self.camera_setup_tick()
         if self.stage and self.stage.snapshot()['fault']:
             self.workflow_fault=self.stage.snapshot()['fault']
             self.manual=(0.,0.,0.)
@@ -83,6 +86,8 @@ class Workflow:
 
     def workflow_snapshot(self):
         return dict(assessment=self.record.snapshot(),
+                    camera_calibration=self.calibration_status, calibration_live=self.calibration_live,
+                    calibration_port=self.p['calibration_port'],
                     stage=self.stage.snapshot() if self.stage else dict(managed=False,transitioning=False),
                     selected_map=self.selected_map,mission_options=self.mission_options,
                     initial_pose_sent=self.initial_pose_sent,perception=self.perception_data,
@@ -125,7 +130,8 @@ class Workflow:
             if self.stage is None: raise ValueError('Launch assessment.launch.py for UI stage transitions')
             self.require_idle()
             phase=body.get('phase')
-            if phase not in ('mapping','mission'): raise ValueError('Select mapping or mission')
+            if phase not in ('mapping','mission','calibration'): raise ValueError('Select camera setup, mapping or mission')
+            self.require_camera_idle()
             map_path=None;selected=None;options=mission_options(body)
             if phase=='mission':
                 self.model_labels.require(options['target_class'])
@@ -136,11 +142,11 @@ class Workflow:
                     raise ValueError('Construct and save this trial map in stage 1 before stage 2')
                 map_path=selected['path']
             record=self.record.snapshot()
-            if not reset_trial and (record['finished'] is not None or record['interrupted']):
+            if phase!='calibration' and not reset_trial and (record['finished'] is not None or record['interrupted']):
                 raise ValueError('Begin a new trial to construct a fresh map')
             if self.stage.process:
                 with self.lock:
-                    if time.monotonic()-self.freshness.get('Mission',-math.inf)>2:
+                    if self.p['phase']!='calibration' and time.monotonic()-self.freshness.get('Mission',-math.inf)>2:
                         raise ValueError('Stage status is stale; inspect before manual intervention')
                 self.require_zero_command()
             else:
@@ -178,6 +184,10 @@ class Workflow:
                     self.selected_map=selected;self.mission_options=options
                     self.trial_fault=self.gap_fault=self.workflow_fault=None
                     self.gap_reapply_required=False
+                self.refresh_camera_profile()
+                self.stage.calibration_directory=self.p['calibration_directory']
+                self.stage.calibration_port=self.p['calibration_port']
+                self.stage.console_port=self.p['port']
                 if not self.stage.launch(phase,map_path,options,self.p['map_directory']):
                     return dict(success=True,message='Stage transition stopped; no stage remains active')
                 if phase=='mapping':
@@ -186,6 +196,7 @@ class Workflow:
                 self.workflow_fault='Stage load failed; no automatic restart: '+str(exc)
                 raise
             finally: self.stage.loading=False
-            return dict(success=True,message=('Mapping stack loaded; Start begins exploration' if phase=='mapping'
+            return dict(success=True,message=('Camera setup loaded; complete it once and save the validated profile' if phase=='calibration'
+                        else 'Mapping stack loaded; Start begins exploration' if phase=='mapping'
                         else 'Saved map loaded; establish the assigned initial pose before Start'))
         return None

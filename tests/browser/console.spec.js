@@ -67,6 +67,22 @@ test('preview is explicitly simulated and cannot command robot motion',async({pa
   const response=await request.post('/api/start',{data:{}});expect(response.status()).toBe(403);
 });
 
+test('camera setup is a preparation page and shows saved profile reuse',async({page})=>{
+  const f=await fixture(page);
+  await page.route('http://127.0.0.1:8780/**',route=>route.fulfill({contentType:'text/html',body:'Camera setup fixture'}));
+  await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeEnabled();
+  await page.locator('#loadCalibration').click();
+  expect(f.calls.find(c=>c.path==='/api/stage').body).toEqual({phase:'calibration'});
+  f.state.calibration_live={ready:true,motion:'idle'};
+  f.state.camera_calibration={ready:true,path:'/SIMULATED/camera_checked.json',message:'Saved calibration will be used automatically when the mission loads.'};
+  await expect(page.locator('#calibrationFrame')).toBeVisible();
+  await expect(page.locator('#calibrationBadge')).toHaveText('Saved calibration ready');
+  await expect(page.locator('#calibrationSummary')).toContainText('automatically');
+  await expect(page.locator('#startMission')).toBeDisabled();
+  await expect(page.locator('#stop')).toBeEnabled();
+  expect(f.errors).toEqual([]);
+});
+
 test('mapping shows deferred areas and the final retry pass',async({page})=>{
   const f=await fixture(page,{active:true});
   Object.assign(f.state.mission,{viewpoints_completed:2,deferred_frontiers:1,frontier_retry_round:0});
