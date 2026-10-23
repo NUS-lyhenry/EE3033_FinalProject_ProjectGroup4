@@ -5,7 +5,7 @@ with measured results after each room or sandbox trial.
 
 ## Automatic camera setup from one distance
 
-2026-10-23: runtime code7fb812b adds a mapped-area preparation workflow taking
+2026-10-23: runtime codeeb42349 adds a mapped-area preparation workflow taking
 bottle height, diameter and one floor range. It automatically centres the bottle,
 collects 18 timestamped views, jointly fits camera height/focal lengths/pitch/yaw
 and bottle bearing, checks two held-out translation positions, and saves a
@@ -19,6 +19,10 @@ node and velocity gate, a virtual robot, future-dated AMCL TF, profile saving,
 heartbeat loss and localization-jump stops. The native test uses320×240 synthetic
 images; math and browser checks also cover640×480. Dedicated camera workers keep
 encoding/inference and graph discovery outside the ROS control executor.
+
+GitHub Actions [run39951684688](https://github.com/NUS-lyhenry/EE3033_FinalProject_ProjectGroup4/actions/runs/39951684688)
+also passes all three jobs: algorithms, browser, and native-navigation on Humble,
+including automatic calibration and the existing navigation regression suite.
 
 This version has not been deployed to or physically tested on the robot: the
 operator confirmed it is powered off. On-robot Humble verification and a measured
