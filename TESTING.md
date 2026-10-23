@@ -3,6 +3,30 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Measured-object camera calibration
+
+2026-10-23: added a separate preparation launch and guided browser UI with live
+detector boxes, frozen-image correction, centring and bounded 10 cm movement,
+measured bottle/floor samples, robust camera fitting and independent validation.
+Saved profiles feed mission floor projection and camera–lidar association.
+The clickable simulation uses the same fitter without ROS and marks its profiles
+as simulated; mission perception refuses those profiles.
+
+Local checks: 156 pure Python checks pass, including 27 new calibration/demo
+checks. The browser suite covers setup, image correction, training, fitting,
+validation, saving, Stop, stale sensors/ownership, error display, demo controls
+and mobile layout. Four native ROS Jazzy checks pass on isolated domain 106:
+real HTTP/sample/fit/holdout/save flow with synthetic camera/YOLO proposals and
+the real final velocity gate, browser-loss stop, timestamped map projection,
+resolution/frame/range rejection, and corrected camera–lidar association. No
+physical-domain motion was commanded. Humble calibration integration is added
+to CI. The broader local console integration could not run because this desktop
+lacks nav2_msgs; the CI Humble image installs the native Nav2 dependencies.
+
+These results validate software and synthetic geometry, not physical camera
+accuracy, lidar extrinsics, or map-frame target accuracy. A real measured-bottle
+calibration and independent map reference trials remain required.
+
 ## Gap-policy startup recovery
 
 2026-10-23: the live UI retained a driving lock after the global costmap's

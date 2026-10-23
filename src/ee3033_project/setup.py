@@ -24,5 +24,6 @@ setup(
         'scan_resampler = ee3033_project.scan_resampler:main',
         'console = ee3033_project.console:main',
         'mapper = ee3033_project.mapper:main',
+        'camera_calibration = ee3033_project.calibration_node:main',
     ]},
 )

@@ -14,7 +14,8 @@ def generate_launch_description():
     defaults={'allow_motion':'false','base':'true','lidar':'true','camera':'true',
               'port':'8765','map_directory':'~/ee3033_maps',
               'session_directory':'~/ee3033_results/assessment',
-              'model':'/home/ros2_ws/weights/yolo26n.pt','software_version':'development'}
+              'model':'/home/ros2_ws/weights/yolo26n.pt','software_version':'development',
+              'calibration_file':''}
     params={'manage_stages':True,'phase':'mapping'}
     for name in defaults:
         key='stage_'+name if name in ('base','lidar','camera') else name

@@ -23,6 +23,7 @@ from tf2_ros import Buffer, TransformListener, TransformException
 from .core import associate_lidar, ground_intersection, stamp_seconds
 from .ros_utils import parameters, transform_arrays
 from .model_labels import validate_target
+from .calibration import load_profile, mounting_rotation, floor_point, in_envelope
 
 
 class Perception(Node):
@@ -38,9 +39,11 @@ class Perception(Node):
             'max_range': 3.0, 'ground_z': 0.0, 'position_sigma': 0.10,
             'min_lidar_points': 2, 'cluster_gap': 0.12, 'max_cluster_width': 0.5,
             'cpu_threads': 1,
+            'calibration_file': '',
         })
         if self.p['localization_method'] not in ('lidar', 'ground_plane'):
             raise ValueError('localization_method must be lidar or ground_plane')
+        self.calibration = load_profile(self.p['calibration_file']) if self.p['calibration_file'] else None
         if not os.path.isfile(self.p['model']):
             raise FileNotFoundError('Set model to an existing YOLO weights file')
         import torch
@@ -90,14 +93,26 @@ class Perception(Node):
             self.last_warning = time.monotonic()
 
     def locate(self, box, image, camera, scans):
-        k = np.array(camera.k, dtype=float).reshape(3, 3)
-        d = np.array(camera.d, dtype=float)
-        if camera.width != image.width or camera.height != image.height or k[0,0] <= 0:
+        profile = self.calibration
+        c = profile['camera'] if profile else None
+        if c and (c['width'] != image.width or c['height'] != image.height or c['frame_id'] != image.header.frame_id):
+            raise ValueError('Calibration image resolution/frame does not match this camera')
+        k = np.array(c['k'] if c else camera.k, dtype=float).reshape(3, 3)
+        d = np.array(c['d'] if c else camera.d, dtype=float)
+        if not c and (camera.width != image.width or camera.height != image.height or k[0,0] <= 0):
             raise ValueError('CameraInfo resolution/intrinsics do not match the image')
         image_time = Time.from_msg(image.header.stamp)
         frame = self.p['camera_optical_frame']
         if self.p['localization_method'] == 'ground_plane':
             x1, _, x2, y2 = box
+            if profile:
+                point = floor_point(profile, [0.5*(x1+x2), y2], self.p['max_range'])
+                setup = profile['setup']
+                if not in_envelope(profile, point[0]-setup['camera_x'], point[1]-setup['camera_y']):
+                    return None
+                transform = self.buffer.lookup_transform(self.p['map_frame'], profile['base_frame'], image_time)
+                rotation, translation = transform_arrays(transform)
+                return rotation @ point + translation
             ray2d = cv2.undistortPoints(np.array([[[0.5*(x1+x2), y2]]],
                                                 dtype=np.float64), k, d).reshape(2)
             transform = self.buffer.lookup_transform(self.p['map_frame'], frame,
@@ -120,9 +135,13 @@ class Perception(Node):
         scan_time = Time.from_msg(scan.header.stamp)
         # Full lookup compensates robot motion between scan and image capture.
         transform = self.buffer.lookup_transform_full(
-            frame, image_time, scan.header.frame_id, scan_time, self.p['map_frame'])
+            profile['base_frame'] if profile else frame, image_time,
+            scan.header.frame_id, scan_time, self.p['map_frame'])
         rotation, translation = transform_arrays(transform)
         camera_points = points @ rotation.T + translation
+        if profile:
+            setup = profile['setup']
+            camera_points = (camera_points-np.array([setup['camera_x'], setup['camera_y'], setup['camera_height']])) @ mounting_rotation(profile['pitch'], profile['yaw'])
         point = associate_lidar(camera_points, points, indices, box, k, d,
                                 self.p['min_lidar_points'], self.p['cluster_gap'],
                                 self.p['max_cluster_width'])
@@ -162,7 +181,7 @@ class Perception(Node):
                 detected_confidences.append(float(b.conf.item()))
                 box = b.xyxy[0].cpu().numpy().astype(float)
                 point = None
-                if camera is not None:
+                if camera is not None or self.calibration is not None:
                     try:
                         point = self.locate(box, image, camera, scans)
                     except (TransformException, ValueError, cv2.error) as exc:
@@ -188,6 +207,7 @@ class Perception(Node):
                 'detected_candidates':len(detected_confidences),
                 'highest_confidence':max(detected_confidences) if detected_confidences else None,
                 'target_class': self.p['target_class'],
+                'calibration_file': self.p['calibration_file'] or None,
                 'localization_method': self.p['localization_method']})))
         except Exception as exc:
             self.warn('Perception failed: ' + str(exc))

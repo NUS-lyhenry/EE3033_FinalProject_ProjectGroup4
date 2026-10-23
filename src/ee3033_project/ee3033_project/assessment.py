@@ -202,11 +202,13 @@ def mission_options(values):
 
 class StageProcess:
     """Own exactly one launch process group. Never restart crashed nodes."""
-    def __init__(self, log_root, allow_motion=False, hardware=None, model=None, popen=subprocess.Popen):
+    def __init__(self, log_root, allow_motion=False, hardware=None, model=None, popen=subprocess.Popen,
+                 calibration_file=''):
         self.root = Path(log_root).expanduser()
         self.allow_motion = allow_motion
         self.hardware = hardware or dict(base=True,lidar=True,camera=True)
         self.model = model
+        self.calibration_file = calibration_file
         self.popen = popen
         self.process = None
         self.log = None
@@ -258,6 +260,7 @@ class StageProcess:
             options=mission_options(options or {})
             args += ['map:='+str(map_path),*[(key+':='+str(value)) for key,value in options.items()]]
             if self.model: args.append('model:='+self.model)
+            if self.calibration_file: args.append('calibration_file:='+self.calibration_file)
         with self.log.open('w') as stream:
             self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
         self.phase,self.fault=phase,None

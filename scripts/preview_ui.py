@@ -30,7 +30,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(body)
     def do_GET(self):
         path=self.path.split('?')[0]
-        files={'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript'),'/style.css':('style.css','text/css')}
+        files={'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript'),'/style.css':('style.css','text/css'),
+               '/calibration':('calibration.html','text/html; charset=utf-8'),
+               '/calibration.html':('calibration.html','text/html; charset=utf-8'),
+               '/calibration.js':('calibration.js','text/javascript'),
+               '/calibration.css':('calibration.css','text/css')}
         if path in files:
             name,kind=files[path];return self.reply(200,(WEB/name).read_bytes(),kind)
         if path=='/api/state':return self.reply(200,preview_state())
@@ -38,6 +42,13 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/maps':return self.reply(200,{'maps':[]})
         if path=='/api/labels':return self.reply(200,dict(ready=True,model='SIMULATED labels',labels=['bottle','cup'],error=None))
         if path=='/api/result':return self.reply(200,{'simulated':True,'mission':preview_state()['mission']})
+        if path=='/api/calibration/state':
+            return self.reply(200,dict(simulated=True,read_only=True,token='read-only-preview',generation=0,
+                allow_motion=False,motion='idle',motion_reason='Preview · no robot connected',
+                reason='SIMULATED PREVIEW · Connect the calibration launch for live measurements.',
+                health={name:False for name in ('camera','odometry','lidar','output','ownership')},
+                ownership=False,camera=None,setup=None,samples=[],profile=None,saved=None,
+                detected_count=0,box=None,detection_fresh=False,frozen=None))
         return self.reply(404,{'error':'No live robot data in preview'})
     def do_POST(self):self.reply(403,{'error':'Read-only preview cannot send robot commands'})
 

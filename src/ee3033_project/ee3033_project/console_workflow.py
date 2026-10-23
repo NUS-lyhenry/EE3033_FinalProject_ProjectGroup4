@@ -29,6 +29,7 @@ class Workflow:
         self.last_registered_map = None
         self.stage = StageProcess(Path(self.p['session_directory']).expanduser()/'logs',
             allow_motion=self.p['allow_motion'], model=self.p['model'],
+            calibration_file=self.p['calibration_file'],
             hardware={name:self.p['stage_'+name] for name in ('base','lidar','camera')}) if self.p['manage_stages'] else None
         self.create_subscription(Twist,'/cmd_vel',self.on_final_command,10)
         self.create_subscription(Odometry,'/odom',self.on_workflow_odom,qos_profile_sensor_data)

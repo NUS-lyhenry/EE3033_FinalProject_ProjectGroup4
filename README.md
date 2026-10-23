@@ -42,6 +42,11 @@ the measured window statistics and a specific failure reason.
 
 ## Deployment and dependencies
 
+For camera target-location calibration, see the [measured-bottle calibration guide](CALIBRATION.md).
+It provides a guided browser UI, automatic centring and bounded movement, measured
+training/validation, and saved profiles for mission perception. Run it as a separate
+preparation session before assessment.
+
 The supported robot runtime is **ROS 2 Humble in the existing `ros2_humble`
 container**, with the lab workspace at `/home/ros2_ws`. Its installed packages
 `balance_robot_base`, `balance_usb_cam`, and `lslidar_driver_n10p` are reused.

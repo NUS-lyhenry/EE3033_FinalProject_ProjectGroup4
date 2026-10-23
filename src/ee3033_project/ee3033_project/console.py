@@ -51,7 +51,7 @@ class Console(Workflow, Node):
                                    'session_directory':'~/ee3033_results/assessment',
                                    'manage_stages':False,'stage_base':True,'stage_lidar':True,
                                    'stage_camera':True,'model':'/home/ros2_ws/weights/yolo26n.pt',
-                                   'software_version':'development'})
+                                   'software_version':'development','calibration_file':''})
         if self.p['phase'] not in ('mapping','mission'):
             raise ValueError('phase must be mapping or mission')
         self.lock = threading.Lock()
@@ -280,6 +280,7 @@ class Console(Workflow, Node):
             battery_age = now-self.freshness.get('Battery',-math.inf)
             return {'mission':self.state,'phase':self.p['phase'],
                     'allow_motion':self.p['allow_motion'],'pose':pose,
+                    'calibration_file':self.p['calibration_file'] or None,
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),

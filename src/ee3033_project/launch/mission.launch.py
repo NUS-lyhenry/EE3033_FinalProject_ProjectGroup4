@@ -39,6 +39,7 @@ def generate_launch_description():
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share, 'config', 'navigation.yaml')),
         DeclareLaunchArgument('model', default_value='/home/ros2_ws/weights/yolo26n.pt'),
         DeclareLaunchArgument('localization_method', default_value='lidar'),
+        DeclareLaunchArgument('calibration_file', default_value=''),
         DeclareLaunchArgument('return_tolerance', default_value='0.20'),
         OpaqueFunction(function=check_map),
         include(os.path.join(share, 'launch', 'hardware.launch.py'), {
@@ -50,6 +51,7 @@ def generate_launch_description():
             'nav_config': LaunchConfiguration('nav_config')}),
         Node(package='ee3033_project', executable='perception', output='screen', parameters=[
             config, {'target_class': target,
+                     'calibration_file': ParameterValue(LaunchConfiguration('calibration_file'), value_type=str),
                      'model': ParameterValue(LaunchConfiguration('model'), value_type=str),
                      'localization_method': ParameterValue(LaunchConfiguration('localization_method'),
                                                           value_type=str)}]),
