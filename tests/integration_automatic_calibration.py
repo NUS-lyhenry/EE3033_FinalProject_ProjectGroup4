@@ -197,6 +197,20 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                 heartbeat_stop.set();heartbeat_thread.join(timeout=2)
                 for worker in heartbeat_requests:worker.join(timeout=2)
                 self.assertTrue(wait(ready))
+                # A failed preflight must preserve the already saved draft.
+                previous_setup=dict(node.setup)
+                grid=node.grid
+                col=int((telemetry[0]-grid.info.origin.position.x)/grid.info.resolution)
+                row=int((telemetry[1]-grid.info.origin.position.y)/grid.info.resolution)
+                cell=row*grid.info.width+col
+                grid.data[cell]=100
+                try:
+                    with self.assertRaisesRegex(AssertionError,'footprint'):
+                        post('automatic',bottle_height=.30,bottle_diameter=.065,distance=1.2)
+                    self.assertEqual(node.setup,previous_setup)
+                    self.assertEqual(node.auto_status['state'],'complete')
+                finally:
+                    grid.data[cell]=0
                 dx=.9*math.cos(.04)-telemetry[0];dy=.9*math.sin(.04)-telemetry[1]
                 distance=math.hypot(dx,dy)
                 post('automatic',bottle_height=.25,bottle_diameter=.065,distance=distance)

@@ -516,12 +516,13 @@ class CalibrationNode(Node):
                 from .calibration import number
                 distance = number(body.get('distance'), 'Measured floor distance (m)', .45, 2.5)
                 validate_sample(dict(distance=1., lateral=0., box=frame['box']), self.camera)
+                map_pose, alignment = self.map_context()
+                if not corridor_clear(self.grid, map_pose, map_pose[2], length=0.):
+                    raise ValueError('Robot footprint is not clear in the saved map')
                 self.setup = setup
                 self.auto_range = distance
                 self.auto_anchor = list(frame['pose'])
-                map_pose, self.auto_alignment = self.map_context()
-                if not corridor_clear(self.grid, map_pose, map_pose[2], length=0.):
-                    raise ValueError('Robot footprint is not clear in the saved map')
+                self.auto_alignment = alignment
                 self.auto_views = [dict(pose=[0., 0., 0.], box=list(frame['box']), stamp=frame['stamp'], holdout=False)]
                 self.auto_last_stamp = frame['stamp']
                 self.samples, self.profile, self.saved, self.frozen = [], None, None, None
@@ -548,6 +549,7 @@ class CalibrationNode(Node):
             self.require_stationary()
             if path == '/api/calibration/setup':
                 self.setup = validate_setup(body)
+                self.auto_status = dict(state='idle', reason='Manual setup active; automatic calibration is available above.')
                 self.samples, self.profile, self.frozen, self.saved = [], None, None, None
                 self.reason = 'Capture six or more positions with different distances and left/right offsets.'
             elif path == '/api/calibration/freeze':
