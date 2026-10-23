@@ -51,7 +51,7 @@ function render(){
   $('cameraTitle').textContent=state.frozen?'Frozen · check the bottle outline':'Live · find one bottle';
   $('resume').hidden=!state.frozen;$('resume').disabled=!writable;
   const preview=state.preview;
-  $('imageHelp').textContent=state.frozen?'Frozen measurement image. Select Resume live camera to return to video.':preview?`${preview.fresh?'Live JPEG preview':'Waiting for fresh video'} · ${preview.age==null?'no frame yet':preview.age.toFixed(1)+' s old'} · detector ${Number.isFinite(state.inference_latency)?state.inference_latency.toFixed(2)+' s':'starting'}${state.detection_error?' · '+state.detection_error:''}`:'The overlay shows the detector box. Freeze a stable image before entering measurements.';
+  $('imageHelp').textContent=state.frozen?'Frozen measurement image. Select Resume live camera to return to video.':preview?`${preview.fresh?'Live JPEG preview':'Waiting for fresh video'} · ${preview.age==null?'no frame yet':preview.age.toFixed(1)+' s old'} · detector ${Number.isFinite(state.inference_latency)?state.inference_latency.toFixed(2)+' s':'starting'}${state.detection_error?' · '+state.detection_error:''}`:automatic?'Views are captured automatically at each robot pose. Keep the bottle fixed.':'The overlay shows the detector box. Freeze a stable image before entering measurements.';
   $('detection').textContent=state.frozen?'Frozen':!state.detection_fresh?'Waiting for a fresh bottle detection':`${state.detected_count} bottle detected`;
   $('boxFields').hidden=!state.frozen;
   $('trainingCount').textContent=`${state.samples.length} / 6`;

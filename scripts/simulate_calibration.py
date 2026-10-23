@@ -42,7 +42,7 @@ class Simulation:
         self.auto_index = 0
         self.motion = 'idle'
         self.motion_reason = 'Simulation stopped'
-        self.reason = 'Save the example setup, then freeze and record each simulated position.'
+        self.reason = self.automatic['reason']
         self.last_tick = self.began = self.lease = time.monotonic()
 
     def stop(self, reason):

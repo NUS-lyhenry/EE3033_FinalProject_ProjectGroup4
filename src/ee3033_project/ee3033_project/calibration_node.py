@@ -81,7 +81,7 @@ class CalibrationNode(Node):
         self.samples = []
         self.revision = 0
         self.saved = None
-        self.reason = 'Enter the measured bottle dimensions and camera mounting position.'
+        self.reason = 'Enter bottle height, diameter and one floor distance, then start automatic calibration in the mapped area.'
         self.fresh = {}
         self.last_moving = time.monotonic()
         self.raw_speed = [math.inf, math.inf]
