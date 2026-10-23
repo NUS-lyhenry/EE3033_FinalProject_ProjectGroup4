@@ -176,6 +176,7 @@ class Workflow:
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
                     self.selected_map=selected;self.mission_options=options
                     self.trial_fault=self.gap_fault=self.workflow_fault=None
+                    self.gap_reapply_required=False
                 if not self.stage.launch(phase,map_path,options,self.p['map_directory']):
                     return dict(success=True,message='Stage transition stopped; no stage remains active')
                 if phase=='mapping':

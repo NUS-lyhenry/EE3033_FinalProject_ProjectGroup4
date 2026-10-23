@@ -58,6 +58,9 @@ class Console(Workflow, Node):
         self.control_lock = threading.Lock()
         self.trial_fault = None
         self.gap_fault = None
+        # Read-only discovery failures recover after a complete synchronized
+        # read. Uncertain updates/rollback still require a verified reapply.
+        self.gap_reapply_required = False
         self.control_generation=0
         self.token = secrets.token_urlsafe(24)
         self.model_labels=ModelLabels(self.p['model'])
@@ -415,7 +418,8 @@ class Console(Workflow, Node):
             original = self.read_gap_nodes()
             current = gap.describe(original,phase)  # reject unsupported geometry before any write
         except (RuntimeError,ValueError) as exc:
-            self.gap_fault = 'Gap policy unavailable; driving locked: '+str(exc)
+            if not self.gap_reapply_required:
+                self.gap_fault = 'Gap policy unavailable; driving locked: '+str(exc)
             raise RuntimeError(self.gap_fault) from exc
         if changing:
             if enabled is None:
@@ -445,12 +449,17 @@ class Console(Workflow, Node):
                 except Exception:
                     restored = False
                 self.gap_fault = None if restored and gap.describe(original,phase)['synchronized'] else 'Gap update/rollback unverified; driving locked; reapply gap policy'
+                self.gap_reapply_required = self.gap_fault is not None
                 raise RuntimeError(str(exc)+('; original values restored' if restored else '; driving locked')) from exc
             original = actual
             self.gap_fault = None
+            self.gap_reapply_required = False
         data = gap.describe(original,phase)
         if not data['synchronized']:
             self.gap_fault = 'Gap parameters differ across nodes; driving locked; reapply gap policy'
+            self.gap_reapply_required = True
+        elif not self.gap_reapply_required:
+            self.gap_fault = None
         data.update(success=True,fault=self.gap_fault,
                     message='Navigation policy applied and verified; temporary until restart' if changing else '')
         return data

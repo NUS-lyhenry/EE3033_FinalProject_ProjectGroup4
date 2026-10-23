@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import tempfile
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
@@ -154,7 +155,19 @@ class ConsoleTests(unittest.TestCase):
             try:
                 deadline=time.monotonic()+4
                 while 'Mission' not in console.freshness and time.monotonic()<deadline: time.sleep(.05)
-                defaults=json.load(urlopen(base+'/api/gap',timeout=15))
+                # A browser can poll before Nav2's parameter services are ready.
+                # Recover on a later complete read without writing any settings.
+                with patch.object(console,'read_gap_nodes',side_effect=RuntimeError(
+                        'global_costmap/global_costmap: parameter service unavailable')):
+                    with self.assertRaises(HTTPError) as unavailable:
+                        urlopen(base+'/api/gap',timeout=15)
+                    self.assertEqual(unavailable.exception.code,503)
+                self.assertIsNotNone(console.gap_fault)
+                with patch.object(console,'write_trial_node',side_effect=AssertionError(
+                        'Read-only startup recovery must not write parameters')):
+                    defaults=json.load(urlopen(base+'/api/gap',timeout=15))
+                self.assertIsNone(defaults['fault'])
+                self.assertIsNone(console.gap_fault)
                 self.assertFalse(defaults['enabled'])
                 self.assertEqual(defaults['audacity'],'bold')
                 self.assertTrue(defaults['synchronized'])
@@ -210,6 +223,15 @@ class ConsoleTests(unittest.TestCase):
                 self.assertIsNotNone(console.gap_fault)
                 console.trial_fault=None
                 self.assertEqual(json.load(urlopen(base+'/api/state'))['control_fault'],console.gap_fault)
+                # Even matching readback cannot prove that a rejected rollback
+                # committed. Transient read failures must not erase this lock.
+                rollback_fault=console.gap_fault
+                with patch.object(console,'read_gap_nodes',side_effect=RuntimeError('Read timeout')):
+                    with self.assertRaises(HTTPError): urlopen(base+'/api/gap',timeout=15)
+                self.assertEqual(console.gap_fault,rollback_fault)
+                locked=json.load(urlopen(base+'/api/gap',timeout=15))
+                self.assertTrue(locked['synchronized'])
+                self.assertEqual(locked['fault'],rollback_fault)
                 console.write_trial_node=writer
                 self.assertFalse(post(False)['enabled'])
                 self.assertIsNone(console.gap_fault)

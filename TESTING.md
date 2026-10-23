@@ -3,6 +3,25 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Gap-policy startup recovery
+
+2026-10-23: the live UI retained a driving lock after the global costmap's
+parameter service was briefly unavailable during stage startup. Later readback
+was complete and synchronized, but the original console did not clear the old
+read-only failure. Reapplying the unchanged Bold/gap-OFF policy cleared the
+immediate fault while the robot was waiting.
+
+The console now clears a read-only availability fault after complete, validated,
+synchronized readback. Inconsistent parameters and unverified update/rollback
+still latch a lock until a verified reapply; subsequent read failures do not
+overwrite that reason. Stage replacement resets the lock classification.
+
+129 algorithm tests pass. All three native Humble console cases pass on isolated
+domain 102. The expanded mapping/mission regression fails on the original code,
+then passes with the fix: startup read recovery performs no parameter writes,
+and matching reads after an uncertain rollback cannot unlock driving. This is
+software evidence, not a physical navigation result.
+
 ## Bounded navigation recovery
 
 2026-10-22: the physical mapping logs repeatedly reported no valid path,
