@@ -10,9 +10,14 @@ project_mission:
     camera_fov: 1.35  # Conservative horizontal field of view, radians.
     viewpoint_headings: 6
     max_candidates: 250
+    candidate_limit: 1000  # Fail explicitly above this bound; never silently drop views.
     max_goals: 120
     coverage_fraction: 0.98
     observe_seconds: 3.0
+    min_observation_frames: 3
+    max_observation_retries: 2
+    search_linear_speed: 0.12  # Estimated travel cost, not a movement command.
+    search_angular_speed: 0.40
     goal_timeout: 75.0
     mission_timeout: 900.0
     return_tolerance: 0.20  # Replace with examiner's specified tolerance.

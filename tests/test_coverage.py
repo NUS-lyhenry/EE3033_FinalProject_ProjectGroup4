@@ -1,7 +1,9 @@
 import math
+import threading
+import time
 import numpy as np
 import pytest
-from ee3033_project.coverage import CoveragePlanner, returned_home
+from ee3033_project.coverage import CoveragePlanner, Viewpoint, returned_home
 
 
 def room():
@@ -69,3 +71,79 @@ def test_viewpoint_does_not_see_behind_heading():
     visible = planner.visible(20,20,0)
     assert visible
     assert all(c >= 20 for _,c in visible)
+
+
+def test_offline_route_keeps_all_online_candidates_including_chosen_views():
+    planner = CoveragePlanner(np.zeros((15,15)), .1, (0,0,0), spacing=10, headings=4)
+    route = planner.plan(.75,.75)
+    assert len(route) == 4
+    assert len(planner.options) == 4
+    assert all(v in planner.options for v in route)
+    assert planner.next_viewpoint(.75,.75,set(),yaw=0) is not None
+    assert set().union(*(v.visible for v in planner.options)) == planner.coverable
+
+
+def test_online_selection_uses_actual_coverage_and_excludes_attempted_views():
+    planner = CoveragePlanner(room(),.1,(0,0,0))
+    first = Viewpoint(1.,1.,0.,frozenset({(1,1),(1,2)}))
+    second = Viewpoint(1.,1.,0.,frozenset({(2,1)}))
+    planner.options = (first, second)
+    assert planner.next_viewpoint(1,1,set(),yaw=0) == 0
+    assert planner.next_viewpoint(1,1,first.visible,yaw=0) == 1
+    assert planner.next_viewpoint(1,1,set(),excluded={0},yaw=0) == 1
+    assert planner.next_viewpoint(1,1,first.visible|second.visible,yaw=0) is None
+    assert planner.next_viewpoint(1,1,set(),excluded={0,1},yaw=0) is None
+
+
+def test_online_selection_accounts_for_rotation_and_travel_time():
+    planner = CoveragePlanner(room(),.1,(0,0,0))
+    cells = frozenset({(1,1)})
+    planner.options = (Viewpoint(1,1,math.pi,cells), Viewpoint(1,1,0,cells))
+    assert planner.next_viewpoint(1,1,set(),yaw=0) == 1
+    assert planner.next_viewpoint(1,1,set(),yaw=math.pi) == 0
+    planner.options = (Viewpoint(3,1,0,cells), Viewpoint(1.1,1,0,cells))
+    assert planner.next_viewpoint(1,1,set(),yaw=0) == 1
+
+
+def test_candidate_threshold_does_not_discard_views_or_claim_truncation():
+    planner = CoveragePlanner(room(),.1,(0,0,0),spacing=.8,max_candidates=1)
+    options = planner.prepare(.85,.85)
+    assert len(options) > planner.headings
+    assert planner.candidate_threshold_exceeded
+    assert not planner.truncated
+    assert planner.unobservable == planner.target_cells-planner.coverable
+
+
+def test_candidate_preparation_stops_on_deadline_and_cancellation(monkeypatch):
+    planner = CoveragePlanner(room(),.1,(0,0,0))
+    with pytest.raises(TimeoutError):
+        planner.prepare(.85,.85,deadline=time.monotonic()-1)
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(RuntimeError,match='canceled'):
+        planner.prepare(.85,.85,cancel=cancel)
+    cancel.clear()
+    original = planner.visible
+    def stop_after_first_view(*args):
+        cancel.set()
+        return original(*args)
+    monkeypatch.setattr(planner,'visible',stop_after_first_view)
+    with pytest.raises(RuntimeError,match='canceled'):
+        planner.prepare(.85,.85,cancel=cancel)
+    assert planner.options == ()
+
+
+def test_preparing_again_resets_prior_route_limit_state():
+    planner = CoveragePlanner(room(),.1,(0,0,0),max_goals=1)
+    planner.plan(.85,.85)
+    assert planner.truncated
+    planner.prepare(.85,.85)
+    assert not planner.truncated
+
+
+def test_excessive_candidate_count_fails_before_visibility_work(monkeypatch):
+    planner = CoveragePlanner(room(),.1,(0,0,0),candidate_limit=2)
+    monkeypatch.setattr(planner,'visible',lambda *args: pytest.fail('Candidate limit must run first'))
+    with pytest.raises(ValueError,match='Too many search candidates'):
+        planner.prepare(.85,.85)
+    assert planner.options == ()
