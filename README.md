@@ -43,8 +43,9 @@ the measured window statistics and a specific failure reason.
 ## Deployment and dependencies
 
 For camera target-location calibration, see the [measured-bottle calibration guide](CALIBRATION.md).
-It provides a guided browser UI, automatic centring and bounded movement, measured
-training/validation, and saved profiles for mission perception. Run it as a separate
+Its default UI takes bottle dimensions and one floor distance, then automatically
+centres the bottle, collects pose-derived views in a mapped area, checks held-out
+views and saves the profile. Advanced panels retain independently measured checks. Run it as a separate
 preparation session before assessment.
 The main console now includes **Camera setup**: save a validated profile once
 and subsequent missions reuse it automatically. Camera-only calibrated floor

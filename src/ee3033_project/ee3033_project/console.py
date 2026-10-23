@@ -472,7 +472,7 @@ class Console(Workflow, Node):
         workflow=self.workflow_command(path,body)
         if workflow is not None:
             return workflow
-        if self.p['phase']=='calibration' and path!='/api/stop':
+        if self.p['phase']=='calibration' and path not in ('/api/stop','/api/initial_pose'):
             raise ValueError('Use the camera setup controls, or load a mapping/mission stage')
         if self.stage and self.stage.loading and path!='/api/stop':
             raise ValueError('Wait for the stage transition to finish')
@@ -565,11 +565,14 @@ class Console(Workflow, Node):
                 gap.validate_audacity(body['audacity'])
             return self.gap_settings(body.get('enabled'),body.get('audacity'))
         if path=='/api/initial_pose':
-            if active or self.p['phase']!='mission':
+            if active or self.p['phase'] not in ('mission','calibration'):
                 raise ValueError('Initial pose is only available before the autonomous mission')
             with self.lock:
                 fresh = time.monotonic()-self.freshness.get('Mission',-math.inf)<2.0
-            if not fresh:
+            if self.p['phase']=='calibration':
+                self.require_camera_idle()
+                self.require_zero_command()
+            elif not fresh:
                 raise ValueError('Mission status is stale; initial pose changes are locked')
             x,y,yaw = [float(body[k]) for k in ('x','y','yaw')]
             if not all(math.isfinite(v) for v in (x,y,yaw)):

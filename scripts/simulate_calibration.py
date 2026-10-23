@@ -19,7 +19,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src/ee3033_project'))
 from ee3033_project.calibration import (camera_model, fit_profile, predicted_points,
-    save_profile, validate_holdout, validate_sample, validate_setup)
+    save_profile, validate_holdout, validate_sample, validate_setup, number)
+from ee3033_project.calibration_auto import fit_automatic, bottle_sample
 
 PHYSICAL = dict(bottle_height=.25, bottle_diameter=.065, camera_height=.20, camera_x=0., camera_y=0.)
 CAMERA = camera_model(640, 480, 'simulated_camera', [520., 0., 320., 0., 510., 240., 0., 0., 1.], [0.]*5)
@@ -36,6 +37,9 @@ class Simulation:
         self.distance, self.lateral = POSITIONS[0]
         self.setup = self.profile = self.frozen = self.saved = None
         self.samples = []
+        self.automatic = dict(state='idle', reason='Simulation ready: use bottle 0.25 m × 0.065 m and distance 0.90 m.', collected=0, total=18)
+        self.auto_views = []
+        self.auto_index = 0
         self.motion = 'idle'
         self.motion_reason = 'Simulation stopped'
         self.reason = 'Save the example setup, then freeze and record each simulated position.'
@@ -44,12 +48,41 @@ class Simulation:
     def stop(self, reason):
         self.motion, self.motion_reason = 'idle', reason
         self.generation += 1
+        if self.automatic['state']=='collecting':
+            self.automatic.update(state='stopped', reason=reason)
 
     def update(self):
         now = time.monotonic()
         dt = min(.2, now-self.last_tick)
         self.last_tick = now
         if self.motion == 'idle':
+            return
+        if self.motion == 'auto':
+            if now-self.lease > .6:
+                self.stop('Simulation stopped: browser heartbeat lost')
+                return
+            if now-self.auto_last < .30:
+                return
+            self.auto_last = now
+            distance, yaw, holdout = self.auto_goals[self.auto_index]
+            pose = [-distance, 0., yaw]
+            sample = bottle_sample(PHYSICAL, .9, .04, pose, [])
+            self.distance, self.lateral = sample['distance'], sample['lateral']
+            self.auto_views.append(dict(pose=pose, box=self.observation()['box'], holdout=holdout))
+            self.auto_index += 1
+            self.automatic.update(collected=self.auto_index, reason='Simulating automatic view collection')
+            if self.auto_index == len(self.auto_goals):
+                try:
+                    self.profile = fit_automatic(self.setup, CAMERA, self.auto_distance, self.auto_views)
+                    self.profile['simulated'] = True
+                    self.samples = self.profile['training']
+                    self.saved = save_profile(self.profile, self.directory)
+                    self.automatic.update(state='complete', reason='Simulation complete; demo profile cannot be used on a robot')
+                    self.reason = self.automatic['reason']
+                except ValueError as exc:
+                    self.automatic.update(state='failed', reason=str(exc))
+                    self.reason = str(exc)
+                self.stop(self.automatic['reason'])
             return
         if now-self.lease > .6 or now-self.began > 1.5:
             self.stop('Simulated movement stopped; check reference measurements again')
@@ -87,6 +120,7 @@ class Simulation:
         self.update()
         return copy.deepcopy(dict(token=self.token, generation=self.generation,
             allow_motion=True, read_only=False, simulated=True,
+            automatic={**self.automatic, 'prerequisites': dict(ready=True,reason='Simulated saved map and localization ready')},
             simulation_reference=dict(distance=self.distance, lateral=self.lateral, scene=self.scene+1, total=len(POSITIONS)),
             health={k: True for k in ('camera','odometry','lidar','output','ownership')}, ownership=True,
             motion=self.motion, motion_reason=self.motion_reason, reason=self.reason,
@@ -109,7 +143,18 @@ class Simulation:
             return
         if self.motion != 'idle':
             raise ValueError('Wait for simulated movement to stop')
-        if name == 'setup':
+        if name == 'automatic':
+            self.setup = validate_setup({**PHYSICAL, 'bottle_height': body.get('bottle_height'),
+                                        'bottle_diameter': body.get('bottle_diameter')})
+            self.auto_distance = number(body.get('distance'), 'Measured floor distance (m)', .45, 2.5)
+            self.auto_goals = [(0.,0.,False)]+[(d,a,False) for d in (0.,.18,.36,.54,.72) for a in (0.,-.13,.13)]
+            self.auto_goals += [(.45,0.,True),(.27,0.,True)]
+            self.auto_index, self.auto_views = 0, []
+            self.profile, self.saved, self.frozen = None, None, None
+            self.motion = 'auto'
+            self.auto_last = self.began = self.lease = time.monotonic()
+            self.automatic.update(state='collecting',collected=0,reason='Simulating automatic alignment and collection')
+        elif name == 'setup':
             self.setup = validate_setup(body)
             self.samples, self.profile, self.frozen, self.saved = [], None, None, None
             self.reason = 'Setup saved. Freeze the bottle, fill the reference offsets and record a training sample.'

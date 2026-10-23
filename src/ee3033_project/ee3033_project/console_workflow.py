@@ -6,10 +6,11 @@ import time
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
 from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options
-from .core import stamp_seconds
+from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
 
@@ -133,6 +134,24 @@ class Workflow(CameraSetup):
             if phase not in ('mapping','mission','calibration'): raise ValueError('Select camera setup, mapping or mission')
             self.require_camera_idle()
             map_path=None;selected=None;options=mission_options(body)
+            self.stage.calibration_initial_pose = None
+            if phase=='calibration' and body.get('map_id'):
+                selected=self.catalog.entry(body['map_id'])
+                if not selected['reviewed']:
+                    raise ValueError('Review the saved map before automatic camera calibration')
+                map_path=selected['path']
+                # Reuse only a fresh localization on this exact map. Never seed
+                # from an old trial/home pose or assume the robot stayed still.
+                if (self.selected_map and self.selected_map['id']==selected['id']
+                        and time.monotonic()-self.freshness.get('AMCL',-math.inf)<3):
+                    try:
+                        tf=self.tf.lookup_transform('map','base_footprint',Time())
+                        age=self.get_clock().now().nanoseconds*1e-9-stamp_seconds(tf.header.stamp)
+                        if -.6<=age<1.:
+                            t=tf.transform
+                            self.stage.calibration_initial_pose=[t.translation.x,t.translation.y,quaternion_yaw(t.rotation)]
+                    except Exception:
+                        pass
             if phase=='mission':
                 self.model_labels.require(options['target_class'])
                 selected=self.catalog.entry(body.get('map_id'))

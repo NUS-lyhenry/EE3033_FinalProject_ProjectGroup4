@@ -43,3 +43,30 @@ def test_demo_rejects_recording_without_frozen_frame_and_stale_controls(tmp_path
     session.command('stop', {})
     with pytest.raises(ValueError, match='context changed'):
         session.command('move', dict(generation=0, mode='forward'))
+
+
+def test_automatic_demo_needs_only_three_inputs_and_saves_simulation_evidence(tmp_path, monkeypatch):
+    clock=[100.]
+    monkeypatch.setattr(demo.time,'monotonic',lambda:clock[0])
+    session=demo.Simulation(tmp_path)
+    session.command('automatic',dict(generation=0,bottle_height=.25,bottle_diameter=.065,distance=.9))
+    for _ in range(18):
+        clock[0]+=.31
+        state=session.snapshot()
+        if state['motion']=='auto':session.command('heartbeat',dict(generation=state['generation']))
+    assert session.automatic['state']=='complete'
+    assert len(session.profile['automatic']['observations'])==18
+    assert len(session.profile['validation'])==2
+    assert session.profile['simulated'] is True
+    with pytest.raises(ValueError):load_profile(session.saved)
+
+
+def test_automatic_demo_stops_when_browser_heartbeat_is_lost(tmp_path, monkeypatch):
+    clock=[100.]
+    monkeypatch.setattr(demo.time,'monotonic',lambda:clock[0])
+    session=demo.Simulation(tmp_path)
+    session.command('automatic',dict(generation=0,bottle_height=.25,bottle_diameter=.065,distance=.9))
+    clock[0]+=1.
+    state=session.snapshot()
+    assert state['motion']=='idle' and state['automatic']['state']=='stopped'
+    assert session.saved is None

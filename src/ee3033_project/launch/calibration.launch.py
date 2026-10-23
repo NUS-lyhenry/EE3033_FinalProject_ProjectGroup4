@@ -35,7 +35,7 @@ def start(context):
                            ('camera', 'usb_cam')]:
             if LaunchConfiguration(flag).perform(context).lower() == 'true' and name in names:
                 conflicts.append(name)
-        if 'project_scan_resampler' in names or 'project_camera_calibration' in names:
+        if any(name in names for name in ('project_scan_resampler', 'project_camera_calibration', 'amcl', 'map_server')):
             conflicts.append('existing project sensor/calibration node')
         if conflicts:
             raise RuntimeError('Stop the existing robot stack before calibration: '+', '.join(conflicts))
@@ -45,7 +45,25 @@ def start(context):
         rclpy.shutdown(context=graph_context)
     share = get_package_share_directory('ee3033_project')
     motion = ParameterValue(LaunchConfiguration('allow_motion'), value_type=bool)
-    return [
+    localization = []
+    map_path = LaunchConfiguration('map').perform(context)
+    if map_path:
+        if not os.path.isfile(map_path):
+            raise RuntimeError('The selected calibration map is unavailable')
+        config = os.path.join(share, 'config', 'navigation.yaml')
+        seed = LaunchConfiguration('seed_pose').perform(context).lower() == 'true'
+        initial = {key: float(LaunchConfiguration(arg).perform(context)) for key, arg in
+                   (('initial_pose.x', 'initial_x'), ('initial_pose.y', 'initial_y'), ('initial_pose.yaw', 'initial_yaw'))}
+        localization = [
+            Node(package='nav2_map_server', executable='map_server', name='map_server',
+                 output='screen', parameters=[config, {'yaml_filename': map_path}]),
+            Node(package='nav2_amcl', executable='amcl', name='amcl', output='screen',
+                 parameters=[config, {'set_initial_pose': seed, **initial}]),
+            Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
+                 name='project_calibration_localization', output='screen', parameters=[{
+                     'autostart': True, 'node_names': ['map_server', 'amcl'],
+                     'attempt_respawn_reconnection': False}])]
+    return [*localization,
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(share, 'launch', 'hardware.launch.py')),
                                  launch_arguments={k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}.items()),
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
@@ -63,6 +81,7 @@ def start(context):
 def generate_launch_description():
     defaults = dict(allow_motion='false', base='true', lidar='true', camera='true', port='8780',
                     model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
-                    output_directory='~/ee3033_calibrations', parent_port='8765')
+                    output_directory='~/ee3033_calibrations', parent_port='8765', map='',
+                    seed_pose='false', initial_x='0', initial_y='0', initial_yaw='0')
     return LaunchDescription([*[DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()],
                               OpaqueFunction(function=start)])

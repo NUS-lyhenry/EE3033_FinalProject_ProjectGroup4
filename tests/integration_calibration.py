@@ -326,7 +326,8 @@ class CalibrationLaunch(unittest.TestCase):
     def context(self):
         from launch import LaunchContext
         context = LaunchContext()
-        context.launch_configurations.update(base='false', lidar='false', camera='false')
+        context.launch_configurations.update(base='false', lidar='false', camera='false', map='',
+            seed_pose='false', initial_x='0', initial_y='0', initial_yaw='0')
         return context
 
     def test_preflight_works_without_an_initialized_default_ros_context(self):
@@ -334,6 +335,15 @@ class CalibrationLaunch(unittest.TestCase):
         self.assertFalse(rclpy.ok())
         actions = self.module().start(self.context())
         self.assertEqual(len(actions), 3)
+        self.assertFalse(rclpy.ok())
+
+    def test_mapped_calibration_launch_adds_only_localization_servers(self):
+        context=self.context()
+        with tempfile.NamedTemporaryFile(suffix='.yaml') as map_file:
+            context.launch_configurations.update(map=map_file.name, seed_pose='true',
+                initial_x='1.0', initial_y='2.0', initial_yaw='.3')
+            actions=self.module().start(context)
+        self.assertEqual(len(actions),6)  # map server, AMCL, lifecycle + existing 3
         self.assertFalse(rclpy.ok())
 
     def test_preflight_rejects_existing_command_publisher(self):

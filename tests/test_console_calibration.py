@@ -58,3 +58,12 @@ def test_calibration_stage_owns_drivers_and_uses_separate_launch_arguments(tmp_p
     assert 'calibration.launch.py' in args and 'parent_port:=8888' in args
     assert 'camera:=true' in args
     assert not any(a.startswith(('map_directory:=','console:=')) for a in args)
+
+
+def test_automatic_camera_launch_passes_map_and_only_explicit_fresh_pose_seed(tmp_path):
+    calls=[]
+    manager=StageProcess(tmp_path,popen=lambda args,**kw:calls.append(args) or SimpleNamespace(poll=lambda:None))
+    manager.calibration_initial_pose=[1.,2.,.3]
+    manager.launch('calibration','/maps/room.yaml')
+    assert 'map:=/maps/room.yaml' in calls[0]
+    assert 'seed_pose:=true' in calls[0] and 'initial_yaw:=0.3' in calls[0]

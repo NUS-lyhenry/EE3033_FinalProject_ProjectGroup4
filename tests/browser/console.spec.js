@@ -295,3 +295,18 @@ test('mobile layout keeps required controls on screen without horizontal overflo
   for(const name of ['overview','mapping','mission','navigation','results']){await view(page,name);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await expect(page.locator('#battery')).toBeVisible();await expect(page.locator('#connection')).toBeVisible();await expect(page.locator('#stop')).toBeInViewport();}
   expect(f.errors).toEqual([]);await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'test-results/simulated-mobile-console.png',fullPage:true});
 });
+
+test('camera setup forwards the reviewed map and can establish localization while idle',async({page})=>{
+  const f=await fixture(page);
+  await page.locator('#saveMap').click();await expect(page.locator('#reviewMap')).toBeEnabled();
+  await page.locator('#reviewMap').click();await view(page,'calibration');
+  await page.locator('#loadCalibration').click();
+  expect(f.calls.find(c=>c.path==='/api/stage').body).toEqual({phase:'calibration',map_id:'onsite_simulated/map.yaml'});
+  await page.getByText('Establish localization if needed',{exact:true}).click();
+  await expect(page.locator('#calSetPose')).toBeEnabled();
+  await page.locator('#calPoseX').fill('1.2');await page.locator('#calPoseY').fill('1.1');await page.locator('#calPoseYaw').fill('90');
+  await page.locator('#calSetPose').click();
+  expect(f.calls.find(c=>c.path==='/api/initial_pose').body).toEqual({x:1.2,y:1.1,yaw:Math.PI/2});
+  f.state.mission.state='CALIBRATING';
+  await expect(page.locator('#calSetPose')).toBeDisabled();expect(f.errors).toEqual([]);
+});

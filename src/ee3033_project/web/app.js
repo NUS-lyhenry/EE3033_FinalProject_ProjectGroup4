@@ -51,8 +51,12 @@ function render(){
   setPill('calibrationBadge',calibration?.ready?'Saved calibration ready':'Not calibrated',calibration?.ready?'good':'');
   $('calibrationSummary').textContent=calibration?.message||'Calibrate once, save the validated profile, and subsequent missions will use it automatically.';
   $('calibrationProfile').textContent=calibration?.path||'';
-  $('loadCalibration').textContent=calibrating&&loaded?'Camera setup loaded':calibration?.ready?'Recalibrate camera':'Start camera setup';
-  $('loadCalibration').disabled=!idle||!managed||(calibrating&&loaded);
+  const sameCalibrationMap=calibrating&&loaded&&(!chosenMap()||chosenMap().id===s.selected_map?.id);
+  $('loadCalibration').textContent=sameCalibrationMap?'Camera setup loaded':calibration?.ready?'Load map & recalibrate':'Load map & camera setup';
+  $('loadCalibration').disabled=!idle||!managed||sameCalibrationMap;
+  $('calSetPose').disabled=!calibrating||!idle||!loaded||!s.health?.Map?.ok;
+  ['calPoseX','calPoseY','calPoseYaw'].forEach(id=>$(id).disabled=$('calSetPose').disabled);
+  $('calPoseStatus').textContent=s.calibration_live?.automatic?.prerequisites?.reason||'Load a reviewed map with camera setup first.';
   const frame=$('calibrationFrame'),showCalibration=currentPage==='calibration'&&calibrating&&s.calibration_live?.ready;
   frame.hidden=!showCalibration;
   if(showCalibration&&!frame.hasAttribute('src'))frame.src=`http://${location.hostname}:${s.calibration_port||8780}/?embedded=1`;
@@ -158,12 +162,13 @@ $('stop').onclick=async()=>{releaseDrive();try{const d=await send('stop');feedba
 $('saveMap').onclick=async()=>{try{const d=await action('save_map');await refreshMaps(d.map?.id||maps.find(m=>m.path===d.path)?.id);}catch(_){}};
 $('refreshMaps').onclick=()=>refreshMaps().catch(e=>feedback(e.message,true));$('savedMaps').onchange=render;
 $('reviewMap').onclick=async()=>{try{await action('review_map',{map_id:$('savedMaps').value});await refreshMaps();}catch(_){}};
+$('calSetPose').onclick=()=>action('initial_pose',{x:Number($('calPoseX').value),y:Number($('calPoseY').value),yaw:Number($('calPoseYaw').value)*Math.PI/180}).catch(()=>{});
 $('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Number($('poseY').value),yaw:Number($('poseYaw').value)*Math.PI/180}).catch(()=>{});
 function readWaypointDraft(){const fields=['waypointX','waypointY','waypointYaw'].map(id=>$(id).value);const values=fields.map(Number);waypointDraft=fields.every(v=>v!=='')&&values.every(Number.isFinite)?[values[0],values[1],values[2]*Math.PI/180]:null;render();}
 ['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).oninput=readWaypointDraft);
 $('goWaypoint').onclick=()=>{if(waypointDraft)action('map_waypoint',{x:waypointDraft[0],y:waypointDraft[1],yaw:waypointDraft[2]}).then(()=>{waypointDraft=null;render();}).catch(()=>{});};
 $('newTrial').onclick=()=>action('new_trial').then(()=>showPage('mapping')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
-$('loadCalibration').onclick=()=>action('stage',{phase:'calibration'}).then(()=>showPage('calibration')).catch(()=>{});
+$('loadCalibration').onclick=()=>action('stage',{phase:'calibration',map_id:chosenMap()?.reviewed?chosenMap().id:undefined}).then(()=>showPage('calibration')).catch(()=>{});
 $('targetClass').onchange=render;
 $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
@@ -219,8 +224,8 @@ function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),c
 }
 function renderMap(m){mapData=m;mapImage=null;$('mapEmpty').hidden=!!m;if(!m){$('map').getContext('2d').clearRect(0,0,$('map').width,$('map').height);return;}$('mapScale').textContent=`${fmt(m.width*m.resolution,1)} × ${fmt(m.height*m.resolution,1)} m · ${fmt(m.resolution)} m/cell`;mapImage=document.createElement('canvas');mapImage.width=m.width;mapImage.height=m.height;const ctx=mapImage.getContext('2d'),pixels=ctx.createImageData(m.width,m.height);for(let r=0;r<m.height;r++)for(let c=0;c<m.width;c++){const v=m.cells[r*m.width+c],i=((m.height-1-r)*m.width+c)*4;pixels.data.set([...(v<0?[48,65,75]:v>=50?[14,29,36]:[196,210,211]),255],i);}ctx.putImageData(pixels,0,0);draw();}
 function canvasPosition(e){const r=$('map').getBoundingClientRect();return[(e.clientX-r.left)/r.width*mapData.width,(e.clientY-r.top)/r.height*mapData.height];}
-$('map').onpointerdown=e=>{const mode=currentPage==='mapping'&&!$('waypointX').disabled?'waypoint':currentPage==='mission'&&!$('setPose').disabled?'pose':null;if(!mapData||!mode)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p,mode};draw();};
+$('map').onpointerdown=e=>{const mode=currentPage==='mapping'&&!$('waypointX').disabled?'waypoint':currentPage==='calibration'&&!$('calSetPose').disabled?'calPose':currentPage==='mission'&&!$('setPose').disabled?'pose':null;if(!mapData||!mode)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p,mode};draw();};
 $('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
-$('map').onpointerup=()=>{if(!drag)return;const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
+$('map').onpointerup=()=>{if(!drag)return;const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else if(mode==='calPose'){$('calPoseX').value=a[0].toFixed(2);$('calPoseY').value=a[1].toFixed(2);$('calPoseYaw').value=yaw.toFixed(0);feedback('Robot pose selected. Press Set robot pose on calibration map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
 $('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);
 poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollLabels,500);cameraTick();

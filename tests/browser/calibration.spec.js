@@ -135,3 +135,18 @@ test('frozen measurement can resume live camera without resetting samples',async
   await page.locator('#resume').click();await expect(page.locator('#cameraTitle')).toContainText('Live');
   await expect(page.locator('#resume')).toBeHidden();expect(f.calls.some(c=>c.path==='unfreeze')).toBe(true);
 });
+
+test('automatic setup takes only bottle dimensions and one distance, then shows saved checks',async({page})=>{
+  const f=await fixture(page);
+  f.state.automatic={state:'idle',reason:'Ready',collected:0,total:18,prerequisites:{ready:true,reason:'Map localization ready'}};
+  await expect(page.locator('#automaticPanel')).toBeVisible();
+  await page.locator('#autoHeight').fill('0.23');await page.locator('#autoDiameter').fill('0.06');await page.locator('#autoDistance').fill('0.95');
+  await page.locator('#startAutomatic').click();
+  const request=f.calls.find(c=>c.path==='automatic');
+  expect(request.body).toEqual({generation:0,bottle_height:.23,bottle_diameter:.06,distance:.95});
+  f.state.automatic.state='collecting';f.state.motion='auto';
+  await expect(page.locator('#startAutomatic')).toBeDisabled();await expect(page.locator('#autoStop')).toBeEnabled();
+  f.state.automatic={...f.state.automatic,state:'complete',reason:'Passed and saved',collected:18};f.state.motion='idle';f.state.saved='/tmp/demo_profile.json';
+  f.state.profile={camera:f.state.camera,quality:{reprojection_rms_px:.5},pitch:.1,yaw:0,range_m:[.9,1.6],validation:[{distance:1.2,lateral:0,error_m:.02,passed:true},{distance:1.4,lateral:0,error_m:.03,passed:true}]};
+  await expect(page.locator('#autoResult')).toContainText('2.0 cm / 3.0 cm');expect(f.errors).toEqual([]);
+});

@@ -55,10 +55,10 @@ class CameraSetup:
             with urlopen(f'http://127.0.0.1:{self.p["calibration_port"]}/api/calibration/state', timeout=.25) as response:
                 live = json.load(response)
             self.calibration_live = dict(ready=True, motion=live['motion'],
-                preview=live.get('preview'), capture=live.get('capture'),
+                automatic=live.get('automatic'), preview=live.get('preview'), capture=live.get('capture'),
                 detected_count=live.get('detected_count', 0))
             with self.lock:
-                self.state = dict(phase='calibration', state='WAITING' if live['motion']=='idle' else 'CALIBRATING',
+                self.state = dict(phase='calibration', state='WAITING' if live['motion']=='idle' and live.get('automatic',{}).get('state')!='fitting' else 'CALIBRATING',
                     reason=live['reason'], ready=True, home=None, target=None)
         except (OSError, ValueError, KeyError):
             self.calibration_live = dict(ready=False, motion=None)

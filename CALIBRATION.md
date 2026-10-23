@@ -1,16 +1,61 @@
 # Camera calibration with a measured bottle
 
-This preparation tool fits **effective focal lengths and camera mounting
-pitch/yaw** from an upright bottle on a flat floor. The browser UI provides live
-detector boxes, drag/numeric correction, automatic centring, bounded forward/backward
-movements, measured training, independent validation, and versioned profile saving.
-Mission perception uses the profile for floor projection or camera–lidar association.
+The default workflow needs **bottle height, widest diameter, and one measured
+floor distance**. In a mapped area, the robot automatically centres a fixed bottle,
+collects images at different poses, fits effective camera geometry and checks two
+held-out positions. A passing profile is saved and reused by mission perception.
 
-Movement and fitting are automatic; you measure the dimensions and floor offsets.
-Odometry limits movement and checks settling; it is never the calibration reference.
+Use **Camera setup** in the main console (`/#/calibration`). Select the area's
+reviewed map in the map library and load camera setup. Fresh localization on that
+same map is reused. If localization is unavailable, establish the robot's current
+pose using the map gesture or the optional localization fields. No previous home
+pose is silently reused. Loading this stage starts map server and AMCL alongside
+its own sensor drivers and velocity gate; it does not start a navigation mission.
 
-Use **Camera setup** in the main control console for the integrated one-time workflow.
-The standalone launch below remains available.
+## Automatic workflow: one measurement
+
+1. Put one upright bottle on the same flat floor as the robot, ahead of the
+   camera. Its whole outline and floor contact must be visible. Clear at least
+   0.78 m behind the robot, with 0.24 m clearance on each side, including low
+   obstacles below the lidar plane. Keep the bottle fixed throughout collection.
+2. Enter its height and widest diameter in metres. Measure **one straight floor
+   distance**, from directly below the camera lens to the centre of the bottle
+   base at the robot's current position. It can be diagonal. Do not measure a
+   slanted lens-to-bottle distance or distance to the bottle's nearest surface.
+3. Select **Start automatic calibration** immediately after measuring. The robot
+   centres the bottle, reverses up to 0.72 m, collects views at five distances and
+   small yaw offsets, then moves partway forward to two new check positions.
+   Keep the page open and focused; Stop is available throughout. No further
+   dimensions, offsets, box selections or distance measurements are requested.
+4. The program fits focal lengths, pitch/yaw, camera height and the bottle's
+   initial bearing together. It uses the installed TF for lens forward/left
+   offsets and CameraInfo for principal point and distortion. It pairs each image
+   with timestamped interpolated odometry, using map localization to check the
+   route and detect localization shifts. It never assumes that commanded travel
+   equals actual travel.
+5. Two images from held-out translation positions check the projected floor
+   location. Both must have error at most 0.10 m against pose-derived positions;
+   clipped boxes, insufficient motion/angle coverage, poor fits or failed checks
+   prevent saving. A passing profile is saved automatically and shown in the UI.
+
+These checks measure consistency with the robot's pose estimates, **not independent
+surveyed accuracy**. Odometry bias, detector outlines, varying balancing pitch or
+an inaccurate initial distance can still bias localization. Verify physical
+accuracy separately before claiming a measured target error. The calibration
+bottle's inferred position is never used as a mission target coordinate.
+
+Automatic movement is bounded to a short straight corridor, 0.035 m/s translation,
+0.15 rad/s rotation and a 210-second overall deadline. Unknown/occupied map cells,
+localization jumps or stale localization, missing/ambiguous target detections,
+ownership loss stops collection. A missing browser heartbeat disables driving
+after 0.6 seconds; automatic collection ends if it remains missing for 1.5 seconds. A brief sensor or
+detection delay commands zero immediately and waits for fresh, settled data; a
+delay lasting over two seconds stops the run. Live lidar
+stopping remains the final velocity gate. A stopped/failed run requires a new
+measurement at the robot's current position and an explicit new Start.
+
+The **Advanced** panels retain the manually measured workflow below for cases
+without a saved map or when independent reference measurements are needed.
 
 ## Start the preparation session
 
@@ -26,6 +71,7 @@ source /home/ros2_ws/group4_ws/install/setup.bash
 export ROS_DOMAIN_ID=6
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 ros2 launch ee3033_project calibration.launch.py allow_motion:=true \
+  map:=/home/ros2_ws/group4_maps/YOUR_AREA/map.yaml \
   output_directory:=/home/ros2_ws/group4_calibrations
 ```
 
@@ -41,7 +87,7 @@ be selected with `base:=false`, `lidar:=false`, or `camera:=false`; calibration
 still owns its one scan adapter and final velocity gate. The detector defaults
 to `bottle`, with the existing `/home/ros2_ws/weights/yolo26n.pt` model.
 
-## Guided workflow
+## Advanced manually measured workflow
 
 1. **Measure and save setup.** Enter the bottle height, widest diameter, lens
    height above the floor, and lens forward/left offsets from `base_footprint`, in
@@ -75,7 +121,9 @@ to `bottle`, with the existing `/home/ros2_ws/weights/yolo26n.pt` model.
    the calibration launch before starting the assessment stack.
 
 Stop remains available throughout. Hiding/closing the page or losing focus requests
-Stop. Movement also requires a browser heartbeat within 0.6 seconds, fresh
+Stop. Manual movement requires a browser heartbeat within 0.6 seconds; automatic
+movement also commands zero after 0.6 seconds and ends the run after 1.5 seconds.
+All movement requires fresh
 image/detection, lidar, odometry and final output, plus exclusive command ownership.
 Calibration never writes directly to `/cmd_vel`.
 
@@ -140,9 +188,10 @@ python3 scripts/simulate_calibration.py
 # http://127.0.0.1:8791
 ```
 
-Keep the example setup values. Use Next bottle position, Capture bottle
-image, Fill reference measurement, then Record frozen measurement for positions
-1–6. Fit the model, check Independent validation sample, and record positions 7–8.
+For automatic simulation, keep the example bottle height 0.25 m, diameter
+0.065 m and distance 0.90 m, then select Start automatic calibration. The
+accelerated collection finishes in about six seconds. The Advanced panels also
+support the manually measured simulation with reference positions 1–8.
 The simulation uses the real fitting/validation functions, creates no ROS nodes,
 and labels saved demo profiles so mission perception refuses them.
 
@@ -154,8 +203,8 @@ commands are still required; the mission return-stop verifier is unchanged.
 
 ## One-time setup in the main console
 
-Open **Camera setup** in the main console (`/#/calibration`) and select Start
-camera setup. This preparation stage owns its sensor drivers and velocity gate;
+Open **Camera setup** in the main console (`/#/calibration`), select a reviewed
+map, and select Load map & camera setup. This preparation stage owns its sensor drivers and velocity gate;
 loading mapping or a mission first stops that stage. Calibration does not start
 the assessment timer. The main Stop button also stops camera positioning.
 
@@ -172,6 +221,6 @@ Calibration capture now permits bounded balancing motion over a 0.35 second wind
 heading span <= 0.45 rad). It still requires fresh sensors, zero final movement
 commands and idle positioning controls. One fresh detected image is captured;
 the image and its box remain paired. The earlier multi-frame outline-jitter gate
-is removed. Check the frozen outline, measure its position, and use independent
-validation to assess accuracy. This policy does not modify mission return-stop
+is removed. Automatic collection uses the same balancing tolerance. The advanced manual
+workflow also supports frozen-outline corrections and independently measured checks. This policy does not modify mission return-stop
 verification.

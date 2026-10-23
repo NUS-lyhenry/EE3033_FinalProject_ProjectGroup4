@@ -23,8 +23,19 @@ function render(){
   if(!state)return;
   const writable=online&&!state.read_only&&!busy,idle=state.motion==='idle';
   const ready=writable&&idle&&state.ownership&&Object.values(state.health||{}).every(Boolean)&&(state.capture?state.capture.ready:state.stationary?.verified!==false);
+  const automatic=state.automatic,autoActive=automatic&&['collecting','fitting'].includes(automatic.state);
+  $('automaticPanel').hidden=!automatic;
+  if(!automatic){$('manualControls').open=true;$('manualResults').open=true;}
+  $('startAutomatic').disabled=!ready||!state.allow_motion||!state.detection_fresh||!automatic?.prerequisites?.ready||autoActive;
+  ['autoHeight','autoDiameter','autoDistance'].forEach(id=>$(id).disabled=!writable||autoActive);
+  $('autoStop').disabled=!online||!!state.read_only;
+  $('autoPrerequisites').textContent=automatic?.prerequisites?.reason||'Automatic collection requires a saved map and localization.';
+  $('autoProgress').textContent=automatic?`${automatic.reason}${automatic.collected!=null?' · '+automatic.collected+' / '+automatic.total+' views':''}`:'Waiting to start.';
+  $('autoResult').hidden=automatic?.state!=='complete';
+  if(automatic?.state==='complete')$('autoResult').textContent=`${state.simulated?'SIMULATION ONLY · Demo profile cannot be loaded by the robot.':'Saved for future missions.'} Floor checks: ${(state.profile?.validation||[]).map(v=>(v.error_m*100).toFixed(1)+' cm').join(' / ')}. ${state.saved||''}`;
   const demo=state.simulation_reference;
   $('preview').hidden=!state.simulated||!!demo;$('stop').disabled=!online||!!state.read_only;
+  $('simulationNotice').hidden=!demo||!automatic;
   $('simulationControls').hidden=!demo;
   if(demo){$('simulationReference').textContent=`Position ${demo.scene} / ${demo.total} · Reference forward ${demo.distance.toFixed(3)} m · Left ${demo.lateral.toFixed(3)} m`;$('nextScene').disabled=!writable||!idle;$('fillReference').disabled=!writable||!idle;}
   $('setup').disabled=!ready;
@@ -81,6 +92,8 @@ async function imageTick(){
   }catch(e){if(!freezeId)$('imageHelp').textContent='Waiting for fresh video · reconnecting automatically…';}
   finally{clearTimeout(timeout);if(url)URL.revokeObjectURL(url);imageBusy=false;}
 }
+$('automaticForm').onsubmit=e=>{e.preventDefault();action('automatic',{bottle_height:n('autoHeight'),bottle_diameter:n('autoDiameter'),distance:n('autoDistance')});};
+$('autoStop').onclick=()=>action('stop');
 $('setupForm').onsubmit=e=>{e.preventDefault();action('setup',{bottle_height:n('bottleHeight'),bottle_diameter:n('bottleDiameter'),camera_height:n('cameraHeight'),camera_x:n('cameraX'),camera_y:n('cameraY')});};
 document.querySelectorAll('[data-move]').forEach(b=>b.onclick=()=>action('move',{mode:b.dataset.move}));
 $('stop').onclick=()=>action('stop');$('freeze').onclick=()=>action('freeze');$('fit').onclick=()=>action('fit');$('save').onclick=()=>action('save');

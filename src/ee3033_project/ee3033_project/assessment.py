@@ -213,6 +213,7 @@ class StageProcess:
         self.calibration_file = calibration_file
         self.calibration_directory = '~/ee3033_calibrations'
         self.calibration_port, self.console_port = 8780, 8765
+        self.calibration_initial_pose = None
         self.popen = popen
         self.process = None
         self.log = None
@@ -259,6 +260,11 @@ class StageProcess:
         if phase=='calibration':
             args += ['port:='+str(self.calibration_port), 'parent_port:='+str(self.console_port),
                      'output_directory:='+str(self.calibration_directory)]
+            if map_path:
+                args.append('map:='+str(map_path))
+            if map_path and self.calibration_initial_pose is not None:
+                args += ['seed_pose:=true', *[key+':='+str(value) for key, value in
+                         zip(('initial_x','initial_y','initial_yaw'), self.calibration_initial_pose)]]
             if self.model: args.append('model:='+self.model)
         else:
             args += ['console:=false','map_directory:='+str(map_directory)]
