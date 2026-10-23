@@ -46,6 +46,9 @@ For camera target-location calibration, see the [measured-bottle calibration gui
 It provides a guided browser UI, automatic centring and bounded movement, measured
 training/validation, and saved profiles for mission perception. Run it as a separate
 preparation session before assessment.
+The main console now includes **Camera setup**: save a validated profile once
+and subsequent missions reuse it automatically. Camera-only calibrated floor
+projection supports floor targets below the lidar scan plane.
 
 The supported robot runtime is **ROS 2 Humble in the existing `ros2_humble`
 container**, with the lab workspace at `/home/ros2_ws`. Its installed packages

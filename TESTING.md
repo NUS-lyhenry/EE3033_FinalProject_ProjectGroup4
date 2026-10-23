@@ -3,6 +3,31 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Integrated one-time camera setup
+
+2026-10-23: deployed runtime05b6a6b with Camera setup in the main console. The
+console owns calibration as a preparation stage, routes Stop to its positioning
+service, discovers validated profiles after restart and forwards the latest valid
+profile to future missions. Camera-only floor projection is the UI default after
+validation unless the operator chooses another method. Calibration does not start
+the assessment timer; existing trial records remain preserved.
+
+167 pure checks pass. All29 existing browser cases plus the new preparation-page
+case pass; relevant full-workflow/mobile checks were rerun after the default-method
+change. All6 calibration integration cases pass on Pi/Humble domain107, including
+real main-console Stop, automatic profile discovery and a non-started assessment
+timer. Tests also exercise continuously changing JPEGs during blocked inference
+and bounded balancing odometry. Live embedded camera, enabled setup controls and
+no browser errors were verified with all non-GET browser requests blocked. The
+owned calibration stage is idle; no motion was requested by the agent. The camera
+profile itself remains to be measured and validated by the operator.
+
+Capture now permits bounded balancing over0.35s (mean v<=.18m/s,w<=.60rad/s,
+XYspan<=.15m,yawspan<=.45rad), with fresh sensors/zero final commands and idle
+positioning controls. A fresh single-image snapshot replaces the multi-frame box
+jitter gate. Mission return verification is unchanged. This does not establish
+physical map-frame target accuracy.
+
 ## Measured-object camera calibration
 
 2026-10-23: added a separate preparation launch and guided browser UI with live

@@ -9,6 +9,9 @@ Mission perception uses the profile for floor projection or camera–lidar assoc
 Movement and fitting are automatic; you measure the dimensions and floor offsets.
 Odometry limits movement and checks settling; it is never the calibration reference.
 
+Use **Camera setup** in the main control console for the integrated one-time workflow.
+The standalone launch below remains available.
+
 ## Start the preparation session
 
 Build the updated package with `bash scripts/build_robot.sh`, then source its
@@ -49,8 +52,8 @@ to `bottle`, with the existing `/home/ros2_ws/weights/yolo26n.pt` model.
    most 10 cm, with limits of 0.035 m/s and 0.15 rad/s. Translation times out after
    5 seconds; centring after 8 seconds or 0.45 rad. The existing lidar gate stays
    active, so a blocked move may end before reaching 10 cm.
-3. **Freeze and measure.** Wait for the one-second settling window and three
-   stable detections. Freeze the image, then correct the whole-bottle box if
+3. **Capture and measure.** Keep the positioning controls idle. Gentle balancing
+   movement is allowed. Capture a fresh bottle image, then correct its box if
    necessary. Include the top and floor contact, excluding the shadow. Measure
    from the floor point directly below the lens to the **centre of the bottle
    base**: forward distance parallel to robot forward, and left offset perpendicular
@@ -146,8 +149,7 @@ and labels saved demo profiles so mission perception refuses them.
 The live preview is encoded separately from detection, targeting 8 FPS at 640×480
 with JPEG quality 65; frozen measurement frames use quality 85. The browser decodes
 JPEG locally and retries stalled requests. Use Resume live camera to leave a frozen
-view. Calibration settling allows mean speeds up to 0.06 m/s and 0.20 rad/s over
-one second, with bounded 0.08 m XY span and 0.20 rad heading span. Fresh zero final
+view. Gentle balancing capture uses the limits described below. Fresh zero final
 commands are still required; the mission return-stop verifier is unchanged.
 
 ## One-time setup in the main console
