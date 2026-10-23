@@ -39,7 +39,10 @@ class CalibrationNode(Node):
         self.p = parameters(self, dict(port=8780, allow_motion=False,
             model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
             image_topic='/image_raw', camera_info_topic='/camera_info',
-            output_directory='~/ee3033_calibrations'))
+            output_directory='~/ee3033_calibrations', image_size=320,
+            preview_fps=8., preview_quality=65,
+            settle_seconds=1., settle_linear_limit=.06, settle_angular_limit=.20,
+            settle_position_span=.08, settle_heading_span=.20))
         import torch
         from ultralytics import YOLO
         torch.set_num_threads(1)
@@ -49,10 +52,17 @@ class CalibrationNode(Node):
         self.bridge = CvBridge()
         self.lock = threading.RLock()
         self.motion = CalibrationMotion()
-        self.stationary = StationaryWindow()
+        self.stationary = StationaryWindow(seconds=self.p['settle_seconds'],
+            linear_limit=self.p['settle_linear_limit'], angular_limit=self.p['settle_angular_limit'],
+            position_limit=self.p['settle_position_span'], heading_limit=self.p['settle_heading_span'])
         self.token = secrets.token_urlsafe(24)
         self.image = self.info = self.pose = None
         self.image_stamp = None
+        self.preview_stamp = None
+        self.preview_time = -math.inf
+        self.preview_sequence = 0
+        self.inference_latency = None
+        self.detection_error = None
         self.detections = deque(maxlen=8)
         self.jpeg = self.frozen = self.camera = None
         self.setup = self.profile = None
@@ -74,6 +84,8 @@ class CalibrationNode(Node):
         self.create_subscription(Twist, '/cmd_vel', self.on_final, 10)
         self.create_timer(.05, self.tick)
         self.create_timer(.25, self.detect, callback_group=MutuallyExclusiveCallbackGroup())
+        self.create_timer(1./self.p['preview_fps'], self.preview,
+                          callback_group=MutuallyExclusiveCallbackGroup())
         self.create_timer(.3, self.check_graph, callback_group=MutuallyExclusiveCallbackGroup())
         self.start_server()
 
@@ -139,31 +151,29 @@ class CalibrationNode(Node):
     def require_stationary(self):
         settled = self.stationary.evaluate(self.get_clock().now().nanoseconds*1e-9)
         if self.motion.mode != 'idle' or not settled['verified'] or time.monotonic()-self.last_moving < 1.:
-            raise ValueError('Wait for the two-second stationary window: '+settled['reason'])
+            raise ValueError('Wait for the calibration settling window: '+settled['reason'])
         if (not all(self.health().values()) or not self.graph_ok or self.final is None
                 or any(not math.isfinite(v) or abs(v) > 1e-5 for v in self.final)):
             raise ValueError('Fresh camera, odometry, lidar, zero output and exclusive control are required')
 
-    def detect(self):
+    def preview(self):
+        """Encode live JPEGs independently of the slower detection callback."""
         with self.lock:
             image, info = self.image, self.info
         if image is None or not self.fresh_stamp(image, 1.):
             return
         stamp = stamp_seconds(image.header.stamp)
-        if stamp == self.image_stamp:
+        if stamp == self.preview_stamp:
             return
-        self.image_stamp = stamp
+        self.preview_stamp = stamp
         try:
             raw = self.bridge.imgmsg_to_cv2(image, 'bgr8')
-            result = self.model.predict(raw, imgsz=416, conf=.6, device='cpu', verbose=False)[0]
-            boxes = [b.xyxy[0].cpu().numpy().astype(float).tolist() for b in result.boxes
-                     if result.names[int(b.cls.item())].casefold() == self.p['target_class'].casefold()]
             k = d = None
             if info is not None and info.width == image.width and info.height == image.height:
                 k, d = list(info.k), list(info.d)
             camera = camera_model(image.width, image.height, image.header.frame_id, k, d,
                                   info.distortion_model if info else 'plumb_bob')
-            ok, jpeg = cv2.imencode('.jpg', raw, [cv2.IMWRITE_JPEG_QUALITY, 82])
+            ok, jpeg = cv2.imencode('.jpg', raw, [cv2.IMWRITE_JPEG_QUALITY, self.p['preview_quality']])
             if not ok or not self.fresh_stamp(image, 1.):
                 return
             now = time.monotonic()
@@ -176,18 +186,53 @@ class CalibrationNode(Node):
                     self.revision += 1
                     self.reason = 'Camera settings changed; training samples were reset.'
                 self.camera, self.jpeg = camera, jpeg.tobytes()
-                self.detections.append(dict(time=now, box=boxes[0] if len(boxes) == 1 else None,
-                                            count=len(boxes), jpeg=self.jpeg))
+                self.preview_time = now
+                self.preview_sequence += 1
+        except Exception as exc:
+            with self.lock:
+                self.reason = 'Camera preview error: '+str(exc)
+
+    def detect(self):
+        with self.lock:
+            image, camera = self.image, self.camera
+        if image is None or camera is None or not self.fresh_stamp(image, 1.):
+            return
+        stamp = stamp_seconds(image.header.stamp)
+        if stamp == self.image_stamp:
+            return
+        self.image_stamp = stamp
+        started = time.monotonic()
+        captured = started-(self.get_clock().now().nanoseconds*1e-9-stamp)
+        try:
+            raw = self.bridge.imgmsg_to_cv2(image, 'bgr8')
+            # Freeze uses the exact detected image, with higher quality than the
+            # live preview. Never attach a delayed box to a newer live JPEG.
+            ok, jpeg = cv2.imencode('.jpg', raw, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                return
+            result = self.model.predict(raw, imgsz=self.p['image_size'], conf=.6,
+                                        device='cpu', verbose=False)[0]
+            boxes = [b.xyxy[0].cpu().numpy().astype(float).tolist() for b in result.boxes
+                     if result.names[int(b.cls.item())].casefold() == self.p['target_class'].casefold()]
+            now = time.monotonic()
+            with self.lock:
+                self.inference_latency = now-started
+                if now-captured > 1.5 or camera != self.camera:
+                    self.detection_error = 'Detector is delayed; live video continues. Wait for a fresh detection.'
+                    return
+                self.detection_error = None
+                self.detections.append(dict(time=captured, box=boxes[0] if len(boxes) == 1 else None,
+                    count=len(boxes), jpeg=jpeg.tobytes()))
                 self.fresh['detection'] = now
         except Exception as exc:
             with self.lock:
-                self.reason = 'Camera/detector error: '+str(exc)
+                self.detection_error = 'Detector error: '+str(exc)
 
     def target(self):
         if not self.detections:
             return None
         d = self.detections[-1]
-        if time.monotonic()-d['time'] > .8 or d['box'] is None:
+        if time.monotonic()-d['time'] > 1.5 or d['box'] is None:
             return None
         return dict(error=((d['box'][0]+d['box'][2])/2-self.camera['k'][2])/self.camera['width'])
 
@@ -210,9 +255,13 @@ class CalibrationNode(Node):
                 allow_motion=self.p['allow_motion'], read_only=False, health=self.health(),
                 ownership=self.graph_ok, motion=self.motion.mode, motion_reason=self.motion.reason,
                 stationary=self.stationary.evaluate(self.get_clock().now().nanoseconds*1e-9),
+                preview=dict(sequence=self.preview_sequence,
+                    age=round(time.monotonic()-self.preview_time, 2) if math.isfinite(self.preview_time) else None,
+                    fresh=time.monotonic()-self.preview_time < 1., fps=self.p['preview_fps']),
+                inference_latency=self.inference_latency, detection_error=self.detection_error,
                 reason=self.reason, camera=self.camera, setup=self.setup, samples=self.samples,
                 profile=self.profile, saved=self.saved,
-                detected_count=last.get('count', 0), box=last.get('box'),
+                detected_count=last.get('count', 0), box=last.get('box') if self.target() else None,
                 detection_fresh=self.target() is not None,
                 frozen={k:v for k,v in self.frozen.items() if k != 'jpeg'} if self.frozen else None)
 
@@ -245,6 +294,9 @@ class CalibrationNode(Node):
                 return dict(success=True)
             if body.get('generation') != self.motion.generation:
                 raise ValueError('Control context changed; refresh before retrying')
+            if path == '/api/calibration/unfreeze':
+                self.frozen = None
+                return dict(success=True)
             if path == '/api/calibration/move':
                 self.require_stationary()
                 if not self.p['allow_motion']:
@@ -263,12 +315,12 @@ class CalibrationNode(Node):
             elif path == '/api/calibration/freeze':
                 if not self.setup or not self.camera:
                     raise ValueError('Save the setup and wait for a camera image first')
-                frames = [d for d in list(self.detections)[-5:]
-                          if time.monotonic()-d['time'] < 2.5 and d['time'] > self.last_moving+.3]
-                if len(frames) < 5 or any(d['box'] is None for d in frames):
-                    raise ValueError('Keep exactly one bottle visible for five stable detections')
+                frames = [d for d in list(self.detections)[-3:]
+                          if time.monotonic()-d['time'] < 4. and d['time'] > self.last_moving+.2]
+                if len(frames) < 3 or any(d['box'] is None for d in frames) or self.target() is None:
+                    raise ValueError('Keep exactly one bottle visible for three recent detections')
                 boxes = np.array([d['box'] for d in frames])
-                if float(np.ptp(boxes, axis=0).max()) > 12:
+                if float(np.ptp(boxes, axis=0).max()) > 18:
                     raise ValueError('Bottle image is moving; wait for a stable view')
                 # Use the last frame's box and JPEG together. Stability is checked
                 # across frames; never attach median pixels to a different image.
@@ -343,7 +395,8 @@ class CalibrationNode(Node):
                 if path == '/api/calibration/image.jpg':
                     with node.lock:
                         jpeg = node.frozen['jpeg'] if node.frozen else node.jpeg
-                    return self.reply(200, jpeg, 'image/jpeg') if jpeg else self.reply(404, dict(error='Waiting for camera'))
+                        fresh = node.frozen is not None or time.monotonic()-node.preview_time < 1.
+                    return self.reply(200, jpeg, 'image/jpeg') if jpeg and fresh else self.reply(503, dict(error='Waiting for a fresh camera preview'))
                 return self.reply(404, dict(error='Unknown endpoint'))
 
             def do_POST(self):

@@ -104,6 +104,9 @@ class Simulation:
         if name == 'heartbeat':
             self.lease = time.monotonic()
             return
+        if name == 'unfreeze':
+            self.frozen = None
+            return
         if self.motion != 'idle':
             raise ValueError('Wait for simulated movement to stop')
         if name == 'setup':

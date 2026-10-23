@@ -37,6 +37,9 @@ function render(){
   $('save').disabled=!ready||validation.length<2||validation.some(v=>!v.passed);
   $('motionReason').textContent=state.motion_reason+(idle&&state.stationary&&!state.stationary.verified?' · '+state.stationary.reason:'');
   $('cameraTitle').textContent=state.frozen?'Frozen · check the bottle outline':'Live · find one bottle';
+  $('resume').hidden=!state.frozen;$('resume').disabled=!writable;
+  const preview=state.preview;
+  $('imageHelp').textContent=state.frozen?'Frozen measurement image. Select Resume live camera to return to video.':preview?`${preview.fresh?'Live JPEG preview':'Waiting for fresh video'} · ${preview.age==null?'no frame yet':preview.age.toFixed(1)+' s old'} · detector ${Number.isFinite(state.inference_latency)?state.inference_latency.toFixed(2)+' s':'starting'}${state.detection_error?' · '+state.detection_error:''}`:'The overlay shows the detector box. Freeze a stable image before entering measurements.';
   $('detection').textContent=state.frozen?'Frozen':!state.detection_fresh?'No stable single target':`${state.detected_count} bottle detected`;
   $('boxFields').hidden=!state.frozen;
   $('trainingCount').textContent=`${state.samples.length} / 6`;
@@ -57,7 +60,7 @@ function render(){
 }
 async function poll(){
   try{const r=await fetch('/api/calibration/state');if(!r.ok)throw Error('Calibration service unavailable');const next=await r.json();state=next;online=true;
-    if(freezeId!==next.frozen?.id){freezeId=next.frozen?.id||null;setBox(next.frozen?.box||next.box);}
+    if(freezeId!==(next.frozen?.id||null)){freezeId=next.frozen?.id||null;setBox(next.frozen?.box||next.box);}
     else if(!freezeId)setBox(next.box);
     if(next.camera&&(canvas.width!==next.camera.width||canvas.height!==next.camera.height)){canvas.width=next.camera.width;canvas.height=next.camera.height;canvas.parentElement.style.aspectRatio=`${canvas.width}/${canvas.height}`;draw();}
     if(next.reason!==lastReason){lastReason=next.reason;if(!busy)message(next.reason);}
@@ -66,13 +69,21 @@ async function poll(){
 }
 async function imageTick(){
   if(imageBusy||!online||document.hidden)return;
-  imageBusy=true;const image=new Image(),requestFreezeId=freezeId;
-  image.onload=()=>{if(requestFreezeId===freezeId){lastImage=image;loadedFreezeId=requestFreezeId;$('cameraEmpty').hidden=true;draw();render();}imageBusy=false;};
-  image.onerror=()=>{imageBusy=false;};image.src='/api/calibration/image.jpg?t='+Date.now();
+  if(freezeId&&loadedFreezeId===freezeId)return;
+  imageBusy=true;const requestFreezeId=freezeId,controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),3000);let url;
+  try{
+    const response=await fetch('/api/calibration/image.jpg?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+    if(!response.ok)throw Error('No fresh camera image');
+    url=URL.createObjectURL(await response.blob());const frame=new Image();frame.src=url;await frame.decode();
+    if(requestFreezeId===freezeId){lastImage=frame;loadedFreezeId=requestFreezeId;$('cameraEmpty').hidden=true;draw();render();}
+  }catch(e){if(!freezeId)$('imageHelp').textContent='Waiting for fresh video · reconnecting automatically…';}
+  finally{clearTimeout(timeout);if(url)URL.revokeObjectURL(url);imageBusy=false;}
 }
 $('setupForm').onsubmit=e=>{e.preventDefault();action('setup',{bottle_height:n('bottleHeight'),bottle_diameter:n('bottleDiameter'),camera_height:n('cameraHeight'),camera_x:n('cameraX'),camera_y:n('cameraY')});};
 document.querySelectorAll('[data-move]').forEach(b=>b.onclick=()=>action('move',{mode:b.dataset.move}));
 $('stop').onclick=()=>action('stop');$('freeze').onclick=()=>action('freeze');$('fit').onclick=()=>action('fit');$('save').onclick=()=>action('save');
+$('resume').onclick=()=>action('unfreeze');
 $('sampleForm').onsubmit=e=>{e.preventDefault();action('sample',{freeze_id:freezeId,box,distance:n('distance'),lateral:n('lateral'),validation:$('validation').checked});};
 $('validation').onchange=render;
 $('nextScene').onclick=()=>action('scene');
@@ -86,4 +97,4 @@ $('copyCommand').onclick=async()=>{try{await navigator.clipboard.writeText($('la
 function leave(){if(state?.motion!=='idle')post('stop').catch(()=>{});}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)leave();});window.addEventListener('pagehide',leave);window.addEventListener('blur',leave);
 setInterval(()=>{if(online&&!document.hidden&&document.hasFocus()&&state?.motion!=='idle')post('heartbeat').catch(()=>{});},200);
-setInterval(poll,400);setInterval(imageTick,400);poll();
+setInterval(poll,400);setInterval(imageTick,125);poll();

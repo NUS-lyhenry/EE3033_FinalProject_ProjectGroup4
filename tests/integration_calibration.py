@@ -4,6 +4,7 @@ Run ONLY on an isolated domain. No real camera, weights, or robot are used.
 """
 import json
 import importlib.util
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -74,11 +75,19 @@ class Detector:
 
     def __init__(self):
         self.box = sample(1., 0.)['box']
+        self.delay = 0.
+        self.entered = threading.Event()
+        self.completed_delay = threading.Event()
 
     def to(self, *args):
         return self
 
     def predict(self, *args, **kwargs):
+        if self.delay:
+            delay = self.delay
+            self.entered.set()
+            time.sleep(delay)
+            self.completed_delay.set()
         return [SimpleNamespace(names=self.names, boxes=[Proposal(self.box)] if self.box else [])]
 
 
@@ -90,13 +99,15 @@ class Sensors(Node):
         self.scan_pub = self.create_publisher(LaserScan, '/scan_fixed', qos_profile_sensor_data)
         self.odom_pub = self.create_publisher(Odometry, '/odom', qos_profile_sensor_data)
         self.commands = []
+        self.frames = 0
         self.create_subscription(Twist, '/cmd_vel', lambda msg: self.commands.append((time.monotonic(), msg.linear.x, msg.angular.z)), 10)
         self.create_timer(.05, self.tick)
 
     def tick(self):
         stamp = self.get_clock().now().to_msg()
         from cv_bridge import CvBridge
-        image = CvBridge().cv2_to_imgmsg(np.zeros((480, 640, 3), dtype=np.uint8), 'bgr8')
+        self.frames += 1
+        image = CvBridge().cv2_to_imgmsg(np.full((480, 640, 3), self.frames%255, dtype=np.uint8), 'bgr8')
         image.header.stamp, image.header.frame_id = stamp, CAMERA['frame_id']
         self.image_pub.publish(image)
         info = CameraInfo()
@@ -111,6 +122,14 @@ class Sensors(Node):
         odom = Odometry()
         odom.header.stamp, odom.header.frame_id = stamp, 'odom'
         odom.child_frame_id, odom.pose.pose.orientation.w = 'base_footprint', 1.
+        # Balancing corrections exceed the mission verifier's limits. The
+        # calibration-specific settling policy must accept their bounded pose.
+        t = self.frames*.05
+        odom.pose.pose.position.x = .02*math.sin(8*t)
+        odom.pose.pose.position.y = .02*math.sin(11*t)
+        set_yaw(odom.pose.pose.orientation, .07*math.sin(9*t))
+        odom.twist.twist.linear.x = .10 if self.frames%5 == 0 else .035
+        odom.twist.twist.angular.z = .22 if self.frames%5 == 0 else .12
         self.odom_pub.publish(odom)
 
 
@@ -146,7 +165,7 @@ class CalibrationHTTP(unittest.TestCase):
                         error = exc.read().decode()
                         # DDS/scheduling can invalidate readiness between a GET
                         # and POST. These rejections happen before any mutation.
-                        transient = ('Wait for the two-second stationary window' in error
+                        transient = ('Wait for the calibration settling window' in error
                                      or 'Fresh camera, odometry, lidar, zero output' in error)
                         if exc.code == 400 and transient and time.monotonic() < deadline:
                             time.sleep(.05)
@@ -181,6 +200,16 @@ class CalibrationHTTP(unittest.TestCase):
                 with self.assertRaises(HTTPError):
                     post('setup', SETUP, origin='https://example.invalid')
                 post('setup', SETUP)
+                self.assertEqual(node.stationary.seconds, 1.)
+                detector.delay = 2.
+                self.assertTrue(wait(detector.entered.is_set))
+                first_sequence = node.snapshot()['preview']['sequence']
+                first_jpeg = urlopen(base+'/api/calibration/image.jpg').read()
+                self.assertTrue(wait(lambda: node.snapshot()['preview']['sequence'] >= first_sequence+3, 2.))
+                second_jpeg = urlopen(base+'/api/calibration/image.jpg').read()
+                self.assertNotEqual(hashlib.sha256(first_jpeg).digest(), hashlib.sha256(second_jpeg).digest())
+                detector.delay = 0.
+                self.assertTrue(wait(detector.completed_delay.is_set, 4.))
                 for d, y in POSITIONS:
                     capture(d, y)
                 post('fit')
@@ -206,7 +235,7 @@ class CalibrationHTTP(unittest.TestCase):
                 post('stop')
                 with self.assertRaises(ValueError):
                     node.command('/api/calibration/move', dict(mode='forward', generation=old_generation))
-                print('PASS: real HTTP/ROS training, holdout/save, token/origin rejection, gated movement and browser-loss stop')
+                print('PASS: live preview during blocked inference, balancing-tolerant settling, real HTTP/ROS calibration and browser-loss stop')
             finally:
                 executor.shutdown(timeout_sec=3)
                 thread.join(timeout=3)

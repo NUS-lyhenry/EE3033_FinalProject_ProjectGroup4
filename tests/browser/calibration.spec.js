@@ -17,6 +17,7 @@ async function fixture(page){
     if(reject===path)return route.fulfill({status:400,json:{error:'SIMULATED measurement rejected'}});
     if(path==='setup'){state.setup=body;state.samples=[];state.profile=null;}
     if(path==='freeze')state.frozen={id:'frozen-'+calls.length,box:state.box};
+    if(path==='unfreeze')state.frozen=null;
     if(path==='sample'){
       const sample={distance:body.distance,lateral:body.lateral,box:body.box};
       if(body.validation)state.profile.validation.push({...sample,error_m:.025,passed:true});else{state.samples.push(sample);state.profile=null;}
@@ -126,4 +127,11 @@ test('clickable simulation exposes reference controls and labels saved profiles 
   await expect(page.locator('#launchCommand')).toContainText('SIMULATION COMPLETE');
   await expect(page.locator('#copyCommand')).toBeHidden();
   await page.screenshot({path:'test-results/calibration-desktop.png',fullPage:true});expect(f.errors).toEqual([]);
+});
+
+test('frozen measurement can resume live camera without resetting samples',async({page})=>{
+  const f=await fixture(page);await page.locator('#setup').click();await page.locator('#freeze').click();
+  await expect(page.locator('#capture')).toBeEnabled();await expect(page.locator('#resume')).toBeVisible();
+  await page.locator('#resume').click();await expect(page.locator('#cameraTitle')).toContainText('Live');
+  await expect(page.locator('#resume')).toBeHidden();expect(f.calls.some(c=>c.path==='unfreeze')).toBe(true);
 });
