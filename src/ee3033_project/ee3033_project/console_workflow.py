@@ -9,7 +9,7 @@ from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
-from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map
+from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map, calibration_pose_source
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
@@ -147,10 +147,12 @@ class Workflow(CameraSetup):
                 if not selected['reviewed']:
                     raise ValueError('Review the saved map before automatic camera calibration')
                 map_path=selected['path']
-                # Reuse only a fresh localization on this exact map. Never seed
-                # from an old trial/home pose or assume the robot stayed still.
-                if (self.selected_map and self.selected_map['id']==selected['id']
-                        and time.monotonic()-self.freshness.get('AMCL',-math.inf)<3):
+                # Capture the current SLAM pose before stopping mapping, or
+                # fresh AMCL on the same loaded map. Never use trial/home poses.
+                source=calibration_pose_source(self.p['phase'],self.saved_map,map_path,
+                    self.selected_map['id'] if self.selected_map else None,selected['id'])
+                fresh_key='Mission' if source=='mapping' else 'AMCL'
+                if source and time.monotonic()-self.freshness.get(fresh_key,-math.inf)<3:
                     try:
                         tf=self.tf.lookup_transform('map','base_footprint',Time())
                         age=self.get_clock().now().nanoseconds*1e-9-stamp_seconds(tf.header.stamp)
@@ -159,6 +161,8 @@ class Workflow(CameraSetup):
                             self.stage.calibration_initial_pose=[t.translation.x,t.translation.y,quaternion_yaw(t.rotation)]
                     except Exception:
                         pass
+                if source=='mapping' and self.stage.calibration_initial_pose is None:
+                    raise ValueError('Wait for a fresh mapping pose before loading camera setup; mapping remains running')
             if phase=='mission':
                 self.model_labels.require(options['target_class'])
                 selected=self.catalog.entry(body.get('map_id'))
@@ -204,7 +208,7 @@ class Workflow(CameraSetup):
                     self.state=dict(state='WAITING',reason='Starting '+phase+' services; waiting for fresh status',home=None,target=None)
                     self.map_data=None;self.map_revision+=1;self.route=[];self.path=[]
                     self.saved_map=None
-                    self.amcl_covariance=None;self.initial_pose_sent=False
+                    self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
                     self.selected_map=selected;self.mission_options=options

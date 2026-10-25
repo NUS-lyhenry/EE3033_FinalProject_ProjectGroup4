@@ -239,4 +239,40 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
 
 
 
+class CalibrationPoseHandoff(unittest.TestCase):
+    def fixture(self, age=0.):
+        from ee3033_project.console_workflow import Workflow
+        now=time.time()
+        transform=TransformStamped()
+        transform.header.stamp.sec=int(now-age)
+        transform.header.stamp.nanosec=int(((now-age)%1)*1e9)
+        transform.transform.translation.x=.6;transform.transform.translation.y=.4
+        set_yaw(transform.transform.rotation,.25)
+        class StopBeforeLaunch(Exception):pass
+        stopped=[]
+        def stop():
+            stopped.append(True)
+            raise StopBeforeLaunch()
+        stage=SimpleNamespace(process=True,calibration_initial_pose=None,cancel=threading.Event(),loading=False,stop=stop)
+        fake=SimpleNamespace(lock=threading.RLock(),stage=stage,p=dict(phase='mapping'),saved_map='/maps/current/map.yaml',selected_map=None,
+            freshness={'Mission':time.monotonic()},tf=SimpleNamespace(lookup_transform=lambda *a:transform),
+            get_clock=lambda:SimpleNamespace(now=lambda:SimpleNamespace(nanoseconds=int(now*1e9))),
+            catalog=SimpleNamespace(entry=lambda _:dict(id='current/map.yaml',path='/maps/current/map.yaml',reviewed=True)),
+            require_idle=lambda:None,require_camera_idle=lambda:None,require_zero_command=lambda:None,
+            record=SimpleNamespace(snapshot=lambda:dict(finished=None,interrupted=False)),manual_pub=SimpleNamespace(publish=lambda _:None))
+        return Workflow,fake,stopped,StopBeforeLaunch
+
+    def test_fresh_slam_pose_is_captured_before_mapping_shutdown(self):
+        workflow,fake,stopped,sentinel=self.fixture()
+        with self.assertRaises(sentinel):workflow.workflow_command(fake,'/api/stage',dict(phase='calibration',map_id='current/map.yaml'))
+        self.assertEqual(stopped,[True])
+        np.testing.assert_allclose(fake.stage.calibration_initial_pose,[.6,.4,.25])
+
+    def test_stale_slam_pose_preserves_the_mapping_stack(self):
+        workflow,fake,stopped,_=self.fixture(age=2.)
+        with self.assertRaisesRegex(ValueError,'fresh mapping pose'):
+            workflow.workflow_command(fake,'/api/stage',dict(phase='calibration',map_id='current/map.yaml'))
+        self.assertFalse(stopped)
+
+
 if __name__=='__main__':unittest.main()

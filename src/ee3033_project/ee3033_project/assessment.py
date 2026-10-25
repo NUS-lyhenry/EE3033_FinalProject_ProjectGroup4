@@ -189,6 +189,15 @@ class MapCatalog:
         return self.entry(map_id)
 
 
+def calibration_pose_source(phase, saved_path, selected_path, loaded_id, selected_id):
+    """Identify the live coordinate system that belongs to the selected map."""
+    if phase == 'mapping' and saved_path and selected_path and Path(saved_path).resolve() == Path(selected_path).resolve():
+        return 'mapping'
+    if loaded_id and loaded_id == selected_id:
+        return 'amcl'
+    return None
+
+
 def require_current_mapping_map(phase, running, saved_path, selected_path):
     """Do not discard a live mapping session to load an unrelated old map."""
     if phase != 'mapping' or not running:

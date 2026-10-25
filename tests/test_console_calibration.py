@@ -79,3 +79,12 @@ def test_calibration_rejects_unsaved_or_wrong_live_mapping_map():
     require_current_mapping_map('mapping',True,'/maps/new/map.yaml','/maps/new/map.yaml')
     require_current_mapping_map('mapping',False,None,'/maps/old/map.yaml')
     require_current_mapping_map('calibration',True,None,'/maps/old/map.yaml')
+
+
+def test_camera_handoff_preserves_live_slam_pose_only_for_the_same_saved_map():
+    from ee3033_project.assessment import calibration_pose_source
+    assert calibration_pose_source('mapping','/maps/new/map.yaml','/maps/new/map.yaml',None,'new/map.yaml')=='mapping'
+    assert calibration_pose_source('mapping','/maps/new/map.yaml','/maps/old/map.yaml',None,'old/map.yaml') is None
+    assert calibration_pose_source('calibration',None,'/maps/new/map.yaml','new/map.yaml','new/map.yaml')=='amcl'
+    assert calibration_pose_source('calibration',None,'/maps/new/map.yaml','old/map.yaml','new/map.yaml') is None
+    assert calibration_pose_source('mapping',None,'/maps/new/map.yaml',None,'new/map.yaml') is None
