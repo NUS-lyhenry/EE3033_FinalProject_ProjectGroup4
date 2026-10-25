@@ -62,13 +62,16 @@ class Proposal:
 class Detector:
     names={0:'bottle'}
     visible=True
+    duplicate=False
     def to(self, *args):return self
     def predict(self, image, **kwargs):
         pose=np.frombuffer(image[0,:24,0].copy().tobytes(),dtype=np.float64)
         sample=bottle_sample(SETUP,.9,.04,pose,[])
         p=predicted_points([277.5,274.,math.radians(14.2),.035],SETUP,CAMERA,sample)
         box=np.array([p[2:,0].min(),p[1,1],p[2:,0].max(),p[0,1]])
-        return [SimpleNamespace(names=self.names,boxes=[Proposal(box)] if self.visible else [])]
+        proposals=[Proposal(box)] if self.visible else []
+        if self.visible and self.duplicate:proposals.append(Proposal(box+np.array([2.,0.,2.,0.])))
+        return [SimpleNamespace(names=self.names,boxes=proposals)]
 
 
 class Robot(Node):
@@ -188,6 +191,7 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                 heartbeat_thread.start()
                 deadline=time.monotonic()+100
                 injected_miss=False
+                injected_ambiguity=False
                 while node.auto_status['state']=='collecting' and time.monotonic()<deadline:
                     if not injected_miss and len(node.auto_views)>=3 and telemetry[5]>0:
                         detector.visible=False
@@ -196,8 +200,16 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                         self.assertEqual(node.motion.mode,'auto')
                         detector.visible=True
                         injected_miss=True
+                    elif injected_miss and not injected_ambiguity and len(node.auto_views)>=5 and telemetry[5]>0:
+                        detector.duplicate=True
+                        self.assertTrue(wait(lambda:'ambiguous' in node.reason,1.5))
+                        self.assertTrue(wait(lambda:telemetry[5]==0,1.))
+                        self.assertEqual(node.motion.mode,'auto')
+                        detector.duplicate=False
+                        injected_ambiguity=True
                     time.sleep(.1)
                 self.assertTrue(injected_miss,'No moving detector-miss recovery was exercised')
+                self.assertTrue(injected_ambiguity,'No ambiguous-box recovery was exercised')
                 self.assertTrue(wait(lambda:node.auto_status['state']!='fitting',10))
                 self.assertEqual(node.auto_status['state'],'complete',str(node.snapshot()))
                 profile=load_profile(node.saved)

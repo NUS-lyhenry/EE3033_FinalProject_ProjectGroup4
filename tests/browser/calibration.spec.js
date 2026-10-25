@@ -151,3 +151,14 @@ test('automatic setup takes only bottle dimensions and one distance, then shows 
   await expect(page.locator('#autoResult')).toContainText('2.0 cm / 3.0 cm');
   await expect(page.locator('#autoResult')).toContainText('Fitted camera pitch: 5.7° downward');expect(f.errors).toEqual([]);
 });
+
+test('ambiguous detector boxes are labelled as candidates and leave Stop available',async({page})=>{
+ const f=await fixture(page);
+ f.state.detected_count=2;f.state.detection_fresh=false;f.state.box=null;
+ f.state.bottle_detections=[{box:[290,100,340,350],confidence:.8},{box:[292,102,342,352],confidence:.7}];
+ f.state.motion='auto';f.state.automatic={state:'collecting',reason:'Paused: ambiguous detector boxes',collected:2,total:18,prerequisites:{ready:true,reason:'Ready'}};
+ await expect(page.locator('#detection')).toContainText('2 candidate boxes');
+ await expect(page.locator('#autoProgress')).toContainText('Paused');
+ await expect(page.locator('#stop')).toBeEnabled();await expect(page.locator('#capture')).toBeDisabled();
+ expect(f.errors).toEqual([]);
+});

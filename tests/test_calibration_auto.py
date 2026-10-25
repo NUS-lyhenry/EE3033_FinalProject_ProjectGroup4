@@ -140,6 +140,22 @@ def test_detector_miss_waits_for_two_distinct_matching_bottle_views():
 def test_ambiguous_or_different_bottle_is_not_silently_reacquired():
     from ee3033_project.calibration_auto import BottleReacquisition
     b=BottleReacquisition(0.,[290,100,340,300],640,480)
-    with pytest.raises(ValueError,match='Multiple bottles'):b.waiting(.25,2,None)
+    assert b.waiting(.25,2,None)
     assert b.waiting(.5,0,None)
     with pytest.raises(ValueError,match='does not match'):b.waiting(.75,1,[10,10,60,210])
+
+
+def test_ambiguous_detector_frame_pauses_until_two_clean_matching_views():
+    from ee3033_project.calibration_auto import BottleReacquisition
+    b=BottleReacquisition(0.,[290,100,340,300],640,480)
+    assert b.waiting(.25,2,None)
+    assert b.waiting(.5,1,[292,102,342,302])
+    assert not b.waiting(.75,1,[294,101,344,301])
+
+
+def test_detection_pauses_do_not_consume_movement_budget_but_overall_limit_remains():
+    r=AutomaticRoute(0.,[0.,0.,0.]);r.pause(30.)
+    assert r.tick(36.,[0.,0.,0.],.1,True)[1] != 0.
+    with pytest.raises(ValueError,match='timed out'):r.tick(66.,[0.,0.,0.],.1,True)
+    r=AutomaticRoute(0.,[0.,0.,0.]);r.pause(209.)
+    with pytest.raises(ValueError,match='timed out'):r.tick(211.,[0.,0.,0.],.1,True)

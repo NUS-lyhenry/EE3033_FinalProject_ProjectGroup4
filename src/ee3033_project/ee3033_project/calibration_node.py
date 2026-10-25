@@ -215,7 +215,7 @@ class CalibrationNode(Node):
             self.auto_status.update(state='stopped', reason=reason, failure=dict(
                 detected_count=last.get('count'), phase=self.auto.phase,
                 view_index=self.auto.index, captured_views=len(self.auto_views),
-                last_box=last.get('box')))
+                last_box=last.get('box'), candidate_boxes=last.get('candidates', [])))
             self.auto = None
         if self.motion.mode == 'auto':
             self.motion.stop(reason)
@@ -332,8 +332,11 @@ class CalibrationNode(Node):
                 return
             result = self.model.predict(raw, imgsz=self.p['image_size'], conf=.6,
                                         device='cpu', verbose=False)[0]
-            boxes = [b.xyxy[0].cpu().numpy().astype(float).tolist() for b in result.boxes
-                     if result.names[int(b.cls.item())].casefold() == self.p['target_class'].casefold()]
+            candidates = [dict(box=b.xyxy[0].cpu().numpy().astype(float).tolist(),
+                               confidence=float(b.conf.item()) if hasattr(b, 'conf') else None)
+                          for b in result.boxes
+                          if result.names[int(b.cls.item())].casefold() == self.p['target_class'].casefold()]
+            boxes = [candidate['box'] for candidate in candidates]
             now = time.monotonic()
             with self.lock:
                 self.inference_latency = now-started
@@ -342,7 +345,7 @@ class CalibrationNode(Node):
                     return
                 self.detection_error = None
                 self.detections.append(dict(time=captured, stamp=stamp, pose=self.pose_at(stamp), box=boxes[0] if len(boxes) == 1 else None,
-                    count=len(boxes), jpeg=jpeg.tobytes()))
+                    count=len(boxes), candidates=candidates, jpeg=jpeg.tobytes()))
                 self.fresh['detection'] = now
         except Exception as exc:
             with self.lock:
@@ -363,6 +366,7 @@ class CalibrationNode(Node):
                 raise ValueError('Browser heartbeat lost')
             if lease_age > .6:
                 self.auto_pause.waiting(now, True, False)
+                self.auto.pause(now)
                 self.reason = 'Paused with zero commands; waiting for the browser heartbeat'
                 self.auto_status.update(state='collecting', reason=self.reason)
                 return 0., 0.
@@ -374,9 +378,11 @@ class CalibrationNode(Node):
             delayed = reacquiring or target is None or now-frame.get('time', -math.inf) > .8
             if self.auto_pause.waiting(now, not healthy or delayed,
                                        self.capture_status(automatic=True)['ready']):
-                self.reason = ('Paused with zero commands; reacquiring the same bottle (two matching views required)'
+                self.auto.pause(now)
+                self.reason = ('Paused: ambiguous detector boxes; waiting for two clean matching views'
+                               if frame.get('count', 0)>1 else 'Paused with zero commands; reacquiring the same bottle (two matching views required)'
                                if reacquiring else 'Paused with zero commands; waiting for fresh data and a clear settled view')
-                self.auto_status.update(state='collecting', reason=self.reason)
+                self.auto_status.update(state='collecting', reason=self.reason, paused_seconds=round(self.auto.paused_seconds, 1))
                 return 0., 0.
             map_pose, alignment = self.map_context()
             baseline = self.auto_alignment
@@ -403,6 +409,7 @@ class CalibrationNode(Node):
                         box=list(frame['box']), stamp=frame['stamp'], holdout=route.goals[route.index][2]))
                     self.auto_last_stamp = frame['stamp']
                     route.captured(now)
+                    self.auto_status['collected'] = len(self.auto_views)
             if route.phase == 'done':
                 self.motion.stop('Collection complete; checking camera model')
                 self.auto = None
@@ -463,7 +470,7 @@ class CalibrationNode(Node):
                 inference_latency=self.inference_latency, detection_error=self.detection_error,
                 reason=self.reason, camera=self.camera, setup=self.setup, samples=self.samples,
                 profile=self.profile, saved=self.saved,
-                detected_count=last.get('count', 0), box=last.get('box') if self.target() else None,
+                bottle_detections=last.get('candidates', []), detected_count=last.get('count', 0), box=last.get('box') if self.target() else None,
                 detection_fresh=self.target() is not None,
                 frozen={k:v for k,v in self.frozen.items() if k != 'jpeg'} if self.frozen else None)
 

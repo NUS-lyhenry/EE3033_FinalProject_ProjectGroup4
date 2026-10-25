@@ -147,11 +147,21 @@ class AutomaticRoute:
         self.phase = 'align'
         self.index = 0
         self.stable_since = None
+        self.last_update = now
+        self.paused_seconds = 0.
         self.goals = [(d, a, False) for d in (0., .18, .36, .54, .72) for a in (0., -.13, .13)]
         self.goals += [(.45, 0., True), (.27, 0., True)]
         self.reason = 'Automatically centring the bottle'
 
+    def pause(self, now):
+        elapsed = max(0., now-self.last_update)
+        self.changed += elapsed
+        self.paused_seconds += elapsed
+        self.last_update = now
+        self.stable_since = None
+
     def tick(self, now, pose, error, capture_ready):
+        self.last_update = now
         if now-self.started > 210 or now-self.changed > 35:
             raise ValueError('Automatic movement timed out; check clearance and bottle visibility')
         if self.phase == 'align':
@@ -233,8 +243,6 @@ class BottleReacquisition:
         self.recovering, self.confirmations = False, 0
 
     def waiting(self, stamp, count, box):
-        if count is not None and count > 1:
-            raise ValueError('Multiple bottles detected; keep only the calibration bottle visible')
         if stamp == self.stamp:
             return self.recovering
         self.stamp = stamp

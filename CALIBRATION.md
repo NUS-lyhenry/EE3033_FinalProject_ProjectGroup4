@@ -232,6 +232,8 @@ verification.
 
 Detector recovery: a missed bottle detection pauses with zero commands for up to
 two seconds. Collection resumes only after two distinct matching bottle views
-and settled fresh sensors. Multiple bottles or a substantially different target
-end the attempt immediately. Failure status retains the detection count and route
+and settled fresh sensors. Ambiguous candidate boxes also pause while awaiting clean views; a
+substantially different target ends the attempt immediately. Persistent missing
+or ambiguous detections still stop after two seconds. Paused time does not consume
+the per-step movement budget; the overall210-second limit remains in effect. Failure status retains the detection count and route
 phase to distinguish detection failures from localization or fit failures.

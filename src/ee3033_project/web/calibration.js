@@ -16,6 +16,7 @@ function setBox(next){box=next?.map(v=>Math.round(v));['boxLeft','boxTop','boxRi
 function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if(lastImage)ctx.drawImage(lastImage,0,0,canvas.width,canvas.height);
+  if(!freezeId&&(state?.bottle_detections?.length||0)>1){ctx.strokeStyle='#f5cf79';ctx.fillStyle='#f5cf79';ctx.font='12px sans-serif';ctx.setLineDash([4,4]);state.bottle_detections.forEach((d,i)=>{const b=d.box;ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);ctx.fillText('Candidate '+(i+1),b[0],Math.max(14,b[1]-5));});ctx.setLineDash([]);}
   if(box){ctx.strokeStyle=freezeId?'#f5cf79':'#69e7bd';ctx.lineWidth=2;ctx.strokeRect(box[0],box[1],box[2]-box[0],box[3]-box[1]);ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo((box[0]+box[2])/2,box[1]);ctx.lineTo((box[0]+box[2])/2,box[3]);ctx.stroke();ctx.setLineDash([]);}
 }
 function render(){
@@ -53,7 +54,7 @@ function render(){
   $('resume').hidden=!state.frozen;$('resume').disabled=!writable;
   const preview=state.preview;
   $('imageHelp').textContent=state.frozen?'Frozen measurement image. Select Resume live camera to return to video.':preview?`${preview.fresh?'Live JPEG preview':'Waiting for fresh video'} · ${preview.age==null?'no frame yet':preview.age.toFixed(1)+' s old'} · detector ${Number.isFinite(state.inference_latency)?state.inference_latency.toFixed(2)+' s':'starting'}${state.detection_error?' · '+state.detection_error:''}`:automatic?'Views are captured automatically at each robot pose. Keep the bottle fixed.':'The overlay shows the detector box. Freeze a stable image before entering measurements.';
-  $('detection').textContent=state.frozen?'Frozen':!state.detection_fresh?'Waiting for a fresh bottle detection':`${state.detected_count} bottle detected`;
+  $('detection').textContent=state.frozen?'Frozen':state.detected_count>1?`${state.detected_count} candidate boxes · paused`:!state.detection_fresh?'Waiting for a fresh bottle detection':'Bottle tracked';
   $('boxFields').hidden=!state.frozen;
   $('trainingCount').textContent=`${state.samples.length} / 6`;
   $('validationCount').textContent=`${passed} / 2`;
