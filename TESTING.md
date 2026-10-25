@@ -3,6 +3,32 @@
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 
+## Robot deployment and reported downward camera tilt
+
+2026-10-25: deployed runtime5c3d5b8 in the robot's existing Humble container and
+rebuilt its separate overlay. The live main console is available on forwarded
+port8765; its owned calibration stage uses8780. Original maps and trial records
+were preserved. The operator subsequently switched to Mapping to construct a
+new map before calibration; that work remains under operator control.
+
+The lab image header is `default_cam`, which has no mounting TF. Calibration
+now reads the physical translation from `camera_link`, verified on the robot as
+(-0.035,0,0.2655)m relative to `base_footprint`. It still retains the actual image
+frame in saved profiles. The reported13–15 degree downward tilt initializes the
+fit at14 degrees; pitch remains a fitted variable, and the main calibration
+result displays its fitted angle. Bottle defaults are0.215m height/0.065m diameter;
+the real distance field starts empty for an actual floor measurement.
+
+180 pure tests,11 calibration browser cases and the full virtual ROS/HTTP route
+pass, including recovery of a known14.2 degree pitch and the independent image
+header/mount frames. Pure fits also recover14.3 degrees from13 and15 degree
+starting hints. GitHub [run40190191931](https://github.com/NUS-lyhenry/EE3033_FinalProject_ProjectGroup4/actions/runs/40190191931)
+passes all three jobs, including the complete Humble native regression suite.
+Live sensors, fresh JPEG preview and bounded balancing capture were checked;
+the final command gate was the sole `/cmd_vel` writer. The agent did not start
+physical calibration movement. No real bottle range has been entered, so actual
+camera pitch and physical localization accuracy have not yet been calibrated.
+
 ## Automatic camera setup from one distance
 
 2026-10-23: runtime codeeb42349 adds a mapped-area preparation workflow taking
