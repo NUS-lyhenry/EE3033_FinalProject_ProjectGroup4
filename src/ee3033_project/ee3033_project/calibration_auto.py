@@ -33,10 +33,11 @@ def bottle_sample(setup, distance, bearing, pose, box):
                 lateral=float(-s*dx+c*dy-setup['camera_y']), box=list(box))
 
 
-def fit_automatic(setup, camera, anchor_range, observations):
+def fit_automatic(setup, camera, anchor_range, observations, pitch_hint_deg=14.):
     """Fit training images only; reserve two route positions for floor checks."""
     setup = validate_setup(setup)
     anchor_range = number(anchor_range, 'Measured floor distance (m)', .45, 2.5)
+    pitch_hint_deg = number(pitch_hint_deg, 'Initial downward pitch estimate (degrees)', -28., 56.)
     if len(observations) < 12:
         raise ValueError('Automatic collection needs at least twelve views')
     views = []
@@ -73,7 +74,7 @@ def fit_automatic(setup, camera, anchor_range, observations):
     scale = np.array([w, h, 1., 1., .3, 1.])
     bounds = ([w*.2, h*.2, -.5, -.4, .05, -.65],
               [w*4., h*5., 1., .4, 1., .65])
-    initial = np.array([camera['k'][0], camera['k'][4], .1, 0., setup['camera_height'], 0.])
+    initial = np.array([camera['k'][0], camera['k'][4], math.radians(pitch_hint_deg), 0., setup['camera_height'], 0.])
     initial = np.clip(initial, np.array(bounds[0])+1e-5, np.array(bounds[1])-1e-5)
     result = least_squares(residual, initial, bounds=bounds, loss='soft_l1', f_scale=2.,
                            x_scale=scale, max_nfev=1200)
@@ -97,6 +98,7 @@ def fit_automatic(setup, camera, anchor_range, observations):
         range_m=[min(distances), max(distances)], bearing_rad=[min(bearings), max(bearings)],
         quality=dict(reprojection_rms_px=rms, max_error_px=float(errors.max()), condition=condition),
         automatic=dict(method='one_range_pose_bundle', anchor_range_m=anchor_range,
+            initial_pitch_hint_deg=pitch_hint_deg,
             anchor_bearing_rad=float(result.x[5]), observations=views,
             pose_source='timestamped odometry, guarded by map localization',
             validation_source='held-out pose-derived positions; not independent surveyed ground truth'))

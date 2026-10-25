@@ -66,7 +66,7 @@ class Detector:
     def predict(self, image, **kwargs):
         pose=np.frombuffer(image[0,:24,0].copy().tobytes(),dtype=np.float64)
         sample=bottle_sample(SETUP,.9,.04,pose,[])
-        p=predicted_points([277.5,274.,.13,.035],SETUP,CAMERA,sample)
+        p=predicted_points([277.5,274.,math.radians(14.2),.035],SETUP,CAMERA,sample)
         box=np.array([p[2:,0].min(),p[1,1],p[2:,0].max(),p[0,1]])
         return [SimpleNamespace(names=self.names,boxes=[Proposal(box)] if self.visible else [])]
 
@@ -85,7 +85,9 @@ class Robot(Node):
         self.maps=self.create_publisher(OccupancyGrid,'/map',LATCHED)
         self.amcls=self.create_publisher(PoseWithCovarianceStamped,'/amcl_pose',10)
         self.dynamic=TransformBroadcaster(self);self.static=StaticTransformBroadcaster(self)
-        mount=TransformStamped();mount.header.frame_id='base_footprint';mount.child_frame_id=CAMERA['frame_id']
+        # The lab image header uses an unrelated frame name without TF.
+        # Physical mounting must come from camera_link, not that header.
+        mount=TransformStamped();mount.header.frame_id='base_footprint';mount.child_frame_id='camera_link'
         mount.transform.translation.x=SETUP['camera_x'];mount.transform.translation.z=SETUP['camera_height'];mount.transform.rotation.w=1.
         self.static.sendTransform(mount)
         grid=OccupancyGrid();grid.header.frame_id='map';grid.info.width=grid.info.height=100;grid.info.resolution=.05
@@ -191,6 +193,7 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                 self.assertEqual(node.auto_status['state'],'complete',str(node.snapshot()))
                 profile=load_profile(node.saved)
                 self.assertEqual(len(profile['automatic']['observations']),18)
+                self.assertAlmostEqual(math.degrees(profile['pitch']),14.2,delta=.3)
                 self.assertEqual(len(profile['validation']),2)
                 self.assertTrue(all(v['passed'] for v in profile['validation']))
                 self.assertLessEqual(telemetry[3],.04);self.assertLessEqual(telemetry[4],.15)

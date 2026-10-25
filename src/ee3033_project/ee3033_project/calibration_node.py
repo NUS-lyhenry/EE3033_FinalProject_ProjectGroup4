@@ -41,9 +41,9 @@ class CalibrationNode(Node):
         super().__init__('project_camera_calibration', **kwargs)
         self.p = parameters(self, dict(port=8780, allow_motion=False,
             model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
-            image_topic='/image_raw', camera_info_topic='/camera_info',
+            image_topic='/image_raw', camera_info_topic='/camera_info', mount_frame='camera_link',
             output_directory='~/ee3033_calibrations', image_size=320,
-            preview_fps=8., preview_quality=65,
+            preview_fps=8., preview_quality=65, pitch_hint_deg=14.,
             settle_seconds=.35, settle_linear_limit=.18, settle_angular_limit=.60,
             settle_position_span=.15, settle_heading_span=.45, parent_port=8765))
         import torch
@@ -201,7 +201,7 @@ class CalibrationNode(Node):
             self.map_context()
             if not self.camera:
                 raise ValueError('Waiting for camera geometry')
-            transform = self.tf.lookup_transform('base_footprint', self.camera['frame_id'], Time())
+            transform = self.tf.lookup_transform('base_footprint', self.p['mount_frame'], Time())
             t = transform.transform.translation
             validate_setup(dict(bottle_height=.25, bottle_diameter=.065,
                                 camera_height=t.z, camera_x=t.x, camera_y=t.y))
@@ -404,7 +404,7 @@ class CalibrationNode(Node):
                 self.auto = None
                 self.auto_status.update(state='fitting', reason='Fitting and checking two held-out positions')
                 revision = self.revision
-                args = copy.deepcopy((self.setup, self.camera, self.auto_range, self.auto_views))
+                args = copy.deepcopy((self.setup, self.camera, self.auto_range, self.auto_views, self.p['pitch_hint_deg']))
                 threading.Thread(target=self.finish_automatic, args=(revision, args), daemon=True).start()
                 return 0., 0.
             return linear, angular
@@ -449,7 +449,7 @@ class CalibrationNode(Node):
             last = self.detections[-1] if self.detections else {}
             return dict(token=self.token, generation=self.motion.generation,
                 allow_motion=self.p['allow_motion'], read_only=False, health=self.health(),
-                automatic={**self.auto_status, 'prerequisites': self.auto_ready()},
+                automatic={**self.auto_status, 'pitch_hint_deg': self.p['pitch_hint_deg'], 'prerequisites': self.auto_ready()},
                 ownership=self.graph_ok, motion=self.motion.mode, motion_reason=self.motion.reason,
                 stationary=self.stationary.evaluate(self.get_clock().now().nanoseconds*1e-9),
                 capture=self.capture_status(),
@@ -510,7 +510,7 @@ class CalibrationNode(Node):
                 frame = self.detections[-1]
                 if frame.get('pose') is None or frame['time'] < self.last_moving+.2:
                     raise ValueError('Wait for a fresh bottle image paired with odometry')
-                t = self.tf.lookup_transform('base_footprint', self.camera['frame_id'], Time()).transform.translation
+                t = self.tf.lookup_transform('base_footprint', self.p['mount_frame'], Time()).transform.translation
                 setup = validate_setup(dict(bottle_height=body.get('bottle_height'),
                     bottle_diameter=body.get('bottle_diameter'), camera_height=t.z, camera_x=t.x, camera_y=t.y))
                 from .calibration import number

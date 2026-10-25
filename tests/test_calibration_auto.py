@@ -14,13 +14,13 @@ CAMERA = camera_model(640, 480, 'camera', [520.,0.,320.,0.,520.,240.,0.,0.,1.], 
 TRUE = [555., 548., .13, .035]
 
 
-def observations(noise=.05):
+def observations(noise=.05, parameters=TRUE):
     views = []
     for distance, angles, holdout in [(d, (0.,-.13,.13), False) for d in (0.,.18,.36,.54,.72)]+[(.45,(0.,),True),(.27,(0.,),True)]:
         for yaw in angles:
             pose = [-distance, 0., yaw]
             s = bottle_sample(SETUP, .9, .04, pose, [])
-            p = predicted_points(TRUE, SETUP, CAMERA, s)
+            p = predicted_points(parameters, SETUP, CAMERA, s)
             box = np.array([p[2:,0].min(),p[1,1],p[2:,0].max(),p[0,1]])
             box += np.random.default_rng(len(views)).normal(0, noise, 4)
             views.append(dict(pose=pose,box=box.tolist(),holdout=holdout))
@@ -115,3 +115,13 @@ def test_brief_data_gap_commands_wait_until_fresh_and_settled_then_expires():
     assert pause.waiting(2.,True,True)
     with pytest.raises(ValueError,match='two seconds'):
         pause.waiting(4.01,True,False)
+
+
+@pytest.mark.parametrize('hint', [13.,15.])
+def test_reported_downward_tilt_is_fitted_not_fixed_to_the_starting_hint(hint):
+    actual=[555.,548.,math.radians(14.3),.035]
+    p=fit_automatic(SETUP,CAMERA,.9,observations(parameters=actual),pitch_hint_deg=hint)
+    assert abs(math.degrees(p['pitch'])-14.3)<.2
+    assert abs(math.degrees(p['pitch'])-hint)>.5
+    assert p['automatic']['initial_pitch_hint_deg']==hint
+    assert all(v['passed'] for v in p['validation'])

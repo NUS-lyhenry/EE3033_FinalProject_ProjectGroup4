@@ -28,8 +28,12 @@ its own sensor drivers and velocity gate; it does not start a navigation mission
    Keep the page open and focused; Stop is available throughout. No further
    dimensions, offsets, box selections or distance measurements are requested.
 4. The program fits focal lengths, pitch/yaw, camera height and the bottle's
-   initial bearing together. It uses the installed TF for lens forward/left
-   offsets and CameraInfo for principal point and distortion. It pairs each image
+   initial bearing together. The reported 13–15° downward mount is initialized
+   at 14°; this is a starting estimate, not a fixed calibration or angle limit.
+   The result shows the fitted pitch in degrees. It uses the installed TF for lens forward/left
+   offsets and CameraInfo for principal point and distortion. The physical
+   mount frame defaults to `camera_link`, independently of the image header
+   (`default_cam` on the lab camera has no mounting TF). It pairs each image
    with timestamped interpolated odometry, using map localization to check the
    route and detect localization shifts. It never assumes that commanded travel
    equals actual travel.

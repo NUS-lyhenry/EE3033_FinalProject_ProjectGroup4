@@ -148,5 +148,6 @@ test('automatic setup takes only bottle dimensions and one distance, then shows 
   await expect(page.locator('#startAutomatic')).toBeDisabled();await expect(page.locator('#autoStop')).toBeEnabled();
   f.state.automatic={...f.state.automatic,state:'complete',reason:'Passed and saved',collected:18};f.state.motion='idle';f.state.saved='/tmp/demo_profile.json';
   f.state.profile={camera:f.state.camera,quality:{reprojection_rms_px:.5},pitch:.1,yaw:0,range_m:[.9,1.6],validation:[{distance:1.2,lateral:0,error_m:.02,passed:true},{distance:1.4,lateral:0,error_m:.03,passed:true}]};
-  await expect(page.locator('#autoResult')).toContainText('2.0 cm / 3.0 cm');expect(f.errors).toEqual([]);
+  await expect(page.locator('#autoResult')).toContainText('2.0 cm / 3.0 cm');
+  await expect(page.locator('#autoResult')).toContainText('Fitted camera pitch: 5.7° downward');expect(f.errors).toEqual([]);
 });

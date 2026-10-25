@@ -29,10 +29,11 @@ function render(){
   $('startAutomatic').disabled=!ready||!state.allow_motion||!state.detection_fresh||!automatic?.prerequisites?.ready||autoActive;
   ['autoHeight','autoDiameter','autoDistance'].forEach(id=>$(id).disabled=!writable||autoActive);
   $('autoStop').disabled=!online||!!state.read_only;
+  $('pitchHint').textContent=`Starting estimate: ${automatic?.pitch_hint_deg??14}° downward. The calibration measures the actual pitch from the bottle views.`;
   $('autoPrerequisites').textContent=automatic?.prerequisites?.reason||'Automatic collection requires a saved map and localization.';
   $('autoProgress').textContent=automatic?`${automatic.reason}${automatic.collected!=null?' · '+automatic.collected+' / '+automatic.total+' views':''}`:'Waiting to start.';
   $('autoResult').hidden=automatic?.state!=='complete';
-  if(automatic?.state==='complete')$('autoResult').textContent=`${state.simulated?'SIMULATION ONLY · Demo profile cannot be loaded by the robot.':'Saved for future missions.'} Floor checks: ${(state.profile?.validation||[]).map(v=>(v.error_m*100).toFixed(1)+' cm').join(' / ')}. ${state.saved||''}`;
+  if(automatic?.state==='complete')$('autoResult').textContent=`${state.simulated?'SIMULATION ONLY · Demo profile cannot be loaded by the robot.':'Saved for future missions.'} Fitted camera pitch: ${Math.abs((state.profile?.pitch||0)*180/Math.PI).toFixed(1)}° ${(state.profile?.pitch||0)>=0?'downward':'upward'}. Floor checks: ${(state.profile?.validation||[]).map(v=>(v.error_m*100).toFixed(1)+' cm').join(' / ')}. ${state.saved||''}`;
   const demo=state.simulation_reference;
   $('preview').hidden=!state.simulated||!!demo;$('stop').disabled=!online||!!state.read_only;
   $('simulationNotice').hidden=!demo||!automatic;
@@ -71,7 +72,7 @@ function render(){
   if(state.saved){const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";$('launchCommand').textContent=demo?'SIMULATION COMPLETE · This demo profile cannot be loaded by the robot.':`ros2 launch ee3033_project assessment.launch.py allow_motion:=true calibration_file:=${quote(state.saved)}`;$('savedPath').textContent=state.saved;$('savedPanel').querySelector('h3').textContent=demo?'Simulation profile saved':'Profile ready for the mission';$('savedPanel').querySelector('p').textContent=demo?'You completed the guided workflow using simulated measurements. Physical calibration requires a live camera and measured bottle.':'Stop this calibration launch with Ctrl+C. Start the assessment console with the saved profile:';$('copyCommand').hidden=!!demo;}
 }
 async function poll(){
-  try{const r=await fetch('/api/calibration/state');if(!r.ok)throw Error('Calibration service unavailable');const next=await r.json();state=next;online=true;
+  try{const r=await fetch('/api/calibration/state');if(!r.ok)throw Error('Calibration service unavailable');const next=await r.json();if(!state&&next.simulation_reference){$('autoHeight').value='0.25';$('autoDistance').value='0.9';}state=next;online=true;
     if(freezeId!==(next.frozen?.id||null)){freezeId=next.frozen?.id||null;setBox(next.frozen?.box||next.box);}
     else if(!freezeId)setBox(next.box);
     if(next.camera&&(canvas.width!==next.camera.width||canvas.height!==next.camera.height)){canvas.width=next.camera.width;canvas.height=next.camera.height;canvas.parentElement.style.aspectRatio=`${canvas.width}/${canvas.height}`;draw();}
