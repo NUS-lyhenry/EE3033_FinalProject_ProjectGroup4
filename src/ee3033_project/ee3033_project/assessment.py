@@ -189,6 +189,16 @@ class MapCatalog:
         return self.entry(map_id)
 
 
+def require_current_mapping_map(phase, running, saved_path, selected_path):
+    """Do not discard a live mapping session to load an unrelated old map."""
+    if phase != 'mapping' or not running:
+        return
+    if not saved_path:
+        raise ValueError('Save the current map first; the current mapping session has no saved map')
+    if not selected_path or Path(saved_path).resolve() != Path(selected_path).resolve():
+        raise ValueError('Select the map just saved from the current mapping session')
+
+
 def mission_options(values):
     target = values.get('target_class','cup')
     method = values.get('localization_method','lidar')

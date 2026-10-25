@@ -28,7 +28,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
     else if(path==='/api/labels')json={ready:true,model:'SIMULATED detector',labels:['book','bottle','cup'],error:null};
     else if(path==='/api/save_map'){
       const entry={id:'onsite_simulated/map.yaml',path:'/SIMULATED/maps/onsite_simulated/map.yaml',quality:'snapshot',reviewed:false,resolution:.1};
-      maps=[entry];state.assessment.maps.push(entry.id);state.saved_map=entry.path;
+      maps=[entry,...maps.filter(m=>m.id!==entry.id)];state.assessment.maps.push(entry.id);state.saved_map=entry.path;
       json={success:true,path:entry.path,map:entry,message:'SIMULATED map saved'};
     }else if(path==='/api/review_map'){maps.find(m=>m.id===body.map_id).reviewed=true;json={success:true,map:maps[0]};}
     else if(path==='/api/stage'){
@@ -58,7 +58,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
     return route.fulfill({json:JSON.parse(JSON.stringify(json))});
   });
   await page.goto('/#/'+(phase==='mapping'?'mapping':'mission'));await expect(page.locator('#connection')).toHaveText('Connected');
-  return{state,map,calls,errors,setStageDelay:fn=>stageDelay=fn};
+  return{state,map,calls,errors,setMaps:values=>{maps=values;},setStageDelay:fn=>stageDelay=fn};
 }
 
 test('preview is explicitly simulated and cannot command robot motion',async({page,request})=>{
@@ -68,7 +68,7 @@ test('preview is explicitly simulated and cannot command robot motion',async({pa
 });
 
 test('camera setup is a preparation page and shows saved profile reuse',async({page})=>{
-  const f=await fixture(page);
+  const f=await fixture(page);f.state.stage.running=false;
   await page.route('http://127.0.0.1:8780/**',route=>route.fulfill({contentType:'text/html',body:'Camera setup fixture'}));
   await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeEnabled();
   await page.locator('#loadCalibration').click();
@@ -309,4 +309,31 @@ test('camera setup forwards the reviewed map and can establish localization whil
   expect(f.calls.find(c=>c.path==='/api/initial_pose').body).toEqual({x:1.2,y:1.1,yaw:Math.PI/2});
   f.state.mission.state='CALIBRATING';
   await expect(page.locator('#calSetPose')).toBeDisabled();expect(f.errors).toEqual([]);
+});
+
+
+test('newly saved map stays selected over the map loaded by an earlier stage',async({page})=>{
+  const f=await fixture(page);
+  const old={id:'onsite_old/map.yaml',path:'/SIMULATED/maps/onsite_old/map.yaml',reviewed:true,quality:'mapped'};
+  f.setMaps([old]);f.state.selected_map=old;
+  await page.locator('#refreshMaps').click();
+  await expect(page.locator('#savedMaps')).toHaveValue(old.id);
+  await expect(page.locator('#reviewMap')).toBeDisabled();
+  await page.locator('#saveMap').click();
+  await expect(page.locator('#savedMaps')).toHaveValue('onsite_simulated/map.yaml');
+  await page.locator('#refreshMaps').click();
+  await expect(page.locator('#savedMaps')).toHaveValue('onsite_simulated/map.yaml');
+  await page.locator('#reviewMap').click();await view(page,'calibration');
+  await expect(page.locator('#calibrationMapChoice')).toContainText('onsite_simulated/map.yaml');
+  await page.locator('#loadCalibration').click();
+  expect(f.calls.find(c=>c.path==='/api/stage').body.map_id).toBe('onsite_simulated/map.yaml');
+  expect(f.errors).toEqual([]);
+});
+
+test('unsaved live mapping cannot silently load or review an old calibration map',async({page})=>{
+  const f=await fixture(page);f.setMaps([{id:'old/map.yaml',path:'/old/map.yaml',reviewed:true,quality:'mapped'}]);
+  await page.locator('#refreshMaps').click();await expect(page.locator('#reviewMap')).toBeDisabled();
+  await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeDisabled();
+  await expect(page.locator('#calibrationMapChoice')).toContainText('Save the current mapping session');
+  expect(f.calls.some(c=>c.path==='/api/stage')).toBe(false);
 });

@@ -67,3 +67,15 @@ def test_automatic_camera_launch_passes_map_and_only_explicit_fresh_pose_seed(tm
     manager.launch('calibration','/maps/room.yaml')
     assert 'map:=/maps/room.yaml' in calls[0]
     assert 'seed_pose:=true' in calls[0] and 'initial_yaw:=0.3' in calls[0]
+
+
+def test_calibration_rejects_unsaved_or_wrong_live_mapping_map():
+    import pytest
+    from ee3033_project.assessment import require_current_mapping_map
+    with pytest.raises(ValueError,match='Save the current map first'):
+        require_current_mapping_map('mapping',True,None,'/maps/old/map.yaml')
+    with pytest.raises(ValueError,match='just saved'):
+        require_current_mapping_map('mapping',True,'/maps/new/map.yaml','/maps/old/map.yaml')
+    require_current_mapping_map('mapping',True,'/maps/new/map.yaml','/maps/new/map.yaml')
+    require_current_mapping_map('mapping',False,None,'/maps/old/map.yaml')
+    require_current_mapping_map('calibration',True,None,'/maps/old/map.yaml')

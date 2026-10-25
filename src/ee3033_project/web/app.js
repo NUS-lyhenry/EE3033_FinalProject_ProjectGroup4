@@ -7,7 +7,7 @@ let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
 let modelLabels=null,labelKey='',labelsBusy=false;
 let waypointDraft=null;
-let coordinateMethodChosen=false;
+let coordinateMethodChosen=false,lastSavedMapId=null;
 const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Select an audacity level and configure navigation while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
 let currentPage='overview';
 PAGES.calibration=['Camera setup','Calibrate once, then reuse the saved profile automatically for future missions.'];
@@ -32,6 +32,7 @@ async function send(path,body={}){
 }
 async function action(path,body={}){releaseDrive();busy++;render();try{const d=await send(path,body);if(d.message)feedback(d.message);return d;}catch(e){feedback(e.message,true);throw e;}finally{busy--;render();}}
 function chosenMap(){return maps.find(m=>m.id===$('savedMaps').value);}
+function currentSavedMap(){return maps.find(m=>m.path===(snapshot?.saved_map||snapshot?.mission?.saved_map));}
 function running(){return snapshot?.stage?.managed?snapshot.stage.running:true;}
 function setupIdle(){return online&&!snapshot?.read_only&&!busy&&!snapshot?.stage?.transitioning&&!ACTIVE.has(snapshot?.mission?.state);}
 function ready(){return online&&!snapshot?.assessment?.interrupted&&snapshot?.assessment?.finished==null&&running()&&snapshot?.health?.Mission?.ok&&snapshot?.mission?.ready!==false&&!snapshot?.control_fault&&!busy&&!snapshot?.stage?.transitioning;}
@@ -53,7 +54,10 @@ function render(){
   $('calibrationProfile').textContent=calibration?.path||'';
   const sameCalibrationMap=calibrating&&loaded&&(!chosenMap()||chosenMap().id===s.selected_map?.id);
   $('loadCalibration').textContent=sameCalibrationMap?'Camera setup loaded':calibration?.ready?'Load map & recalibrate':'Load map & camera setup';
-  $('loadCalibration').disabled=!idle||!managed||sameCalibrationMap;
+  const selectedCalibrationMap=chosenMap(),currentMap=currentSavedMap();
+  const mappingNeedsSave=mapping&&loaded&&(!currentMap||selectedCalibrationMap?.id!==currentMap.id);
+  $('loadCalibration').disabled=!idle||!managed||sameCalibrationMap||mappingNeedsSave||!!(selectedCalibrationMap&&!selectedCalibrationMap.reviewed);
+  $('calibrationMapChoice').textContent=mappingNeedsSave?'Save the current mapping session and select that new map before calibration.':selectedCalibrationMap?`Selected map: ${selectedCalibrationMap.id}${selectedCalibrationMap.saved_utc?' · saved '+new Date(selectedCalibrationMap.saved_utc).toLocaleString():''}${selectedCalibrationMap.reviewed?'':' · review required'}`:'Select a saved map for automatic calibration.';
   $('calSetPose').disabled=!calibrating||!idle||!loaded||!s.health?.Map?.ok;
   ['calPoseX','calPoseY','calPoseYaw'].forEach(id=>$(id).disabled=$('calSetPose').disabled);
   $('calPoseStatus').textContent=s.calibration_live?.automatic?.prerequisites?.reason||'Load a reviewed map with camera setup first.';
@@ -94,7 +98,7 @@ function render(){
   document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=!mapping||!loaded||!idle||!s.allow_motion||!!fault||!s.health?.Lidar?.ok);
   const labelReady=modelLabels?.ready===true&&modelLabels.labels.includes($('targetClass').value);
   $('loadMission').hidden=!managed;$('loadMission').disabled=!idle||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
-  $('reviewMap').disabled=!mapping||!idle||!chosenMap();
+  $('reviewMap').disabled=!mapping||!idle||!chosenMap()||(loaded&&chosenMap().id!==currentSavedMap()?.id);
   $('savedMaps').disabled=!idle;$('refreshMaps').disabled=!online||!!busy;
   const entry=chosenMap();setPill('mapQuality',entry?(entry.reviewed?'Reviewed · ':'')+entry.quality:'Unverified',entry?.reviewed?'good':'warn');
   $('savedMap').textContent=entry?.path||s.saved_map||m.saved_map||'Every save uses a new directory.';
@@ -154,7 +158,19 @@ function renderParameters(){
   $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes — press Apply.':trial?.fault||'Temporary until restart. Adjust only while stopped.';
   if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
 }
-async function refreshMaps(preferred){const d=await get('maps');maps=d.maps||[];const current=$('savedMaps').value;const selected=preferred||snapshot?.selected_map?.id||((snapshot?.assessment?.maps||[]).includes(current)?current:maps.find(m=>m.path===snapshot?.saved_map)?.id)||current;const options=maps.map(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=`${m.reviewed?'Reviewed':'Unreviewed'} · ${m.quality} · ${m.id.split('/')[0]}`;return o;});if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}$('savedMaps').replaceChildren(...options);if(maps.some(m=>m.id===selected))$('savedMaps').value=selected;render();}
+async function refreshMaps(preferred){
+  const d=await get('maps');maps=d.maps||[];
+  const current=$('savedMaps').value,saved=currentSavedMap();
+  const previousSaveIndex=maps.findIndex(m=>m.id===lastSavedMapId);
+  const newSave=!!saved&&saved.id!==lastSavedMapId&&(previousSaveIndex<0||maps.indexOf(saved)<previousSaveIndex);
+  if(newSave)lastSavedMapId=saved.id;
+  // A newly saved map wins once. Later polling preserves the operator's choice
+  // instead of restoring the map loaded by an earlier stage.
+  const selected=[preferred,newSave?saved.id:null,current,saved?.id,snapshot?.selected_map?.id].find(id=>maps.some(m=>m.id===id));
+  const options=maps.map(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=`${m.reviewed?'Reviewed':'Unreviewed'} · ${m.quality} · ${m.id.split('/')[0]}${m.saved_utc?' · '+new Date(m.saved_utc).toLocaleString():''}`;return o;});
+  if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}
+  $('savedMaps').replaceChildren(...options);if(selected)$('savedMaps').value=selected;render();
+}
 async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value)});await action('stage',body);showPage(phase);}
 $('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
 $('start').onclick=()=>action('start').catch(()=>{});$('startMission').onclick=()=>action('start').catch(()=>{});

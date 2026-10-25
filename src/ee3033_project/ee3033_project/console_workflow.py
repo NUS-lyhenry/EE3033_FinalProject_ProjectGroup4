@@ -9,7 +9,7 @@ from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
-from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options
+from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
@@ -125,6 +125,9 @@ class Workflow(CameraSetup):
         if path=='/api/review_map':
             self.require_idle()
             if self.p['phase']!='mapping': raise ValueError('Review the map before stage 2')
+            candidate=self.catalog.entry(body['map_id'])
+            require_current_mapping_map(self.p['phase'], bool(self.stage and self.stage.process),
+                                        self.saved_map, candidate['path'])
             entry=self.catalog.review(body['map_id'])
             return dict(success=True,map=entry,message='Map review recorded; map pixels unchanged')
         if path=='/api/stage':
@@ -135,6 +138,10 @@ class Workflow(CameraSetup):
             self.require_camera_idle()
             map_path=None;selected=None;options=mission_options(body)
             self.stage.calibration_initial_pose = None
+            if phase=='calibration':
+                candidate=self.catalog.entry(body['map_id']) if body.get('map_id') else None
+                require_current_mapping_map(self.p['phase'], bool(self.stage.process),
+                                            self.saved_map, candidate['path'] if candidate else None)
             if phase=='calibration' and body.get('map_id'):
                 selected=self.catalog.entry(body['map_id'])
                 if not selected['reviewed']:
