@@ -187,8 +187,17 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                 post('automatic',bottle_height=.25,bottle_diameter=.065,distance=.9)
                 heartbeat_thread.start()
                 deadline=time.monotonic()+100
+                injected_miss=False
                 while node.auto_status['state']=='collecting' and time.monotonic()<deadline:
+                    if not injected_miss and len(node.auto_views)>=3 and telemetry[5]>0:
+                        detector.visible=False
+                        self.assertTrue(wait(lambda:'reacquiring' in node.reason,1.5))
+                        self.assertTrue(wait(lambda:telemetry[5]==0,1.))
+                        self.assertEqual(node.motion.mode,'auto')
+                        detector.visible=True
+                        injected_miss=True
                     time.sleep(.1)
+                self.assertTrue(injected_miss,'No moving detector-miss recovery was exercised')
                 self.assertTrue(wait(lambda:node.auto_status['state']!='fitting',10))
                 self.assertEqual(node.auto_status['state'],'complete',str(node.snapshot()))
                 profile=load_profile(node.saved)

@@ -228,3 +228,10 @@ the image and its box remain paired. The earlier multi-frame outline-jitter gate
 is removed. Automatic collection uses the same balancing tolerance. The advanced manual
 workflow also supports frozen-outline corrections and independently measured checks. This policy does not modify mission return-stop
 verification.
+
+
+Detector recovery: a missed bottle detection pauses with zero commands for up to
+two seconds. Collection resumes only after two distinct matching bottle views
+and settled fresh sensors. Multiple bottles or a substantially different target
+end the attempt immediately. Failure status retains the detection count and route
+phase to distinguish detection failures from localization or fit failures.

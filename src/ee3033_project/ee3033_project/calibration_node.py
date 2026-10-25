@@ -29,7 +29,7 @@ from rclpy.time import Time
 from .calibration import (camera_model, fit_profile, save_profile, validate_holdout,
                           validate_sample, validate_setup)
 from .calibration_motion import CalibrationMotion
-from .calibration_auto import AutomaticRoute, fit_automatic, relative_pose, corridor_clear, wrap, FreshDataPause
+from .calibration_auto import AutomaticRoute, fit_automatic, relative_pose, corridor_clear, wrap, FreshDataPause, BottleReacquisition
 from .core import quaternion_yaw, stamp_seconds
 from .model_labels import validate_target
 from .ros_utils import LATCHED, parameters
@@ -211,7 +211,11 @@ class CalibrationNode(Node):
 
     def cancel_auto(self, reason):
         if self.auto is not None:
-            self.auto_status.update(state='stopped', reason=reason)
+            last = self.detections[-1] if self.detections else {}
+            self.auto_status.update(state='stopped', reason=reason, failure=dict(
+                detected_count=last.get('count'), phase=self.auto.phase,
+                view_index=self.auto.index, captured_views=len(self.auto_views),
+                last_box=last.get('box')))
             self.auto = None
         if self.motion.mode == 'auto':
             self.motion.stop(reason)
@@ -366,12 +370,12 @@ class CalibrationNode(Node):
                 raise ValueError('Exclusive command ownership lost')
             target = self.target()
             frame = self.detections[-1] if self.detections else {}
-            if frame.get('count') != 1:
-                raise ValueError('Bottle lost or multiple bottles visible; keep one bottle fixed')
-            delayed = target is None or now-frame['time'] > .8
+            reacquiring = self.auto_bottle.waiting(frame.get('stamp'), frame.get('count'), frame.get('box'))
+            delayed = reacquiring or target is None or now-frame.get('time', -math.inf) > .8
             if self.auto_pause.waiting(now, not healthy or delayed,
                                        self.capture_status(automatic=True)['ready']):
-                self.reason = 'Paused with zero commands; waiting for fresh data and a clear settled view'
+                self.reason = ('Paused with zero commands; reacquiring the same bottle (two matching views required)'
+                               if reacquiring else 'Paused with zero commands; waiting for fresh data and a clear settled view')
                 self.auto_status.update(state='collecting', reason=self.reason)
                 return 0., 0.
             map_pose, alignment = self.map_context()
@@ -528,7 +532,8 @@ class CalibrationNode(Node):
                 self.samples, self.profile, self.saved, self.frozen = [], None, None, None
                 self.auto = AutomaticRoute(time.monotonic(), self.pose)
                 self.auto_pause = FreshDataPause()
-                self.auto_status = dict(state='collecting', reason=self.auto.reason, collected=1, total=18)
+                self.auto_bottle = BottleReacquisition(frame['stamp'], frame['box'], self.camera['width'], self.camera['height'])
+                self.auto_status = dict(state='collecting', reason=self.auto.reason, collected=1, total=18, anchor_range_m=distance)
                 self.motion.mode, self.motion.lease = 'auto', time.monotonic()
                 self.motion.reason = 'Automatic calibration running'
                 self.revision += 1

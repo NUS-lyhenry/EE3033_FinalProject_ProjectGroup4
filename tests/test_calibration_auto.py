@@ -125,3 +125,21 @@ def test_reported_downward_tilt_is_fitted_not_fixed_to_the_starting_hint(hint):
     assert abs(math.degrees(p['pitch'])-hint)>.5
     assert p['automatic']['initial_pitch_hint_deg']==hint
     assert all(v['passed'] for v in p['validation'])
+
+
+
+def test_detector_miss_waits_for_two_distinct_matching_bottle_views():
+    from ee3033_project.calibration_auto import BottleReacquisition
+    b=BottleReacquisition(0.,[290,100,340,300],640,480)
+    assert b.waiting(.25,0,None)
+    assert b.waiting(.5,1,[292,102,342,302])
+    assert b.waiting(.5,1,[292,102,342,302])  # repeated tick is not another image
+    assert not b.waiting(.75,1,[294,101,344,301])
+
+
+def test_ambiguous_or_different_bottle_is_not_silently_reacquired():
+    from ee3033_project.calibration_auto import BottleReacquisition
+    b=BottleReacquisition(0.,[290,100,340,300],640,480)
+    with pytest.raises(ValueError,match='Multiple bottles'):b.waiting(.25,2,None)
+    assert b.waiting(.5,0,None)
+    with pytest.raises(ValueError,match='does not match'):b.waiting(.75,1,[10,10,60,210])

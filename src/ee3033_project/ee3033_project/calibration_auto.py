@@ -223,3 +223,34 @@ class FreshDataPause:
             self.since = None
             return False
         return True
+
+
+class BottleReacquisition:
+    """Require two distinct matching views after a detector miss, while stopped."""
+    def __init__(self, stamp, box, width, height):
+        self.stamp, self.box = stamp, list(box)
+        self.width, self.height = width, height
+        self.recovering, self.confirmations = False, 0
+
+    def waiting(self, stamp, count, box):
+        if count is not None and count > 1:
+            raise ValueError('Multiple bottles detected; keep only the calibration bottle visible')
+        if stamp == self.stamp:
+            return self.recovering
+        self.stamp = stamp
+        if count != 1 or box is None:
+            self.recovering, self.confirmations = True, 0
+            return True
+        if self.recovering:
+            a, b = self.box, box
+            dx = abs((a[0]+a[2]-b[0]-b[2])/2)/self.width
+            dy = abs((a[1]+a[3]-b[1]-b[3])/2)/self.height
+            scale = (b[2]-b[0])*(b[3]-b[1])/max(1.,(a[2]-a[0])*(a[3]-a[1]))
+            if dx > .20 or dy > .20 or not .4 <= scale <= 2.5:
+                raise ValueError('Reacquired bottle does not match the previous target; restart with one fixed bottle')
+            self.confirmations += 1
+            if self.confirmations < 2:
+                return True
+            self.recovering = False
+        self.box = list(box)
+        return False
