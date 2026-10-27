@@ -163,6 +163,40 @@ class FloorCamera:
         sigma = math.sqrt(max(.0001, float(np.linalg.eigvalsh(jacobian@jacobian.T).max())))
         return point, sigma, float(distance)
 
+    def view_requirements(self, box):
+        """Describe rejected near/cropped views without making a measurement.
+
+        A floor-contact range, when available, is only a steering hint here.
+        It never bypasses project_box's complete-box or reliable-range checks.
+        """
+        result=dict(reframe_required=False,reframe_reasons=[],range_state='unknown',
+            range_hint_m=None,range_hint_is_measurement=False,
+            camera_min_range=float(self.min_range),camera_max_range=float(self.max_range))
+        try:
+            x1,y1,x2,y2=map(float,box)
+            if not np.isfinite([x1,y1,x2,y2]).all() or not x1<x2 or not y1<y2:
+                result['reframe_reasons']=['invalid_box']
+                return result
+            horizontal=x1<self.margin or x2>self.width-self.margin
+            vertical=y1<self.margin or y2>self.height-self.margin
+            if horizontal:result['reframe_reasons'].append('horizontal_clipping')
+            if vertical:result['reframe_reasons'].append('vertical_clipping')
+            # An incomplete bottom edge or horizontal centre is not a contact
+            # range hint. Retain only the independent image-bearing route.
+            if not horizontal and y2<=self.height-self.margin and x2-x1>=4:
+                point=self.intersection([(x1+x2)/2,y2])
+                distance=float(np.linalg.norm(point[:2]-self.translation[:2]))
+                if math.isfinite(distance):
+                    result['range_hint_m']=distance
+                    result['range_state']=('too_near' if distance<self.min_range else
+                        'too_far' if distance>self.max_range else 'within_range')
+                    if distance<self.min_range:result['reframe_reasons'].append('contact_too_near')
+            result['reframe_required']=horizontal or vertical or result['range_state']=='too_near'
+            if result['reframe_required']:result['reframe_action']='move_away'
+        except (ValueError,TypeError,cv2.error):
+            result['reframe_reasons'].append('contact_hint_unavailable')
+        return result
+
     def contains_floor(self, points):
         """Contact points inside both vertical/horizontal FOV and reliable range."""
         points = np.asarray(points, dtype=float).reshape(-1, 2)
