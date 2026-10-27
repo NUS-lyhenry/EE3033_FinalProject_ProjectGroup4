@@ -1,5 +1,38 @@
 # Validation record
 
+## Map-point calibration replacement — 2026-10-27
+
+The old image-centred / measured-distance process has been replaced by a fixed
+bottle map point and autonomous map-pose collection. Physical deployment and
+validation are pending because the robot is unavailable.
+
+Local validation:
+
+- 171 Python unit tests passed, including known-map-point fitting, held-out
+  checks, map clearance, both hardware yaw polarities and duplicate proposals.
+- 30 Playwright browser tests passed, including current-map bottle selection,
+  the dimensions-only Start request, Stop, result display and mobile layout.
+- The ROS package built successfully using the local Jazzy overlay.
+- Three isolated ROS/HTTP automatic-calibration cases passed on domain 108.
+  The real main-console forwarding API, calibration node and final velocity
+  gate ran with synthetic sensors and inverted-yaw robot physics. Collection
+  saved 17 timestamped map views and recovered a synthetic 14.2° pitch. Invalid
+  tokens/origins, stale controls, wrong-map points, edits during a run,
+  heartbeat loss and localization jumps were checked. Fresh/stale mapping-pose
+  handoff cases also passed.
+- Six isolated mission-projection / launch cases passed on domain 106,
+  including projection without lidar and rejection of conflicting stacks.
+- The clickable simulation completed through an actual browser and HTTP server,
+  using the real fitter; its saved profiles remain explicitly simulated.
+- Python compilation, JavaScript syntax and diff-whitespace checks passed.
+
+The broader local navigation-console regression cannot run on this desktop:
+`nav2_msgs` is missing from its Jazzy installation. The workflow fixture likewise
+exits before mapping becomes ready. The repository's Humble CI installs Nav2 and
+runs those navigation regressions. These local environment limits do not replace
+CI or a physical test of the new calibration controller.
+
+
 This file separates software checks from physical robot evidence. Update it
 with measured results after each room or sandbox trial.
 

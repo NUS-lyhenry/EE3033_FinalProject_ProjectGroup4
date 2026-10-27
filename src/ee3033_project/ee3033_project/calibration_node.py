@@ -1,4 +1,4 @@
-"""Preparation-only camera calibration with a local guided browser console."""
+"""Autonomous camera calibration against one operator-marked map point."""
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import copy
@@ -22,14 +22,12 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
 from std_msgs.msg import Bool
-from std_srvs.srv import Trigger
+from std_srvs.srv import Trigger, Empty
 from tf2_ros import Buffer, TransformListener
 from rclpy.time import Time
 
-from .calibration import (camera_model, fit_profile, save_profile, validate_holdout,
-                          validate_sample, validate_setup)
-from .calibration_motion import CalibrationMotion
-from .calibration_auto import AutomaticRoute, fit_automatic, relative_pose, corridor_clear, wrap, FreshDataPause, BottleReacquisition
+from .calibration import camera_model, save_profile, validate_sample, validate_setup
+from .map_calibration import MapCalibrationRun, ControlLease, make_plan, fit_map_profile, free_segment, wrap, complete_candidates
 from .core import quaternion_yaw, stamp_seconds
 from .model_labels import validate_target
 from .ros_utils import LATCHED, parameters
@@ -39,7 +37,7 @@ from .stationary import StationaryWindow
 class CalibrationNode(Node):
     def __init__(self, **kwargs):
         super().__init__('project_camera_calibration', **kwargs)
-        self.p = parameters(self, dict(port=8780, allow_motion=False,
+        self.p = parameters(self, dict(port=8780, allow_motion=False, map_file='',
             model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
             image_topic='/image_raw', camera_info_topic='/camera_info', mount_frame='camera_link',
             output_directory='~/ee3033_calibrations', image_size=320,
@@ -54,7 +52,10 @@ class CalibrationNode(Node):
         self.model.to('cpu')
         self.bridge = CvBridge()
         self.lock = threading.RLock()
-        self.motion = CalibrationMotion()
+        self.motion = ControlLease()
+        self.bottle_point = self.plan = None
+        self.map_grid = None
+        self.capture_frames = []
         self.auto = None
         self.closing = False
         self.auto_status = dict(state='idle', reason='Load a saved map and establish localization before starting.')
@@ -81,7 +82,7 @@ class CalibrationNode(Node):
         self.samples = []
         self.revision = 0
         self.saved = None
-        self.reason = 'Enter bottle height, diameter and one floor distance, then start automatic calibration in the mapped area.'
+        self.reason = 'Select the bottle base position on the loaded map, place the bottle there, and start.'
         self.fresh = {}
         self.last_moving = time.monotonic()
         self.raw_speed = [math.inf, math.inf]
@@ -97,6 +98,9 @@ class CalibrationNode(Node):
         self.create_subscription(Twist, '/cmd_vel', self.on_final, 10)
         self.create_subscription(OccupancyGrid, '/map', self.on_map, LATCHED)
         self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_amcl, 10)
+        self.localization_refresh = self.create_client(Empty, '/request_nomotion_update')
+        self.localization_request = None
+        self.create_timer(5., self.refresh_localization)
         self.create_timer(.05, self.tick)
         self.start_server()
         # Keep image encoding/inference and graph discovery out of the ROS
@@ -109,6 +113,11 @@ class CalibrationNode(Node):
             worker = threading.Thread(target=self.camera_worker, args=(callback, interval), daemon=True)
             worker.start()
             self.workers.append(worker)
+
+    def refresh_localization(self):
+        if (self.localization_refresh.service_is_ready() and
+                (self.localization_request is None or self.localization_request.done())):
+            self.localization_request = self.localization_refresh.call_async(Empty.Request())
 
     def camera_worker(self, callback, interval):
         while not self.worker_stop.is_set():
@@ -155,6 +164,9 @@ class CalibrationNode(Node):
     def on_map(self, msg):
         with self.lock:
             self.grid = msg
+            self.map_grid = dict(width=msg.info.width, height=msg.info.height,
+                resolution=msg.info.resolution, origin=[msg.info.origin.position.x,
+                msg.info.origin.position.y, quaternion_yaw(msg.info.origin.orientation)], cells=np.asarray(msg.data, dtype=np.int8))
 
     def on_amcl(self, msg):
         if self.fresh_stamp(msg, 3.) and msg.header.frame_id == 'map':
@@ -174,7 +186,7 @@ class CalibrationNode(Node):
         return None
 
     def map_context(self):
-        if self.grid is None:
+        if self.grid is None or self.pose is None:
             raise ValueError('Load a saved map in the main camera setup page')
         if (self.amcl is None or time.monotonic()-self.fresh.get('localization', -math.inf) > 30
                 or any(not math.isfinite(self.amcl[i]) or self.amcl[i] < 0 or self.amcl[i] > limit
@@ -199,13 +211,17 @@ class CalibrationNode(Node):
     def auto_ready(self):
         try:
             self.map_context()
+            if not self.p['map_file']:
+                raise ValueError('Load a saved map through the main camera setup page')
+            if not self.bottle_point:
+                raise ValueError('Select the bottle base position on the map')
             if not self.camera:
                 raise ValueError('Waiting for camera geometry')
             transform = self.tf.lookup_transform('base_footprint', self.p['mount_frame'], Time())
             t = transform.transform.translation
             validate_setup(dict(bottle_height=.25, bottle_diameter=.065,
                                 camera_height=t.z, camera_x=t.x, camera_y=t.y))
-            return dict(ready=True, reason='Map localization and camera mounting available')
+            return dict(ready=True, reason='Map point, localization and camera mounting available')
         except Exception as exc:
             return dict(ready=False, reason=str(exc))
 
@@ -304,7 +320,8 @@ class CalibrationNode(Node):
                     self.samples, self.profile, self.frozen, self.saved = [], None, None, None
                     self.detections.clear()
                     self.revision += 1
-                    self.reason = 'Camera settings changed; training samples were reset.'
+                    self.reason = 'Camera settings changed; start a new map-point calibration.'
+                    self.auto_status = dict(state='stopped', reason=self.reason)
                 self.camera, self.jpeg = camera, jpeg.tobytes()
                 self.preview_time = now
                 self.preview_sequence += 1
@@ -336,6 +353,7 @@ class CalibrationNode(Node):
                                confidence=float(b.conf.item()) if hasattr(b, 'conf') else None)
                           for b in result.boxes
                           if result.names[int(b.cls.item())].casefold() == self.p['target_class'].casefold()]
+            candidates = complete_candidates(candidates, camera)
             boxes = [candidate['box'] for candidate in candidates]
             now = time.monotonic()
             with self.lock:
@@ -344,7 +362,16 @@ class CalibrationNode(Node):
                     self.detection_error = 'Detector is delayed; live video continues. Wait for a fresh detection.'
                     return
                 self.detection_error = None
-                self.detections.append(dict(time=captured, stamp=stamp, pose=self.pose_at(stamp), box=boxes[0] if len(boxes) == 1 else None,
+                image_pose = self.pose_at(stamp)
+                try:
+                    _, alignment = self.map_context()
+                    if image_pose is not None:
+                        c, si = math.cos(alignment[2]), math.sin(alignment[2])
+                        image_pose = [alignment[0]+c*image_pose[0]-si*image_pose[1],
+                            alignment[1]+si*image_pose[0]+c*image_pose[1], wrap(alignment[2]+image_pose[2])]
+                except ValueError:
+                    image_pose = None
+                self.detections.append(dict(time=captured, stamp=stamp, pose=image_pose, box=boxes[0] if len(boxes) == 1 else None,
                     count=len(boxes), candidates=candidates, jpeg=jpeg.tobytes()))
                 self.fresh['detection'] = now
         except Exception as exc:
@@ -361,62 +388,52 @@ class CalibrationNode(Node):
 
     def automatic_tick(self, now, healthy):
         try:
-            lease_age = now-self.motion.lease
-            if lease_age > 1.5:
+            if now-self.motion.lease > .6:
                 raise ValueError('Browser heartbeat lost')
-            if lease_age > .6:
-                self.auto_pause.waiting(now, True, False)
-                self.auto.pause(now)
-                self.reason = 'Paused with zero commands; waiting for the browser heartbeat'
-                self.auto_status.update(state='collecting', reason=self.reason)
-                return 0., 0.
-            if not self.graph_ok:
-                raise ValueError('Exclusive command ownership lost')
-            target = self.target()
-            frame = self.detections[-1] if self.detections else {}
-            reacquiring = self.auto_bottle.waiting(frame.get('stamp'), frame.get('count'), frame.get('box'))
-            delayed = reacquiring or target is None or now-frame.get('time', -math.inf) > .8
-            if self.auto_pause.waiting(now, not healthy or delayed,
-                                       self.capture_status(automatic=True)['ready']):
-                self.auto.pause(now)
-                self.reason = ('Paused: ambiguous detector boxes; waiting for two clean matching views'
-                               if frame.get('count', 0)>1 else 'Paused with zero commands; reacquiring the same bottle (two matching views required)'
-                               if reacquiring else 'Paused with zero commands; waiting for fresh data and a clear settled view')
-                self.auto_status.update(state='collecting', reason=self.reason, paused_seconds=round(self.auto.paused_seconds, 1))
-                return 0., 0.
+            if not healthy:
+                raise ValueError('Fresh sensors and exclusive command ownership are required')
             map_pose, alignment = self.map_context()
             baseline = self.auto_alignment
-            if math.hypot(alignment[0]-baseline[0], alignment[1]-baseline[1]) > .15 or abs(wrap(alignment[2]-baseline[2])) > .12:
+            if math.dist(alignment[:2], baseline[:2]) > .15 or abs(wrap(alignment[2]-baseline[2])) > .12:
                 raise ValueError('Localization shifted; establish the pose and restart calibration')
             route = self.auto
-            if route.phase == 'align' and not corridor_clear(self.grid, map_pose, map_pose[2], length=0.):
-                raise ValueError('Robot footprint is not clear in the saved map')
-            if route.phase != 'align':
-                # Transform the fixed odometry corridor into the current map.
-                c, s = math.cos(alignment[2]), math.sin(alignment[2])
-                origin = [alignment[0]+c*route.origin[0]-s*route.origin[1],
-                          alignment[1]+s*route.origin[0]+c*route.origin[1]]
-                if not corridor_clear(self.grid, origin, alignment[2]+route.heading):
-                    raise ValueError('The 0.78 m calibration corridor is not clear in the saved map')
-            linear, angular, capture = route.tick(now, self.pose, target['error'], self.capture_status(automatic=True)['ready'])
+            goal = route.plan['goals'][min(route.index, len(route.plan['goals'])-1)]['pose']
+            if not free_segment(self.map_grid, map_pose, goal):
+                raise ValueError('The map no longer shows a clear calibration route')
+            capture_ready = self.capture_status(automatic=True)['ready']
+            linear, angular, capture = route.tick(now, map_pose, self.pose, capture_ready)
             self.reason = route.reason
-            self.auto_status.update(state='collecting', reason=route.reason, collected=len(self.auto_views), total=18)
+            self.auto_status.update(state='collecting', reason=self.reason, collected=len(self.auto_views),
+                total=len(route.plan['goals']), phase=route.phase, yaw_sign=route.yaw_sign,
+                goal_distance=route.goal_distance, goal_heading_error=route.goal_heading_error)
+            if route.phase != 'capture':
+                self.capture_frames.clear()
             if capture:
-                frame = self.detections[-1]
-                if frame.get('pose') is not None and frame['time'] > self.last_moving+.2 and frame['stamp'] != self.auto_last_stamp:
+                frame = self.detections[-1] if self.detections else {}
+                fresh = (frame.get('pose') is not None and frame.get('box') is not None
+                    and now-frame['time'] < .8 and frame['time'] > self.last_moving+.2
+                    and frame['time'] >= self.auto.started and frame['stamp'] != self.auto_last_stamp
+                    and math.dist(frame['pose'][:2], goal[:2]) <= .075
+                    and abs(wrap(frame['pose'][2]-goal[2])) <= .11)
+                if fresh:
                     validate_sample(dict(distance=1., lateral=0., box=frame['box']), self.camera)
-                    self.auto_views.append(dict(pose=relative_pose(self.auto_anchor, frame['pose']),
-                        box=list(frame['box']), stamp=frame['stamp'], holdout=route.goals[route.index][2]))
                     self.auto_last_stamp = frame['stamp']
-                    route.captured(now)
-                    self.auto_status['collected'] = len(self.auto_views)
+                    self.capture_frames.append(frame)
+                    if len(self.capture_frames) >= 2:
+                        selected = max(self.capture_frames, key=lambda f:f['candidates'][0].get('confidence') or 0.)
+                        self.auto_views.append(dict(pose=list(selected['pose']), box=list(selected['box']),
+                            stamp=selected['stamp'], holdout=route.plan['goals'][route.index]['holdout']))
+                        route.captured(now)
+                        self.capture_frames.clear()
+                else:
+                    self.reason = 'At map position; waiting for two fresh, unambiguous complete bottle views'
+                    self.auto_status['reason'] = self.reason
             if route.phase == 'done':
                 self.motion.stop('Collection complete; checking camera model')
                 self.auto = None
-                self.auto_status.update(state='fitting', reason='Fitting and checking two held-out positions')
-                revision = self.revision
-                args = copy.deepcopy((self.setup, self.camera, self.auto_range, self.auto_views, self.p['pitch_hint_deg']))
-                threading.Thread(target=self.finish_automatic, args=(revision, args), daemon=True).start()
+                self.auto_status.update(state='fitting', reason='Fitting pitch, focal lengths and mounting height; checking held-out views')
+                args = copy.deepcopy((self.setup, self.camera, self.bottle_point['xy'], self.auto_views, self.p['pitch_hint_deg']))
+                threading.Thread(target=self.finish_automatic, args=(self.revision, args), daemon=True).start()
                 return 0., 0.
             return linear, angular
         except ValueError as exc:
@@ -426,14 +443,14 @@ class CalibrationNode(Node):
 
     def finish_automatic(self, revision, args):
         try:
-            profile = fit_automatic(*args)
+            profile = fit_map_profile(*args)
             with self.lock:
                 if revision != self.revision:
                     return
                 self.profile = profile
                 self.samples = profile['training']
                 self.saved = save_profile(profile, self.p['output_directory'])
-                self.reason = 'Automatic calibration passed both floor checks and was saved for future missions.'
+                self.reason = 'Map-point calibration passed both floor checks and was saved for future missions.'
                 self.auto_status.update(state='complete', reason=self.reason)
         except Exception as exc:
             with self.lock:
@@ -444,16 +461,15 @@ class CalibrationNode(Node):
     def tick(self):
         with self.lock:
             healthy = self.p['allow_motion'] and all(self.health().values()) and self.graph_ok
-            linear, angular = (self.automatic_tick(time.monotonic(), healthy) if self.auto is not None
-                               else self.motion.tick(time.monotonic(), self.pose, self.target(), healthy))
+            linear, angular = self.automatic_tick(time.monotonic(), healthy) if self.auto is not None else (0., 0.)
             if linear or angular:
                 self.last_moving = time.monotonic()
                 self.stationary.reset()
             msg = Twist()
             msg.linear.x, msg.angular.z = linear, angular
             self.command_pub.publish(msg)
-            self.enable_pub.publish(Bool(data=healthy and self.motion.mode != 'idle'
-                and (self.motion.mode != 'auto' or time.monotonic()-self.motion.lease <= .6)))
+            self.enable_pub.publish(Bool(data=healthy and self.motion.mode == 'auto'
+                and time.monotonic()-self.motion.lease <= .6))
 
     def snapshot(self):
         with self.lock:
@@ -469,31 +485,14 @@ class CalibrationNode(Node):
                     fresh=time.monotonic()-self.preview_time < 1., fps=self.p['preview_fps']),
                 inference_latency=self.inference_latency, detection_error=self.detection_error,
                 reason=self.reason, camera=self.camera, setup=self.setup, samples=self.samples,
+                target=self.bottle_point, plan=self.plan, observations=copy.deepcopy(self.auto_views),
                 profile=self.profile, saved=self.saved,
                 bottle_detections=last.get('candidates', []), detected_count=last.get('count', 0), box=last.get('box') if self.target() else None,
                 detection_fresh=self.target() is not None,
                 frozen={k:v for k,v in self.frozen.items() if k != 'jpeg'} if self.frozen else None)
 
     def command(self, path, body):
-        # Fit uses a snapshot outside the control lock; Stop and the velocity
-        # deadline can always run while SciPy is working.
-        if path == '/api/calibration/fit':
-            with self.lock:
-                if body.get('generation') != self.motion.generation:
-                    raise ValueError('Control context changed; refresh before retrying')
-                self.require_stationary()
-                revision = self.revision
-                args = copy.deepcopy((self.setup, self.camera, self.samples))
-            profile = fit_profile(*args)
-            with self.lock:
-                if revision != self.revision:
-                    raise ValueError('Calibration changed while fitting; retry')
-                self.profile = profile
-                self.reason = 'Fit ready. Capture two NEW measured validation positions.'
-                return dict(success=True)
         with self.lock:
-            if self.closing and path != '/api/calibration/stop':
-                raise ValueError('Calibration services are shutting down')
             if path == '/api/calibration/stop':
                 self.cancel_auto('Stopped by operator')
                 self.auto_status.update(state='stopped', reason='Stopped by operator')
@@ -502,116 +501,52 @@ class CalibrationNode(Node):
                 self.enable_pub.publish(Bool(data=False))
                 self.revision += 1
                 return dict(success=True)
+            if self.closing:
+                raise ValueError('Calibration services are shutting down')
+            if body.get('generation') != self.motion.generation:
+                raise ValueError('Control context changed; refresh before retrying')
             if path == '/api/calibration/heartbeat':
                 self.motion.renew(time.monotonic(), body.get('generation'))
                 return dict(success=True)
-            if body.get('generation') != self.motion.generation:
-                raise ValueError('Control context changed; refresh before retrying')
-            if self.auto_status['state'] == 'fitting':
-                raise ValueError('Automatic fit is running; use Stop to cancel it')
-            if path == '/api/calibration/automatic':
-                self.require_stationary()
-                if not self.p['allow_motion']:
-                    raise ValueError('Motion is disabled')
-                ready = self.auto_ready()
-                if not ready['ready']:
-                    raise ValueError(ready['reason'])
-                if self.target() is None:
-                    raise ValueError('Keep exactly one bottle fully visible')
-                frame = self.detections[-1]
-                if frame.get('pose') is None or frame['time'] < self.last_moving+.2:
-                    raise ValueError('Wait for a fresh bottle image paired with odometry')
-                t = self.tf.lookup_transform('base_footprint', self.p['mount_frame'], Time()).transform.translation
-                setup = validate_setup(dict(bottle_height=body.get('bottle_height'),
-                    bottle_diameter=body.get('bottle_diameter'), camera_height=t.z, camera_x=t.x, camera_y=t.y))
-                from .calibration import number
-                distance = number(body.get('distance'), 'Measured floor distance (m)', .45, 2.5)
-                validate_sample(dict(distance=1., lateral=0., box=frame['box']), self.camera)
-                map_pose, alignment = self.map_context()
-                if not corridor_clear(self.grid, map_pose, map_pose[2], length=0.):
-                    raise ValueError('Robot footprint is not clear in the saved map')
-                self.setup = setup
-                self.auto_range = distance
-                self.auto_anchor = list(frame['pose'])
-                self.auto_alignment = alignment
-                self.auto_views = [dict(pose=[0., 0., 0.], box=list(frame['box']), stamp=frame['stamp'], holdout=False)]
-                self.auto_last_stamp = frame['stamp']
-                self.samples, self.profile, self.saved, self.frozen = [], None, None, None
-                self.auto = AutomaticRoute(time.monotonic(), self.pose)
-                self.auto_pause = FreshDataPause()
-                self.auto_bottle = BottleReacquisition(frame['stamp'], frame['box'], self.camera['width'], self.camera['height'])
-                self.auto_status = dict(state='collecting', reason=self.auto.reason, collected=1, total=18, anchor_range_m=distance)
-                self.motion.mode, self.motion.lease = 'auto', time.monotonic()
-                self.motion.reason = 'Automatic calibration running'
+            if self.motion.mode != 'idle' or self.auto_status['state'] == 'fitting':
+                raise ValueError('Stop calibration before changing its setup')
+            if path == '/api/calibration/target':
+                if not self.p['map_file'] or str(Path(body.get('map_file', '')).resolve()) != str(Path(self.p['map_file']).resolve()):
+                    raise ValueError('Bottle point must belong to the currently loaded map')
+                # Validate the entire route before accepting the marker.
+                pose, _ = self.map_context()
+                plan = make_plan(self.map_grid, pose, body.get('xy', []))
+                self.bottle_point = dict(xy=plan['target'], map_file=self.p['map_file'])
+                self.plan = plan
+                self.profile = self.saved = None
+                self.reason = 'Place the upright bottle base at the marked map point, keep it fixed, then press Start.'
+                self.auto_status = dict(state='idle', reason=self.reason)
                 self.revision += 1
-                return dict(success=True)
-            if path == '/api/calibration/unfreeze':
-                self.frozen = None
-                return dict(success=True)
-            if path == '/api/calibration/move':
-                self.require_stationary()
-                if not self.p['allow_motion']:
-                    raise ValueError('Motion disabled; launch with allow_motion:=true to use movement')
-                if self.target() is None:
-                    raise ValueError('Exactly one fresh detected target is needed for movement')
-                self.frozen = None
-                self.motion.start(body.get('mode'), time.monotonic(), self.pose, body['generation'])
-                self.revision += 1
-                return dict(success=True)
+                self.motion.stop('Bottle map point selected')
+                return dict(success=True, target=self.bottle_point, plan=plan)
+            if path != '/api/calibration/start':
+                raise ValueError('Unknown calibration command; use the map-point workflow')
             self.require_stationary()
-            if path == '/api/calibration/setup':
-                self.setup = validate_setup(body)
-                self.auto_status = dict(state='idle', reason='Manual setup active; automatic calibration is available above.')
-                self.samples, self.profile, self.frozen, self.saved = [], None, None, None
-                self.reason = 'Capture six or more positions with different distances and left/right offsets.'
-            elif path == '/api/calibration/freeze':
-                if not self.setup or not self.camera:
-                    raise ValueError('Save the setup and wait for a camera image first')
-                if self.target() is None or self.detections[-1]['time'] < self.last_moving+.2:
-                    raise ValueError('Keep exactly one bottle fully visible for a fresh detection')
-                frame = self.detections[-1]
-                # A single timestamped image avoids requiring a fixed silhouette
-                # while the body balances. Its box and JPEG stay paired.
-                self.frozen = dict(id=secrets.token_hex(8), time=time.monotonic(),
-                                   box=frame['box'], jpeg=frame['jpeg'])
-                self.reason = 'Captured with balancing allowed. Check the outline and measure this position.'
-            elif path == '/api/calibration/sample':
-                if not self.frozen or body.get('freeze_id') != self.frozen['id'] or time.monotonic()-self.frozen['time'] > 120:
-                    raise ValueError('Freeze a fresh image before recording a measurement')
-                sample = validate_sample(body, self.camera)
-                self.saved = None
-                if body.get('validation') is True:
-                    if not self.profile:
-                        raise ValueError('Fit the training samples before validation')
-                    self.profile['validation'].append(validate_holdout(self.profile, sample))
-                    self.reason = 'Validation recorded. Every validation must pass before saving.'
-                else:
-                    if len(self.samples) >= 40:
-                        raise ValueError('Maximum 40 training samples; reset setup to start again')
-                    if any(math.hypot(sample['distance']-s['distance'], sample['lateral']-s['lateral']) < .08 for s in self.samples):
-                        raise ValueError('Move to a new position at least 8 cm from the earlier measurements')
-                    self.samples.append(sample)
-                    self.profile, self.saved = None, None
-                self.frozen = None
-            elif path == '/api/calibration/remove':
-                kind = body.get('kind')
-                entries = self.samples if kind == 'training' else self.profile['validation'] if self.profile and kind == 'validation' else None
-                index = body.get('index')
-                if entries is None or type(index) is not int or not 0 <= index < len(entries):
-                    raise ValueError('Select an existing sample')
-                entries.pop(index)
-                if kind == 'training':
-                    self.profile = None
-                self.saved = None
-            elif path == '/api/calibration/save':
-                if not self.profile:
-                    raise ValueError('Fit and validate before saving')
-                self.saved = save_profile(self.profile, self.p['output_directory'])
-                self.reason = 'Saved. Stop this calibration launch before starting mapping or mission.'
-            else:
-                raise ValueError('Unknown calibration command')
+            if not self.p['allow_motion']:
+                raise ValueError('Motion is disabled')
+            ready = self.auto_ready()
+            if not ready['ready']:
+                raise ValueError(ready['reason'])
+            t = self.tf.lookup_transform('base_footprint', self.p['mount_frame'], Time()).transform.translation
+            setup = validate_setup(dict(bottle_height=body.get('bottle_height'), bottle_diameter=body.get('bottle_diameter'),
+                camera_height=t.z, camera_x=t.x, camera_y=t.y))
+            map_pose, alignment = self.map_context()
+            plan = make_plan(self.map_grid, map_pose, self.bottle_point['xy'])
+            self.setup, self.plan, self.auto_alignment = setup, plan, alignment
+            self.auto_views, self.samples, self.capture_frames = [], [], []
+            self.profile = self.saved = None
+            self.auto_last_stamp = None
+            self.auto = MapCalibrationRun(time.monotonic(), map_pose, self.pose, plan)
+            self.auto_status = dict(state='collecting', reason=self.auto.reason, collected=0, total=len(plan['goals']))
+            self.motion.mode, self.motion.lease = 'auto', time.monotonic()
+            self.motion.reason = 'Map-point calibration running'
             self.revision += 1
-            return dict(success=True, saved=self.saved)
+            return dict(success=True)
 
     def start_server(self):
         node = self

@@ -47,6 +47,8 @@ def start(context):
     motion = ParameterValue(LaunchConfiguration('allow_motion'), value_type=bool)
     localization = []
     map_path = LaunchConfiguration('map').perform(context)
+    if not map_path:
+        raise RuntimeError('Map-point camera calibration requires a saved map')
     if map_path:
         if not os.path.isfile(map_path):
             raise RuntimeError('The selected calibration map is unavailable')
@@ -70,7 +72,7 @@ def start(context):
             os.path.join(share, 'config', 'project.yaml'), dict(allow_motion=motion,
                 max_linear=.04, max_angular=.15, rotation_clearance=.16)]),
         Node(package='ee3033_project', executable='camera_calibration', output='screen', parameters=[{
-            'allow_motion': motion, 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
+            'map_file': map_path, 'allow_motion': motion, 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
             'parent_port': ParameterValue(LaunchConfiguration('parent_port'), value_type=int),
             **{key: ParameterValue(LaunchConfiguration(key), value_type=str)
                for key in ('model', 'target_class', 'output_directory')},

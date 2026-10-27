@@ -1,7 +1,7 @@
 """Preparation-stage status and automatic reuse of validated camera profiles."""
 import json
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from .calibration import load_profile
 
@@ -56,6 +56,7 @@ class CameraSetup:
                 live = json.load(response)
             self.calibration_live = dict(ready=True, motion=live['motion'],
                 automatic=live.get('automatic'), preview=live.get('preview'), capture=live.get('capture'),
+                target=live.get('target'), plan=live.get('plan'),
                 detected_count=live.get('detected_count', 0))
             with self.lock:
                 self.state = dict(phase='calibration', state='WAITING' if live['motion']=='idle' and live.get('automatic',{}).get('state')!='fitting' else 'CALIBRATING',
@@ -69,3 +70,26 @@ class CameraSetup:
                 raise ValueError('Wait for fresh camera setup status before changing stages')
             if self.calibration_live.get('motion') != 'idle':
                 raise ValueError('Stop camera positioning before changing stages')
+
+    def set_calibration_target(self, body):
+        if self.p['phase'] != 'calibration' or not self.selected_map:
+            raise ValueError('Load a reviewed map and camera setup first')
+        if self.stage.loading:
+            raise ValueError('Wait for camera setup to finish loading')
+        self.require_camera_idle()
+        if body.get('map_id') != self.selected_map['id']:
+            raise ValueError('Bottle position belongs to a different map; refresh the page')
+        base = f'http://127.0.0.1:{self.p["calibration_port"]}/api/calibration/'
+        with urlopen(base+'state', timeout=1.) as response:
+            state = json.load(response)
+        payload = dict(generation=state['generation'], map_file=self.selected_map['path'], xy=[body.get('x'), body.get('y')])
+        request = Request(base+'target', json.dumps(payload).encode(),
+            {'Content-Type':'application/json', 'X-Project-Token':state['token']}, method='POST')
+        from urllib.error import HTTPError
+        try:
+            with urlopen(request, timeout=2.) as response:
+                result = json.load(response)
+        except HTTPError as exc:
+            raise ValueError(json.load(exc).get('error', 'Bottle position rejected')) from exc
+        result['message'] = 'Bottle position selected. Place its base at the marker, then start calibration below.'
+        return result

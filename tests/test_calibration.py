@@ -8,7 +8,6 @@ import pytest
 from ee3033_project.calibration import (camera_model, fit_profile, floor_point,
     load_profile, mounting_rotation, predicted_points, save_profile, validate_holdout,
     validate_sample)
-from ee3033_project.calibration_motion import CalibrationMotion
 from ee3033_project.assessment import StageProcess
 
 
@@ -124,60 +123,6 @@ def test_missing_intrinsics_are_explicit_and_unsupported_lenses_are_rejected():
     assert 'assumed' in camera_model(640, 480, 'camera')['source']
     with pytest.raises(ValueError, match='lens models'):
         camera_model(640, 480, 'camera', CAMERA['k'], [0.]*4, 'equidistant')
-
-
-def moving(mode='forward'):
-    m = CalibrationMotion()
-    m.start(mode, 10., [0, 0, 0], m.generation)
-    return m
-
-
-def test_distance_move_stops_at_ten_centimetres_without_odometry_as_calibration_truth():
-    m = moving()
-    assert m.tick(10.1, [.01, 0, 0], dict(error=0.), True) == (.035, 0.)
-    assert m.tick(10.2, [.101, 0, 0], dict(error=0.), True) == (0., 0.)
-    assert m.mode == 'idle'
-
-
-@pytest.mark.parametrize('now,pose,target,healthy', [
-    (10.7, [0, 0, 0], dict(error=0.), True),
-    (10.1, [0, 0, 0], None, True),
-    (10.1, [0, 0, 0], dict(error=0.), False),
-    (10.1, [0, 0, .46], dict(error=0.), True),
-])
-def test_motion_stops_on_heartbeat_target_sensor_or_turn_limits(now, pose, target, healthy):
-    m = moving()
-    assert m.tick(now, pose, target, healthy) == (0., 0.)
-    assert m.mode == 'idle'
-
-
-def test_movement_time_limit_stops_even_if_obstacle_gate_prevents_translation():
-    m = moving()
-    m.renew(15., m.generation)
-    assert m.tick(15.1, [0, 0, 0], dict(error=0.), True) == (0., 0.)
-    assert m.mode == 'idle'
-
-
-def test_center_turn_direction_and_speed_limits():
-    m = moving('center')
-    assert m.tick(10.1, [0, 0, 0], dict(error=.5), True) == (0., -.15)
-    assert m.tick(10.2, [0, 0, 0], dict(error=-.1), True)[1] > 0
-    for i in range(6):
-        m.renew(10.3+i*.05, m.generation)
-        assert m.tick(10.3+i*.05, [0, 0, 0], dict(error=0.), True) == (0., 0.)
-    assert m.mode == 'idle'
-
-
-def test_stop_invalidates_queued_motion_and_old_heartbeats():
-    m = moving()
-    previous = m.generation
-    m.stop()
-    with pytest.raises(ValueError, match='context'):
-        m.start('forward', 11., [0, 0, 0], previous)
-    m.start('backward', 11., [0, 0, 0], m.generation)
-    m.renew(11.5, previous)
-    assert m.lease == 11.
-    assert m.tick(11.7, [0, 0, 0], dict(error=0.), True) == (0., 0.)
 
 
 def test_assessment_forwards_camera_profile_only_to_mission_as_a_single_argument(tmp_path):

@@ -139,6 +139,8 @@ class Workflow(CameraSetup):
             map_path=None;selected=None;options=mission_options(body)
             self.stage.calibration_initial_pose = None
             if phase=='calibration':
+                if not body.get('map_id'):
+                    raise ValueError('Select a reviewed saved map for camera calibration')
                 candidate=self.catalog.entry(body['map_id']) if body.get('map_id') else None
                 require_current_mapping_map(self.p['phase'], bool(self.stage.process),
                                             self.saved_map, candidate['path'] if candidate else None)

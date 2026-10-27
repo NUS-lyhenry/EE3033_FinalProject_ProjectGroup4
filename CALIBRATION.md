@@ -1,239 +1,127 @@
-# Camera calibration with a measured bottle
+# Camera calibration from a known map point
 
-The default workflow needs **bottle height, widest diameter, and one measured
-floor distance**. In a mapped area, the robot automatically centres a fixed bottle,
-collects images at different poses, fits effective camera geometry and checks two
-held-out positions. A passing profile is saved and reused by mission perception.
+Use **Camera setup** in the main console (`/#/calibration`). The operator marks
+where the bottle base will be on a saved map, places it there and enters its
+height and widest diameter. No measured distance is required. After **Start**,
+the robot collects the views autonomously, fits the camera model and saves it
+only if the checks pass. The earlier image-centring and manual-measurement
+processes have been removed.
 
-Use **Camera setup** in the main console (`/#/calibration`). Select the area's
-reviewed map in the map library and load camera setup. Fresh localization on that
-same map is reused. If localization is unavailable, establish the robot's current
-pose using the map gesture or the optional localization fields. No previous home
-pose is silently reused. Loading this stage starts map server and AMCL alongside
-its own sensor drivers and velocity gate; it does not start a navigation mission.
+## Operator steps
 
-## Automatic workflow: one measurement
+1. Save and review a map of the current area. Select it in the map library and
+   choose **Load map & camera setup**. A live mapping session must be saved first;
+   camera setup will not silently substitute an older map. Fresh localization
+   from the same map is reused.
+2. Check the robot arrow against its actual position and heading. If necessary,
+   select **Set robot pose** in the map selection tool, drag from the robot's
+   location toward its heading, then press **Set robot pose on calibration map**.
+   Wait for reliable localization. The system never substitutes a previous home
+   pose or resets localization globally.
+3. Select **Place bottle marker** and click a free floor position 0.40–1.50 m
+   from the robot. Alternatively enter exact map x/y coordinates and press
+   **Set bottle position**. The complete planned route must have 0.24 m map
+   clearance. The dashed line previews the collection positions; the UI reports
+   the required reverse extent (normally 0.80 m, up to 1.05 m when starting close).
+4. Put the upright bottle's base centre **exactly at the marker**, on the same
+   flat floor as the robot. Leave it fixed throughout the run. Clear the route,
+   including low obstacles that lidar cannot see. Use one bottle in the scene.
+5. Enter the bottle height and widest diameter in metres. The current bottle's
+   defaults are **0.215 m high and 0.065 m wide**. Press **Start automatic
+   calibration** and keep the page open and focused. Loading setup or marking
+   the bottle does not itself move the robot.
+6. The robot first makes two small opposite test turns to verify the relationship
+   between angular commands and measured yaw. It then visits 15 training poses
+   at five distances and three headings, followed by two held-out check poses.
+   All movement follows map poses; detector box position never steers the robot.
+   Two fresh complete detections are required at each capture pose. Overlapping
+   proposals for the same bottle are merged; distinct ambiguous proposals cause
+   capture to wait. Temporary detection loss does not change the route.
+7. A passing result shows fitted pitch, camera height and both floor-check errors.
+   The profile is saved automatically and reused by later missions. Stop or a
+   failed run requires an explicit new Start. The same fixed map marker can be
+   reused after checking that the bottle and localization remain correct.
 
-1. Put one upright bottle on the same flat floor as the robot, ahead of the
-   camera. Its whole outline and floor contact must be visible. Clear at least
-   0.78 m behind the robot, with 0.24 m clearance on each side, including low
-   obstacles below the lidar plane. Keep the bottle fixed throughout collection.
-2. Enter its height and widest diameter in metres. Measure **one straight floor
-   distance**, from directly below the camera lens to the centre of the bottle
-   base at the robot's current position. It can be diagonal. Do not measure a
-   slanted lens-to-bottle distance or distance to the bottle's nearest surface.
-3. Select **Start automatic calibration** immediately after measuring. The robot
-   centres the bottle, reverses up to 0.72 m, collects views at five distances and
-   small yaw offsets, then moves partway forward to two new check positions.
-   Keep the page open and focused; Stop is available throughout. No further
-   dimensions, offsets, box selections or distance measurements are requested.
-4. The program fits focal lengths, pitch/yaw, camera height and the bottle's
-   initial bearing together. The reported 13–15° downward mount is initialized
-   at 14°; this is a starting estimate, not a fixed calibration or angle limit.
-   The result shows the fitted pitch in degrees. It uses the installed TF for lens forward/left
-   offsets and CameraInfo for principal point and distortion. The physical
-   mount frame defaults to `camera_link`, independently of the image header
-   (`default_cam` on the lab camera has no mounting TF). It pairs each image
-   with timestamped interpolated odometry, using map localization to check the
-   route and detect localization shifts. It never assumes that commanded travel
-   equals actual travel.
-5. Two images from held-out translation positions check the projected floor
-   location. Both must have error at most 0.10 m against pose-derived positions;
-   clipped boxes, insufficient motion/angle coverage, poor fits or failed checks
-   prevent saving. A passing profile is saved automatically and shown in the UI.
+## Geometry and limits
 
-These checks measure consistency with the robot's pose estimates, **not independent
-surveyed accuracy**. Odometry bias, detector outlines, varying balancing pitch or
-an inaccurate initial distance can still bias localization. Verify physical
-accuracy separately before claiming a measured target error. The calibration
-bottle's inferred position is never used as a mission target coordinate.
+The fit estimates effective horizontal/vertical focal lengths, camera pitch/yaw
+and mounting height. The reported 13–15° downward mounting is initialized at
+14°; this is an estimate to start the fit, not a fixed pitch. Principal point and
+distortion come from CameraInfo. Forward/left mount offsets come from TF
+`base_footprint -> camera_link`, independently of the image header (the lab
+camera uses `default_cam`, which has no mounting TF).
 
-Automatic movement is bounded to a short straight corridor, 0.035 m/s translation,
-0.15 rad/s rotation and a 210-second overall deadline. Unknown/occupied map cells,
-localization jumps or stale localization, missing/ambiguous target detections,
-ownership loss stops collection. A missing browser heartbeat disables driving
-after 0.6 seconds; automatic collection ends if it remains missing for 1.5 seconds. A brief sensor or
-detection delay commands zero immediately and waits for fresh, settled data; a
-delay lasting over two seconds stops the run. Live lidar
-stopping remains the final velocity gate. A stopped/failed run requires a new
-measurement at the robot's current position and an explicit new Start.
+Every detected image is paired with timestamp-interpolated odometry transformed
+into the monitored map alignment. The fit uses the actual captured map poses and
+the fixed bottle coordinates, rather than assuming that commanded travel equals
+actual travel. It requires at least 0.60 m of actual distance coverage and 0.20 rad
+of bearing coverage. Poor or ill-conditioned fits, clipped boxes and insufficient
+coverage are rejected. Both held-out floor projections must be within 0.10 m.
 
-The **Advanced** panels retain the manually measured workflow below for cases
-without a saved map or when independent reference measurements are needed.
+Gentle balancing motion is allowed during capture (0.35 s window, mean linear
+speed up to 0.18 m/s and mean angular speed up to 0.60 rad/s, with bounded pose
+span). Commanded motion must finish before capture. Maximum calibration commands
+are 0.035 m/s and 0.12 rad/s. The existing lidar velocity gate remains the sole
+final `/cmd_vel` writer. The controller stops for stale sensors/localization,
+localization jumps, command-ownership loss, increasing heading error, blocked or
+unknown map route, a missing browser heartbeat for 0.6 s, or a positioning/capture
+timeout (40 s per pose, 300 s overall). A run is bounded to 1.2 m from its start.
+Turn verification stops if the response is inconsistent or exceeds 0.18 rad.
+Stationary AMCL updates are requested periodically without resetting its pose.
 
-## Start the preparation session
+These checks establish consistency with the map and robot pose estimates, **not
+independent surveyed accuracy**. Placement errors, map scale/localization errors,
+varying balancing pitch, bottle silhouettes and floor slope can bias results.
+Verify physical accuracy before claiming a measured localization error.
 
-Build the updated package with `bash scripts/build_robot.sh`, then source its
-separate overlay. Stop the assessment, mapping, mission and earlier follower
-launches first. Calibration refuses existing robot command publishers and never
-stops another stack for you. Inside the robot's existing Humble container:
+After calibration, choose the mission's **ground-plane camera** coordinate method
+for upright floor objects below lidar height. Detection plus the saved geometry
+projects the bottom of the object to the floor and transforms it into the map.
+The calibration marker is never used as a mission target. Keep the lens settings,
+mounting and floor conditions consistent, and stay within the calibrated range.
+The saved schema remains compatible with existing mission perception and older
+validated profiles.
+
+## Build and launch
+
+Use the main assessment console to select a map and manage the camera stage. It
+owns the calibration child and stops that child before loading another stage.
+Inside the existing robot Humble container:
 
 ```bash
+bash scripts/build_robot.sh
 source /opt/ros/humble/setup.bash
 source /home/ros2_ws/install/setup.bash
 source /home/ros2_ws/group4_ws/install/setup.bash
 export ROS_DOMAIN_ID=6
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-ros2 launch ee3033_project calibration.launch.py allow_motion:=true \
-  map:=/home/ros2_ws/group4_maps/YOUR_AREA/map.yaml \
-  output_directory:=/home/ros2_ws/group4_calibrations
 ```
 
-Forward local port 8780 to the robot's loopback port 8780 using the same SSH
-connection used for the assessment console. Open **http://127.0.0.1:8780**.
-If the container uses a separate network namespace, expose/forward its loopback
-port in the same way as assessment port 8765. The server binds only to loopback
-and requires its session token for controls.
+The calibration launch requires `map:=/absolute/path/to/map.yaml`; motion defaults
+to disabled. The main console supplies that map, its parent port, output directory
+and optional fresh same-map localization seed. Standalone launches expose the
+loopback HTTP API on port 8780, but the normal map-selection UI is in the main
+console on port 8765. Session tokens, same-origin checks and control generations
+protect writes. Do not launch a second robot stack; preflight rejects existing
+command publishers and project sensor/localization nodes.
 
-Motion defaults to disabled. Omit `allow_motion:=true` to reposition the bottle
-manually and collect stationary measurements. Deliberately reused lab drivers can
-be selected with `base:=false`, `lidar:=false`, or `camera:=false`; calibration
-still owns its one scan adapter and final velocity gate. The detector defaults
-to `bottle`, with the existing `/home/ros2_ws/weights/yolo26n.pt` model.
-
-## Advanced manually measured workflow
-
-1. **Measure and save setup.** Enter the bottle height, widest diameter, lens
-   height above the floor, and lens forward/left offsets from `base_footprint`, in
-   metres. Replace the example defaults with physical measurements. Keep the
-   robot upright, floor level, and lens settings fixed.
-2. **Position the target.** Keep exactly one bottle fully visible. Centre turns
-   toward its image centre. Forward/backward controls request one movement of at
-   most 10 cm, with limits of 0.035 m/s and 0.15 rad/s. Translation times out after
-   5 seconds; centring after 8 seconds or 0.45 rad. The existing lidar gate stays
-   active, so a blocked move may end before reaching 10 cm.
-3. **Capture and measure.** Keep the positioning controls idle. Gentle balancing
-   movement is allowed. Capture a fresh bottle image, then correct its box if
-   necessary. Include the top and floor contact, excluding the shadow. Measure
-   from the floor point directly below the lens to the **centre of the bottle
-   base**: forward distance parallel to robot forward, and left offset perpendicular
-   to forward. Left is positive; right is negative. These are two floor components,
-   not a diagonal, bumper distance, nearest-surface distance, or slanted lens
-   distance. Remeasure both after turning.
-4. **Train at six or more positions.** Cover at least 0.60 m of forward-distance
-   span and 0.20 rad (about 12°) of left/right bearing span. For example, use
-   forward distances 0.65, 0.8, 1.0, 1.15, 1.35, 1.5 m with measured side offsets
-   around ±0.1–0.2 m. Adapt these to keep the whole bottle visible. Move the
-   bottle sideways if needed and record each frozen measurement once.
-5. **Fit, then check two new positions.** Enable “Independent validation sample”.
-   Capture two positions within the training distance/bearing range, each at least
-   8 cm from every previous position. Both projected floor positions must pass
-   a **0.10 m** error limit against your measurements. Failed checks stay visible
-   and block saving; correct an incorrect measurement or retrain and refit.
-6. **Save the validated profile.** Every save creates a new JSON file, preserving
-   earlier profiles. The UI provides the exact assessment launch command. Ctrl+C
-   the calibration launch before starting the assessment stack.
-
-Stop remains available throughout. Hiding/closing the page or losing focus requests
-Stop. Manual movement requires a browser heartbeat within 0.6 seconds; automatic
-movement also commands zero after 0.6 seconds and ends the run after 1.5 seconds.
-All movement requires fresh
-image/detection, lidar, odometry and final output, plus exclusive command ownership.
-Calibration never writes directly to `/cmd_vel`.
-
-## Use the result autonomously
-
-Use the actual saved path shown by the UI:
+For an offline clickable simulation:
 
 ```bash
-ros2 launch ee3033_project assessment.launch.py allow_motion:=true \
-  calibration_file:=/home/ros2_ws/group4_calibrations/camera_SAVED_PROFILE.json
+python3 scripts/simulate_calibration.py --port 8791
 ```
 
-The console forwards that profile into each mission-stage launch. Choose
-**Camera + floor plane** for targets whose visible bottom rests on the same floor.
-Perception projects that contact pixel to `base_footprint`, then transforms it to
-`map` at the image timestamp. Observations outside the trained distance/bearing
-envelope are rejected. Confirmation and target filtering remain active.
+Open `http://127.0.0.1:8791`, set the simulated map point (default 0.9, 0), then
+Start with the default bottle dimensions. This demo accelerates view collection
+and uses the real fitter. Every output is marked simulated and is rejected by
+robot profile loading. It does not test physical motion or detector accuracy.
 
-**Camera + lidar** uses the corrected intrinsics and measured camera mount when
-associating scan points with detections. The target must still intersect the
-scan plane. It reports the associated visible surface, which can differ from the
-object's centre. This tool does not calibrate the lidar mount or eliminate
-ambiguous wall/background associations.
-
-Standalone `mission.launch.py` accepts the same `calibration_file` argument. With
-no profile, the existing CameraInfo/TF behaviour remains. An invalid or unvalidated
-profile prevents perception startup; camera resolution/frame mismatch rejects
-observations. Saving does not alter a running mission, publish replacement TF,
-or modify lab camera files, balance PID, or saved maps.
-
-## Limits
-
-A detector box approximates a silhouette. The fit uses a vertical centreline and
-known mid-height diameter; irregular shape, a narrow neck, occlusion or loose box
-can bias it. Principal point and lens distortion are retained from CameraInfo.
-Missing intrinsics are explicitly labelled “assumed image centre / zero distortion”.
-The tool **does not estimate a full distortion model or camera roll**. A checkerboard
-is better for full intrinsic calibration; the underlying projection follows the
-[OpenCV camera model](https://docs.opencv.org/4.12.0/d9/d0c/group__calib3d.html).
-
-Balancing pitch changes, floor slope, altered focus/resolution, mount movement
-and measurement error can invalidate the result. Relative floor validation does
-not establish map accuracy: mapping, robot localization and TF also contribute.
-Use independent map reference positions before claiming physical target accuracy.
-
-The briefing permits prepared calibration data. Run this tool before the assessed
-workflow, and remove the bottle before assessment mapping. The mission uses
-camera parameters, never a training sample's target position. This tool is separate
-from stage 2, where manual target coordinates and driving are prohibited.
-
-For a simulated, read-only preview without ROS:
+Local checks:
 
 ```bash
-python3 scripts/preview_ui.py
-# http://127.0.0.1:8790/calibration
+pytest -q
+npm run test:ui
+# Source the ROS overlay first; use isolated domains, never the robot's domain 6.
+ROS_DOMAIN_ID=106 ROS_LOCALHOST_ONLY=1 python3 tests/integration_calibration.py
+ROS_DOMAIN_ID=108 ROS_LOCALHOST_ONLY=1 python3 tests/integration_automatic_calibration.py
 ```
-
-For a **clickable simulation** of the complete workflow:
-
-```bash
-python3 scripts/simulate_calibration.py
-# http://127.0.0.1:8791
-```
-
-For automatic simulation, keep the example bottle height 0.25 m, diameter
-0.065 m and distance 0.90 m, then select Start automatic calibration. The
-accelerated collection finishes in about six seconds. The Advanced panels also
-support the manually measured simulation with reference positions 1–8.
-The simulation uses the real fitting/validation functions, creates no ROS nodes,
-and labels saved demo profiles so mission perception refuses them.
-
-The live preview is encoded separately from detection, targeting 8 FPS at 640×480
-with JPEG quality 65; frozen measurement frames use quality 85. The browser decodes
-JPEG locally and retries stalled requests. Use Resume live camera to leave a frozen
-view. Gentle balancing capture uses the limits described below. Fresh zero final
-commands are still required; the mission return-stop verifier is unchanged.
-
-## One-time setup in the main console
-
-Open **Camera setup** in the main console (`/#/calibration`), select a reviewed
-map, and select Load map & camera setup. This preparation stage owns its sensor drivers and velocity gate;
-loading mapping or a mission first stops that stage. Calibration does not start
-the assessment timer. The main Stop button also stops camera positioning.
-
-Save a validated profile once. The console discovers validated profiles in its
-`calibration_directory` (default `~/ee3033_calibrations`) after each restart and
-forwards the latest valid profile into mission perception. Invalid and simulated
-profiles are ignored. Camera-only calibrated floor projection becomes the default
-unless the operator explicitly chooses another method. Recalibrate if the mount,
-lens settings or resolution changes. The embedded panel needs both console8765
-and calibration8780 forwarded through SSH.
-
-Calibration capture now permits bounded balancing motion over a 0.35 second window
-(mean linear speed<= 0.18 m/s, mean yaw rate<= 0.60 rad/s, XY span <= 0.15 m,
-heading span <= 0.45 rad). It still requires fresh sensors, zero final movement
-commands and idle positioning controls. One fresh detected image is captured;
-the image and its box remain paired. The earlier multi-frame outline-jitter gate
-is removed. Automatic collection uses the same balancing tolerance. The advanced manual
-workflow also supports frozen-outline corrections and independently measured checks. This policy does not modify mission return-stop
-verification.
-
-
-Detector recovery: a missed bottle detection pauses with zero commands for up to
-two seconds. Collection resumes only after two distinct matching bottle views
-and settled fresh sensors. Ambiguous candidate boxes also pause while awaiting clean views; a
-substantially different target ends the attempt immediately. Persistent missing
-or ambiguous detections still stop after two seconds. Paused time does not consume
-the per-step movement budget; the overall210-second limit remains in effect. Failure status retains the detection count and route
-phase to distinguish detection failures from localization or fit failures.

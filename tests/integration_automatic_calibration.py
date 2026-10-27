@@ -33,8 +33,9 @@ from sensor_msgs.msg import Image
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from ee3033_project.calibration import camera_model, predicted_points, load_profile
-from ee3033_project.calibration_auto import bottle_sample
+from ee3033_project.map_calibration import map_sample
 from ee3033_project.calibration_node import CalibrationNode
+from ee3033_project.console import Console
 from ee3033_project.ros_utils import LATCHED, set_yaw
 from ee3033_project.velocity_gate import VelocityGate
 
@@ -66,7 +67,7 @@ class Detector:
     def to(self, *args):return self
     def predict(self, image, **kwargs):
         pose=np.frombuffer(image[0,:24,0].copy().tobytes(),dtype=np.float64)
-        sample=bottle_sample(SETUP,.9,.04,pose,[])
+        sample=map_sample(SETUP,[.9,0.],pose,[])
         p=predicted_points([277.5,274.,math.radians(14.2),.035],SETUP,CAMERA,sample)
         box=np.array([p[2:,0].min(),p[1,1],p[2:,0].max(),p[0,1]])
         proposals=[Proposal(box)] if self.visible else []
@@ -108,12 +109,12 @@ class Robot(Node):
         now=time.monotonic();dt=min(.05,now-self.last)*5;self.last=now
         v,w=self.speed
         self.pose=[self.pose[0]+v*math.cos(self.pose[2])*dt,
-                   self.pose[1]+v*math.sin(self.pose[2])*dt,self.pose[2]+w*dt]
+                   self.pose[1]+v*math.sin(self.pose[2])*dt,self.pose[2]-w*dt]
         self.telemetry[:3]=self.pose
         stamp=self.get_clock().now().to_msg()
         odom=Odometry();odom.header.frame_id='odom';odom.header.stamp=stamp;odom.child_frame_id='base_footprint'
         odom.pose.pose.position.x,odom.pose.pose.position.y=self.pose[:2];set_yaw(odom.pose.pose.orientation,self.pose[2])
-        odom.twist.twist.linear.x=v;odom.twist.twist.angular.z=w;self.odoms.publish(odom)
+        odom.twist.twist.linear.x=v;odom.twist.twist.angular.z=-w;self.odoms.publish(odom)
         tf=TransformStamped();tf.header.frame_id='map';tf.child_frame_id='odom';tf.header.stamp=copy.deepcopy(stamp)
         # AMCL normally publishes a transform slightly into the future.
         tf.header.stamp.nanosec+=500000000
@@ -150,16 +151,24 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             detector=Detector()
             with patch.dict(sys.modules,{'torch':SimpleNamespace(set_num_threads=lambda _:None),'ultralytics':SimpleNamespace(YOLO=lambda _:detector)}):
-                node=CalibrationNode(parameter_overrides=[Parameter('port',value=0),Parameter('allow_motion',value=True),Parameter('output_directory',value=directory)])
+                node=CalibrationNode(parameter_overrides=[Parameter('port',value=0),Parameter('map_file',value='/maps/test.yaml'),Parameter('allow_motion',value=True),Parameter('output_directory',value=directory)])
+            console=Console(parameter_overrides=[Parameter('port',value=0),
+                Parameter('phase',value='calibration'),Parameter('session_directory',value=directory+'/assessment'),
+                Parameter('calibration_directory',value=directory),Parameter('calibration_port',value=node.p['port'])])
+            console.stage=SimpleNamespace(process=True,loading=False,cancel=threading.Event(),
+                calibration_file='',stop=lambda:None,
+                snapshot=lambda:dict(managed=True,phase='calibration',running=True,transitioning=False,fault=None))
+            console.selected_map=dict(id='test/map.yaml',path='/maps/test.yaml')
+            node.p['parent_port']=console.p['port']
             processes=multiprocessing.get_context('spawn')
             telemetry=processes.Array('d',6);shift=processes.Value('d',0.);stop=processes.Event()
             children=[processes.Process(target=virtual_process,args=(kind,telemetry,shift,stop)) for kind in ('robot','gate')]
             for child in children:child.start()
-            executor=SingleThreadedExecutor();executor.add_node(node)
+            executor=SingleThreadedExecutor();executor.add_node(node);executor.add_node(console)
             thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
             base=f'http://127.0.0.1:{node.p["port"]}'
             def post(name,**body):
-                request=Request(base+'/api/calibration/'+name,json.dumps(dict(generation=node.motion.generation,**body)).encode(),
+                request=Request(base+'/api/calibration/'+name,json.dumps({'generation':node.motion.generation,**body}).encode(),
                     {'Content-Type':'application/json','X-Project-Token':node.token},method='POST')
                 deadline=time.monotonic()+8
                 while True:
@@ -167,14 +176,14 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                         return json.load(urlopen(request,timeout=5))
                     except HTTPError as exc:
                         error=exc.read().decode()
-                        if (name=='automatic' and time.monotonic()<deadline and
+                        if (name=='start' and time.monotonic()<deadline and
                                 any(text in error for text in ('bounded balancing', 'Fresh sensors', 'fresh bottle image'))):
                             time.sleep(.05)
                             continue
                         raise AssertionError(error) from exc
             def ready():
                 with node.lock:
-                    return node.capture_status()['ready'] and node.auto_ready()['ready'] and node.target() is not None and node.detections[-1].get('pose') is not None
+                    return node.capture_status()['ready'] and node.camera is not None and node.target() is not None and node.detections[-1].get('pose') is not None
             heartbeat_stop=threading.Event()
             heartbeat_requests=[]
             def pulse():
@@ -187,23 +196,47 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
             heartbeat_thread=threading.Thread(target=pulse,daemon=True)
             try:
                 self.assertTrue(wait(ready,15),str(node.snapshot()))
-                post('automatic',bottle_height=.25,bottle_diameter=.065,distance=.9)
+                # Exercise the main console's authenticated forwarding path.
+                self.assertTrue(wait(lambda:console.calibration_live and console.calibration_live.get('ready')))
+                parent=f'http://127.0.0.1:{console.p["port"]}'
+                request=Request(parent+'/api/calibration_target',json.dumps(dict(map_id='test/map.yaml',x=.9,y=0.)).encode(),
+                    {'Content-Type':'application/json','X-Project-Token':console.token,
+                     'X-Control-Generation':str(console.control_generation)},method='POST')
+                self.assertTrue(json.load(urlopen(request,timeout=4))['success'])
+                self.assertEqual(node.bottle_point['xy'],[.9,0.])
+                with self.assertRaisesRegex(ValueError,'different map'):
+                    console.set_calibration_target(dict(map_id='old/map.yaml',x=.9,y=0.))
+                # Bad tokens/origins cannot even issue Stop.
+                for headers in ({'X-Project-Token':'bad'}, {'X-Project-Token':node.token,'Origin':'https://untrusted.invalid'}):
+                    with self.assertRaises(HTTPError) as denied:
+                        urlopen(Request(base+'/api/calibration/stop',b'{}',headers,method='POST'),timeout=2)
+                    self.assertEqual(denied.exception.code,403)
+                with self.assertRaisesRegex(AssertionError,'currently loaded map'):
+                    post('target',map_file='/maps/old.yaml',xy=[.9,0.])
+                with self.assertRaisesRegex(AssertionError,'Unknown calibration command'):
+                    post('automatic',distance=.9)
+                with self.assertRaisesRegex(AssertionError,'context changed'):
+                    post('start',generation=-1,bottle_height=.25,bottle_diameter=.065)
+                post('start',bottle_height=.25,bottle_diameter=.065)
+                with self.assertRaisesRegex(AssertionError,'Stop calibration'):
+                    post('target',map_file='/maps/test.yaml',xy=[1.,0.])
                 heartbeat_thread.start()
-                deadline=time.monotonic()+100
+                deadline=time.monotonic()+160
                 injected_miss=False
                 injected_ambiguity=False
                 while node.auto_status['state']=='collecting' and time.monotonic()<deadline:
                     if not injected_miss and len(node.auto_views)>=3 and telemetry[5]>0:
+                        # Detection loss must not steer map-based motion. It may
+                        # delay capture at the next stationary goal.
                         detector.visible=False
-                        self.assertTrue(wait(lambda:'reacquiring' in node.reason,1.5))
-                        self.assertTrue(wait(lambda:telemetry[5]==0,1.))
+                        time.sleep(.35)
                         self.assertEqual(node.motion.mode,'auto')
                         detector.visible=True
                         injected_miss=True
-                    elif injected_miss and not injected_ambiguity and len(node.auto_views)>=5 and telemetry[5]>0:
+                    elif injected_miss and not injected_ambiguity and len(node.auto_views)>=5:
+                        # Duplicate overlapping proposals describe one bottle.
                         detector.duplicate=True
-                        self.assertTrue(wait(lambda:'ambiguous' in node.reason,1.5))
-                        self.assertTrue(wait(lambda:telemetry[5]==0,1.))
+                        time.sleep(.6)
                         self.assertEqual(node.motion.mode,'auto')
                         detector.duplicate=False
                         injected_ambiguity=True
@@ -213,7 +246,7 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                 self.assertTrue(wait(lambda:node.auto_status['state']!='fitting',10))
                 self.assertEqual(node.auto_status['state'],'complete',str(node.snapshot()))
                 profile=load_profile(node.saved)
-                self.assertEqual(len(profile['automatic']['observations']),18)
+                self.assertEqual(len(profile['map_calibration']['observations']),17)
                 self.assertAlmostEqual(math.degrees(profile['pitch']),14.2,delta=.3)
                 self.assertEqual(len(profile['validation']),2)
                 self.assertTrue(all(v['passed'] for v in profile['validation']))
@@ -223,30 +256,30 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                 self.assertTrue(wait(ready))
                 # A failed preflight must preserve the already saved draft.
                 previous_setup=dict(node.setup)
-                grid=node.grid
-                col=int((telemetry[0]-grid.info.origin.position.x)/grid.info.resolution)
-                row=int((telemetry[1]-grid.info.origin.position.y)/grid.info.resolution)
-                cell=row*grid.info.width+col
-                grid.data[cell]=100
+                grid=node.map_grid
+                col=int((telemetry[0]-grid['origin'][0])/grid['resolution'])
+                row=int((telemetry[1]-grid['origin'][1])/grid['resolution'])
+                cell=row*grid['width']+col
+                grid['cells'][cell]=100
                 try:
-                    with self.assertRaisesRegex(AssertionError,'footprint'):
-                        post('automatic',bottle_height=.30,bottle_diameter=.065,distance=1.2)
+                    with self.assertRaisesRegex(AssertionError,'clear'):
+                        post('start',bottle_height=.30,bottle_diameter=.065)
                     self.assertEqual(node.setup,previous_setup)
                     self.assertEqual(node.auto_status['state'],'complete')
                 finally:
-                    grid.data[cell]=0
-                dx=.9*math.cos(.04)-telemetry[0];dy=.9*math.sin(.04)-telemetry[1]
-                distance=math.hypot(dx,dy)
-                post('automatic',bottle_height=.25,bottle_diameter=.065,distance=distance)
+                    grid['cells'][cell]=0
+                # The robot is farther from the fixed point now. A new plan is
+                # computed, rather than reusing start coordinates or distance.
+                post('start',bottle_height=.25,bottle_diameter=.065)
                 self.assertTrue(wait(lambda:node.motion.mode=='idle',2))
                 self.assertIn('heartbeat',node.auto_status['reason'])
                 self.assertTrue(wait(ready))
-                post('automatic',bottle_height=.25,bottle_diameter=.065,distance=distance)
+                post('start',bottle_height=.25,bottle_diameter=.065)
                 shift.value=.3
                 self.assertTrue(wait(lambda:node.motion.mode=='idle',2))
                 self.assertIn('Localization shifted',node.auto_status['reason'])
                 self.assertTrue(wait(lambda:telemetry[5]==0,2))
-                print('PASS automatic HTTP + timestamped ROS poses + future AMCL TF + 18 views + saved checks + heartbeat/localization stop')
+                print('PASS automatic HTTP + timestamped ROS poses + future AMCL TF + 17 map views + inverted yaw + saved checks + heartbeat/localization stop')
             finally:
                 heartbeat_stop.set()
                 if heartbeat_thread.is_alive():heartbeat_thread.join(timeout=2)
@@ -256,7 +289,7 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                     child.join(timeout=5)
                     if child.is_alive():child.terminate();child.join(timeout=3)
                 executor.shutdown(timeout_sec=3);thread.join(timeout=3)
-                node.destroy_node();rclpy.shutdown()
+                console.destroy_node();node.destroy_node();rclpy.shutdown()
 
 
 

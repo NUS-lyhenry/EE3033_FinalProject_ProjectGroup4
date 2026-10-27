@@ -38,9 +38,11 @@ async function fixture(page,{phase='mapping',active=false}={}){
         gap=false;audacity='bold';
         state.mission={phase:body.phase,state:'WAITING',reason:'SIMULATED stage ready',home:null,target:null,ready:body.phase==='mapping',return_verified:false};
         state.initial_pose_sent=false;
+        if(body.phase==='calibration')state.selected_map=maps.find(m=>m.id===body.map_id);
         if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance};state.health.AMCL.ok=false;}
       }
-    }else if(path==='/api/initial_pose'){state.initial_pose_sent=true;state.health.AMCL.ok=true;state.mission.ready=true;}
+    }else if(path==='/api/calibration_target'){state.calibration_live.target={xy:[body.x,body.y]};state.calibration_live.plan={goals:[],reverse_extent_m:.8};}
+    else if(path==='/api/initial_pose'){state.initial_pose_sent=true;state.health.AMCL.ok=true;state.mission.ready=true;}
     else if(path==='/api/start'){state.mission.state=state.phase==='mapping'?'MAPPING':'SEARCHING';state.mission.home=[1,1,0];}
     else if(path==='/api/map_waypoint'){state.mission.state='MAPPING';state.mission.mapping_mode='waypoint';state.mission.waypoint=[body.x,body.y,body.yaw];state.mission.waypoint_verified=false;}
     else if(path==='/api/stop'){state.mission.state='STOPPED';state.control_generation++;}
@@ -70,9 +72,10 @@ test('preview is explicitly simulated and cannot command robot motion',async({pa
 test('camera setup is a preparation page and shows saved profile reuse',async({page})=>{
   const f=await fixture(page);f.state.stage.running=false;
   await page.route('http://127.0.0.1:8780/**',route=>route.fulfill({contentType:'text/html',body:'Camera setup fixture'}));
+  f.setMaps([{id:'room/map.yaml',path:'/maps/room/map.yaml',reviewed:true}]);await page.locator('#refreshMaps').click();
   await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeEnabled();
   await page.locator('#loadCalibration').click();
-  expect(f.calls.find(c=>c.path==='/api/stage').body).toEqual({phase:'calibration'});
+  expect(f.calls.find(c=>c.path==='/api/stage').body).toEqual({phase:'calibration',map_id:'room/map.yaml'});
   f.state.calibration_live={ready:true,motion:'idle'};
   f.state.camera_calibration={ready:true,path:'/SIMULATED/camera_checked.json',message:'Saved calibration will be used automatically when the mission loads.'};
   await expect(page.locator('#calibrationFrame')).toBeVisible();
@@ -336,4 +339,20 @@ test('unsaved live mapping cannot silently load or review an old calibration map
   await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeDisabled();
   await expect(page.locator('#calibrationMapChoice')).toContainText('Save the current mapping session');
   expect(f.calls.some(c=>c.path==='/api/stage')).toBe(false);
+});
+
+
+test('camera map tool sends bottle coordinates on the currently loaded map',async({page})=>{
+  const f=await fixture(page);f.state.phase='calibration';f.state.stage.phase='calibration';
+  f.state.selected_map={id:'current/map.yaml',path:'/maps/current/map.yaml'};
+  f.state.calibration_live={ready:true,motion:'idle'};
+  await page.route('http://127.0.0.1:8780/**',r=>r.fulfill({contentType:'text/html',body:'Camera fixture'}));
+  await view(page,'calibration');await expect(page.locator('#calSetBottle')).toBeEnabled();
+  await expect(page.locator('#calMapTool')).toHaveValue('bottle');
+  const b=await page.locator('#map').boundingBox();await page.mouse.click(b.x+b.width*.4,b.y+b.height*.5);
+  await expect.poll(()=>f.calls.filter(c=>c.path==='/api/calibration_target').length).toBe(1);
+  const call=f.calls.find(c=>c.path==='/api/calibration_target');
+  expect(call.body.map_id).toBe('current/map.yaml');expect(call.body.x).toBeCloseTo(2.4,1);expect(call.body.y).toBeCloseTo(2,1);
+  await expect(page.locator('#calBottleStatus')).toContainText('Bottle base marker');
+  expect(f.calls.some(c=>c.path==='/api/initial_pose')).toBe(false);expect(f.errors).toEqual([]);
 });

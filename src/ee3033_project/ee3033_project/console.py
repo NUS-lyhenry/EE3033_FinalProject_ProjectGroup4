@@ -469,6 +469,8 @@ class Console(Workflow, Node):
     def command(self,path,body):
         if not isinstance(body,dict):
             raise ValueError('Request must be a JSON object')
+        if path == '/api/calibration_target':
+            return self.set_calibration_target(body)
         workflow=self.workflow_command(path,body)
         if workflow is not None:
             return workflow
