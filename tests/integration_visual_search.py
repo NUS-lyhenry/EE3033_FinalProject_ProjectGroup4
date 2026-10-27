@@ -46,6 +46,10 @@ class VisualRobot(FakeRobot):
                                    close_view=self.mode == 'close_stop' and m.goal_kind == 'acquire')]
             if self.mode == 'direct' or (self.mode in ('approach', 'close_stop') and m.goal_kind == 'acquire' and m.state == 'LOCALIZING'):
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.03)]
+            if self.mode == 'precision_boundary':
+                observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.1)]
+            if self.mode in ('soft_precision', 'stop_soft') and m.acquisition.started is not None:
+                observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.25)]
         self.raw_pub.publish(String(data=json.dumps(dict(stamp=stamp, detections=detections))))
         self.obs_pub.publish(String(data=json.dumps(dict(stamp=stamp, observations=observations))))
 
@@ -77,12 +81,14 @@ class VisualSearch(unittest.TestCase):
                 self.assertTrue(response.result().success, response.result().message)
                 if mode.startswith('stop'):
                     predicate = (lambda: mission.state == 'ACQUIRING' and mission.goal_pending) if mode == 'stop_pending' else (lambda: mission.state == 'LOCALIZING')
+                    if mode == 'stop_soft':
+                        predicate = lambda: mission.state == 'LOCALIZING' and mission.best_target is not None
                     self.assertTrue(wait(predicate), mission.summary())
                     robot.states.append(mission.state)
                     stop = robot.create_client(Trigger, '/project/stop')
                     self.assertTrue(stop.wait_for_service(timeout_sec=3))
                     response = stop.call_async(Trigger.Request()); self.assertTrue(wait(response.done))
-                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop') else 'NOT_FOUND'
+                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary') else 'NOT_FOUND'
                 self.assertTrue(wait(lambda: mission.state in ('COMPLETE', 'NOT_FOUND', 'FAILED', 'STOPPED'), 25), mission.summary())
                 time.sleep(.7)
                 self.assertEqual(mission.state, expected, mission.summary())
@@ -95,7 +101,14 @@ class VisualSearch(unittest.TestCase):
                 if expected == 'COMPLETE':
                     self.assertTrue(mission.return_verified)
                     self.assertEqual(sum(r.get('event') == 'target_reported' for r in robot.results), 1)
+                    if mode == 'soft_precision':
+                        self.assertEqual(mission.target['quality'], 'best_available')
+                        self.assertAlmostEqual(mission.target['sigma'], .25)
+                        self.assertAlmostEqual(mission.target['variance'], .0625)
+                    elif mode == 'precision_boundary':
+                        self.assertEqual(mission.target['quality'], 'preferred_precision')
                 elif expected == 'STOPPED':
+                    self.assertIsNone(mission.target)
                     count = robot.search_goals
                     time.sleep(.4)
                     self.assertEqual(robot.search_goals, count)
@@ -116,6 +129,9 @@ class VisualSearch(unittest.TestCase):
     def test_unlocalizable_candidate_exhausts_budget(self): self.case('budget')
     def test_stop_during_localization(self): self.case('stop_localizing')
     def test_stop_with_late_approach_acceptance(self): self.case('stop_pending')
+    def test_high_uncertainty_stable_target_reports_after_refinement_budget(self): self.case('soft_precision')
+    def test_stop_prevents_reporting_the_retained_soft_estimate(self): self.case('stop_soft')
+    def test_preferred_precision_boundary_handles_float_rounding(self): self.case('precision_boundary')
 
 
 if __name__ == '__main__':

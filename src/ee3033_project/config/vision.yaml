@@ -16,4 +16,4 @@ project_perception:
     pixel_sigma: 2.0
     height_sigma: 0.015
     pitch_sigma: 0.034906585
-    max_report_sigma: 0.10
+    max_report_sigma: 0.10  # Preferred precision; stable observations retain larger sigma.

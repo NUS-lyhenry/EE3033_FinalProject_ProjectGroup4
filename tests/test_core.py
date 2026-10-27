@@ -23,6 +23,14 @@ def test_confirmation_and_robust_coordinate_estimate():
     assert estimate['frames'] == 4
 
 
+def test_stable_high_uncertainty_estimate_preserves_correlated_sensor_floor():
+    tracker = TargetTracker(frames=4)
+    for i in range(4):
+        estimate = tracker.update(Observation(i*.2, 1., 2., .9, 'cup', .25))
+    assert estimate is not None
+    assert estimate['variance'] == pytest.approx(.25**2)
+
+
 @pytest.mark.parametrize('break_value', [None, obs(0.6, confidence=0.2),
     obs(0.6, 3.0), obs(0.6, label='cup'), obs(4.0), obs(0.1)])
 def test_miss_or_association_change_breaks_confirmation(break_value):

@@ -405,3 +405,15 @@ test('single-page desktop workflow has a compact primary path',async({page})=>{
   await page.screenshot({path:'test-results/workflow-desktop.png',fullPage:true});
   await expect(page.locator('.sidebar')).toBeHidden();expect(f.errors).toEqual([]);
 });
+
+test('best available target keeps uncertainty visible after returning successfully',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  Object.assign(f.state.mission,{state:'COMPLETE',home:[1,1,0],return_verified:true,return_distance:0,
+    target:{x:2.1,y:1.8,class:'cup',confidence:.9,variance:.0625,sigma:.25,preferred_sigma:.1,quality:'best_available'}});
+  await expect(page.locator('#confidence')).toContainText('σ 0.25 m');
+  await expect(page.locator('#confidence')).toContainText('位置精度未达期望');
+  await expect(page.locator('#resultTarget')).toContainText('近似估计');
+  await expect(page.locator('#resultReason')).toContainText('期望 0.10 m');
+  await expect(page.locator('#resultOutcome')).toHaveText('Complete');
+  expect(f.errors).toEqual([]);
+});

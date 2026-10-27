@@ -72,7 +72,9 @@ on the next mission load. For a standalone launch, edit a copy of
 The initial reliable range is 0.35–2.0 m. Both localization and search use image
 borders, horizontal/vertical field of view, mount offsets, downward pitch and
 the near blind zone. Pixel, height, pitch and AMCL uncertainty contribute to the
-reported sigma. Only estimates at or below 0.10 m sigma reach confirmation.
+reported sigma. A 0.10 m sigma is the preferred precision. Stable estimates
+above it remain available for bounded refinement and an explicitly labelled
+best-available report; their uncertainty is preserved.
 Four associated distinct frames are required; repeated measurements retain the
 sensor uncertainty floor. Ground-plane reports also require fresh, settled
 odometry, limiting errors from balance-car motion. Uncertain detections remain
@@ -210,6 +212,55 @@ npx playwright install chromium
 npm run test:ui
 python3 scripts/preview_ui.py   # simulated, read-only, no ROS or motors
 ```
+
+An interactive **algorithm preview** runs the unchanged project console and
+managed mapping/mission launches, including SLAM Toolbox, Nav2, Mapper, Mission,
+YOLO perception, target filtering and the velocity gate. It does not advance
+states on a timer or inject detection boxes, target coordinates or action
+successes. Only the physical environment is replaced: a ray-cast lidar, ideal
+planar odometry/kinematics and an approximate rendered camera containing one
+photographic cup. The cup is absent during mapping and present during the
+mission. Choose `cup` to search for that object; other labels are real model
+labels and are not substituted into the scene. Main's parameters, speeds and
+timeouts are retained, so this is not an accelerated click-through demo.
+
+From the repository root with Docker available:
+
+```bash
+docker build -f scripts/Dockerfile.preview -t ee3033-algorithm-preview:local .
+docker run --name ee3033-algorithm-preview -p 127.0.0.1:8792:8790 \
+  --mount "type=bind,source=$PWD,target=/work,readonly" \
+  -e PREVIEW_MAIN_COMMIT="$(git rev-parse HEAD)" ee3033-algorithm-preview:local
+```
+
+Open `http://127.0.0.1:8792/#/workflow`, start automatic mapping, wait for its
+actual map save, confirm the map, set the assigned start position **and facing**
+on that map, then start the autonomous mission. The simulator does not teleport
+the chassis when an AMCL initial pose is entered. Stop, new trial and downloads
+use the real console endpoints. Exported results are marked simulated. The
+container has no device mappings or host networking; its ROS domain is isolated
+from the robot. Keep it running to retain demo maps/results, and use
+`docker stop -t 25 ee3033-algorithm-preview` when finished.
+
+The bootstrap downloads the official `yolo26n.pt` weights, verifies the pinned
+SHA-256 and selects a cup texture from the official Ultralytics COCO128 sample.
+Texture/model provenance is recorded in `/tmp/ee3033_sim/assets/provenance.json`
+inside the container; the scene does not establish real camera accuracy,
+balanced-chassis dynamics, motor response or actual robot performance. COCO
+image rights remain with their original owners; the sample archive and source
+image are identified in that provenance file. No simulated evidence should be
+used as physical evaluation measurements.
+
+Target precision is a soft objective. The default preferred sigma is 0.10 m;
+valid settled observations retain their measured uncertainty even above that
+value. Multi-frame association and spatial consistency still confirm the target.
+If precision remains below the objective after at most three observation moves
+or 15 seconds of refinement, a fresh stable estimate can be reported with
+`quality: best_available`, its actual `sigma` and the preferred sigma. The UI
+labels this as an approximate estimate; repeated correlated frames do not
+artificially shrink its uncertainty. Missing, stale, inconsistent or geometrically
+invalid observations cannot produce this fallback. Stop and navigation/obstacle
+protection remain independent of the target precision objective.
 
 The GitHub workflow also builds the Humble overlay and runs native ROS/Nav2
 checks on isolated domains, including visual image/TF projection, candidate

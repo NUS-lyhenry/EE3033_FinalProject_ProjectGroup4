@@ -59,7 +59,7 @@ class SingleTarget:
         return self.started is not None and (now-self.started >= self.timeout or self.steps >= self.max_steps)
 
     def observation_goal(self, planner, pose, deadline=None, cancel=None):
-        """Prefer a safe .6 m standoff; bearing-only detections only turn in place."""
+        """Seek a closer safe view when uncertain; bearing-only detections only turn."""
         d = self.candidate
         if d is None:
             return None
@@ -73,7 +73,8 @@ class SingleTarget:
         distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
         goals = []
         base_angle = math.atan2(pose[1]-ty, pose[0]-tx)
-        for radius in (.6, .8, 1.):
+        preferred = .45 if d.get('close_view') is False else .6
+        for radius in dict.fromkeys((preferred, .6, .8, 1.)):
             for offset in (0., -.45, .45, -.9, .9):
                 if (deadline is not None and time.monotonic() >= deadline) or (cancel is not None and cancel.is_set()):
                     return None
@@ -99,7 +100,11 @@ class SingleTarget:
                                  -math.sin(yaw)*dx+math.cos(yaw)*dy]]
                     if not planner.camera_model.contains_floor(relative)[0]:
                         continue
-                goals.append((float(distances[cell])+abs(offset)*.2+abs(radius-.6),
+                # A goal already inside Nav2's arrival tolerance changes no
+                # observation. Do not spend the approach budget repeating it.
+                if math.hypot(x-pose[0], y-pose[1]) < .12 and abs(angle_difference(yaw, pose[2])) < .2:
+                    continue
+                goals.append((float(distances[cell])+abs(offset)*.2+2*abs(radius-preferred),
                               cell, (x, y, yaw)))
         if not goals:
             return None

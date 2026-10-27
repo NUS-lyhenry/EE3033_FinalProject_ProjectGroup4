@@ -68,6 +68,7 @@ def main():
         fixture.create_subscription(String, topic, lambda msg, output=output: output.append(json.loads(msg.data)), 10)
     bridge = CvBridge()
     bad_frame = [False]
+    pose_variance = [.0001, .0001]
     def publish():
         image = bridge.cv2_to_imgmsg(np.zeros((480, 640, 3), np.uint8), encoding='bgr8')
         image.header.stamp = fixture.get_clock().now().to_msg(); image.header.frame_id = 'project_camera_optical'
@@ -80,7 +81,8 @@ def main():
         odom_pub.publish(odom)
         pose = PoseWithCovarianceStamped(); pose.header.stamp = image.header.stamp
         pose.header.frame_id = 'map'; pose.pose.pose.orientation.w = 1.
-        pose.pose.covariance[0] = pose.pose.covariance[7] = pose.pose.covariance[35] = .0001
+        pose.pose.covariance[0] = pose.pose.covariance[7] = pose_variance[0]
+        pose.pose.covariance[35] = pose_variance[1]
         pose_pub.publish(pose)
     fixture.create_timer(.1, publish)
     executor = MultiThreadedExecutor(num_threads=4)
@@ -94,9 +96,26 @@ def main():
         assert statuses[-1]['geometry_ready'] and statuses[-1]['camera_model']
         assert observations[-1]['observations'][0]['method'] == 'ground_plane'
         assert observations[-1]['observations'][0]['sigma'] <= .10
-        # A far contact remains a coarse candidate but cannot become a report.
+        # Preferred precision is soft: preserve a stable high-sigma observation,
+        # but do not stop an approach as if the preferred precision were met.
+        pose_variance[:] = [.0054, .0176]
+        assert wait(lambda: detections[-1]['detections']
+                    and detections[-1]['detections'][0].get('sigma', 0) > .10)
+        assert wait(lambda: observations[-1]['observations']
+                    and observations[-1]['observations'][0]['sigma'] > .10)
+        assert detections[-1]['detections'][0]['close_view'] is False, detections[-1]
+        pose_variance[:] = [.0001, .0001]
+        assert wait(lambda: observations[-1]['observations']
+                    and detections[-1]['detections'][0]['close_view'] is True)
+        # A farther in-range contact retains its actual uncertainty too.
         detector.box = [308., 150., 332., 220.]
         assert wait(lambda: detections and detections[-1]['detections'] and detections[-1]['detections'][0].get('sigma', 0) > .10)
+        assert wait(lambda: observations[-1]['observations']
+                    and observations[-1]['observations'][0]['sigma'] > .10)
+        # Outside the configured camera envelope only a coarse detection exists.
+        detector.box = [308., 150., 332., 205.]
+        assert wait(lambda: detections[-1]['detections']
+                    and detections[-1]['detections'][0].get('close_view') is False)
         assert wait(lambda: observations and not observations[-1]['observations'])
         detector.box = [0., 200., 20., 316.]
         assert wait(lambda: detections[-1]['detections'][0].get('reason', '').startswith('Target is too small'))

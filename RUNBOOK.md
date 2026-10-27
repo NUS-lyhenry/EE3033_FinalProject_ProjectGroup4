@@ -33,12 +33,15 @@ at `http://127.0.0.1:8765` through the existing SSH tunnel.
 4. After target placement, establish the assigned robot pose in the map. Wait
    for readiness, then **Start autonomous mission**. The mission handles search,
    improving an uncertain observation, one target report and autonomous return.
+   The 0.10 m target sigma is a soft precision objective. After bounded
+   refinement, a fresh stable estimate may be reported as approximate with its
+   actual sigma; inspect that quality label in the result and exported JSON.
 5. Completion requires return within tolerance and the existing two-second
    stationary verification with fresh zero output commands. Read results and
    download trial JSON. NOT_FOUND, FAILED and unverified navigation success do
    not count as completion.
 6. Inform the examiner before intervention/restart. Nothing auto-restarts.
-   **New trial** preserves earlier maps/results and loads fresh mapping.
+   **重新建图** in the map header preserves earlier maps/results and loads fresh mapping.
    Same-boot console restarts preserve timing; reboot marks it interrupted.
 
 Advanced contains optional manual/waypoint mapping, map selection, speed,

@@ -305,21 +305,22 @@ class Perception(Node):
                     except (TransformException, ValueError, cv2.error):
                         pass
                 if point is not None and np.all(np.isfinite(point)):
-                    detection.update(x=float(point[0]), y=float(point[1]), sigma=self.projection_sigma,
-                                     close_view=self.projection_in_range and self.geometric_sigma <= self.p['max_report_sigma'])
                     reliable = self.projection_in_range and self.projection_sigma <= self.p['max_report_sigma']
+                    detection.update(x=float(point[0]), y=float(point[1]), sigma=self.projection_sigma,
+                                     close_view=reliable)
                     if not reliable:
-                        detection['reason'] = 'Position uncertainty is high; seek a closer view'
+                        detection['reason'] = 'Position uncertainty exceeds preferred precision; seeking a better view'
+                    usable = self.projection_in_range
                     if self.p['localization_method'] == 'ground_plane' and not self.settled():
-                        reliable = False
+                        usable = False
                         detection['reason'] = 'Waiting for settled odometry before reporting floor coordinates'
-                    if reliable:
+                    if usable:
                         observations.append({'stamp': stamp, 'x': float(point[0]),
                                          'y': float(point[1]), 'label': label,
                                          'confidence': float(b.conf.item()),
                                          'sigma': self.projection_sigma,
                                          'method': self.p['localization_method']})
-                    caption = (f'map: ({point[0]:.2f}, {point[1]:.2f}) m' if reliable else
+                    caption = (f'map: ({point[0]:.2f}, {point[1]:.2f}) m' if reliable and usable else
                                f'candidate: ({point[0]:.2f}, {point[1]:.2f}) +/- {self.projection_sigma:.2f} m')
                     cv2.putText(annotated, caption,
                                 (int(box[0]), max(20, int(box[3])+20)),

@@ -65,8 +65,9 @@ function render(){
   if(!snapshot)return;
   const s=snapshot,m=s.mission||{},active=ACTIVE.has(m.state),mapping=s.phase==='mapping',idle=setupIdle(),loaded=running(),managed=!!s.stage?.managed;
   $('previewNotice').hidden=!s.simulated;
+  $('previewNotice').textContent=s.preview_backend==='main-ros'?`算法仿真 · 未连接机器人。${s.preview_hint||''}`:'SIMULATED PREVIEW · No robot is connected. Values illustrate the operator workflow.';
   $('stop').disabled=!!s.read_only;
-  setPill('connection',online?'Connected':'Disconnected',online?'good':'bad');
+  setPill('connection',online?(s.preview_interactive?'模拟连接':'Connected'):'Disconnected',online?'good':'bad');
   $('connectionBanner').hidden=online;
   const calibrating=s.phase==='calibration';
   $('phase').textContent=calibrating?'Preparation · Camera setup':mapping?'Stage 1 · Mapping':'Stage 2 · Autonomous';
@@ -95,12 +96,13 @@ function render(){
   if(!showCalibration&&frame.hasAttribute('src'))frame.removeAttribute('src');
   setPill('battery',s.battery?.voltage!=null?`Battery ${fmt(s.battery.voltage)} V${s.battery.fresh?'':' · stale'}`:'Battery —',s.battery?.fresh?'good':'warn');
   $('battery').title=s.battery?.age!=null?`Measured voltage · ${s.battery.age} s old`:'Waiting for battery telemetry';
-  setPill('motion',s.allow_motion?'Motion enabled':'Motion disabled',s.allow_motion?'good':'');
+  setPill('motion',s.preview_interactive?'仅模拟运动':s.allow_motion?'Motion enabled':'Motion disabled',s.allow_motion?'good':'');
   $('state').textContent=m.state||'WAITING';$('elapsed').textContent=duration(m.elapsed_seconds)+' stage elapsed';
   const a=s.assessment||{};$('totalElapsed').textContent=duration(a.elapsed_seconds);
   $('timerNote').textContent=a.interrupted?'Interrupted · timing invalid':a.finished!=null?'Finished':a.running?(a.timing_valid?'Both stages · running':'Search only · mapping not timed'):'Starts when mapping loads';
   $('target').textContent=m.target?`${fmt(m.target.x)}, ${fmt(m.target.y)} m`:'—, — m';
   $('confidence').textContent=m.target?`${m.target.class||s.mission_options?.target_class||'Target'} · ${m.target.confidence!=null?Math.round(m.target.confidence*100)+'% confidence':'confirmed'}${Number.isFinite(m.target.variance)?' · σ '+fmt(Math.sqrt(m.target.variance))+' m':''}`:'Waiting for confirmed coordinates';
+  if(m.target?.quality==='best_available')$('confidence').textContent+=' · 最佳稳定估计，位置精度未达期望';
   const distance=m.return_distance??(s.pose&&m.home?Math.hypot(s.pose[0]-m.home[0],s.pose[1]-m.home[1]):null);
   $('distance').textContent=distance!=null?`${fmt(distance)} m`:'— m';
   $('returnStatus').textContent=m.return_verified?'Home position verified':m.home?`Required tolerance ${fmt(m.return_tolerance??s.mission_options?.return_tolerance??.2)} m`:'Home is recorded at mission Start';
@@ -151,10 +153,12 @@ function render(){
   ['stepMap','stepPose','stepSearch','stepReturn'].forEach((id,i)=>{$(id).className=i===currentStep?'current':i<currentStep?'done':'';});
   if(m.state==='COMPLETE'&&m.return_verified)$('stepReturn').className='done';
   $('resultTarget').textContent=m.target?`(${fmt(m.target.x)}, ${fmt(m.target.y)}) m`:'Awaiting target';
+  if(m.target?.quality==='best_available')$('resultTarget').textContent+=' · 近似估计';
   $('resultReturn').textContent=m.return_verified?`Verified · ${fmt(distance)} m`:m.state==='RETURNING'?'Returning…':'Pending';
   $('resultStop').textContent=m.return_verified?'Verified stationary':m.state==='VERIFYING'?`Checking ${fmt(m.stationary_check?.duration??0,1)} / ${fmt(m.stationary_required_seconds??2,1)} s…`:m.state==='FAILED'&&m.stationary_check?'Not verified':'Pending';
   $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?'Complete':m.state==='NOT_FOUND'?'Target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?'Stopped':'Trial not complete';
   $('resultReason').textContent=(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
+  if(m.target?.quality==='best_available')$('resultReason').textContent+=` · 使用最佳稳定估计：不确定度 σ ${fmt(m.target.sigma??Math.sqrt(m.target.variance))} m，期望 ${fmt(m.target.preferred_sigma)} m。`;
   const p=s.perception;
   if(currentPage==='workflow'){
     document.querySelector('.metrics').hidden=mapping;
@@ -172,7 +176,7 @@ function render(){
   ['profileFast','profileOriginal'].forEach(id=>$(id).disabled=!idle||!loaded||!s.health?.Mission?.ok||(s.phase==='mission'&&m.state!=='WAITING'));
   $('saveVision').disabled=!idle;
   if(s.vision_settings&&!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(s.vision_settings[name]*scale,3));
-  $('cameraSource').textContent=s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
+  $('cameraSource').textContent=s.preview_interactive&&s.camera_source?'模拟相机':s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
   $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
   $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
   $('stageHelp').textContent=currentPage==='workflow'?'Automatic mapping returns and saves a new map. Inspect it, then confirm to prepare the mission.':managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';

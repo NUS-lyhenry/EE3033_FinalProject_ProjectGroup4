@@ -1,0 +1,13 @@
+FROM ros:humble-ros-base-jammy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-navigation2 ros-humble-nav2-bringup ros-humble-slam-toolbox \
+    ros-humble-cv-bridge python3-scipy python3-opencv python3-yaml python3-pip curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements-robot.txt /tmp/requirements-robot.txt
+RUN python3 -m pip install --no-cache-dir torch==2.12.0 torchvision==0.27.0 \
+      --index-url https://download.pytorch.org/whl/cpu \
+    && python3 -m pip install --no-cache-dir -r /tmp/requirements-robot.txt opencv-python==4.11.0.86
+ENV ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=121 RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+WORKDIR /work
+CMD ["bash", "scripts/algorithm_preview_entrypoint.sh"]

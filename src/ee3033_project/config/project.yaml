@@ -31,6 +31,7 @@ project_mission:
     stationary_command_timeout: 0.30  # Fresh zero final commands are required.
     max_xy_variance: 0.16
     max_yaw_variance: 0.36
+    max_target_variance: 0.01  # Soft target precision goal (0.10 m sigma), not a report veto.
     sensor_timeout: 1.0
     perception_timeout: 3.0
     results_directory: ~/ee3033_results

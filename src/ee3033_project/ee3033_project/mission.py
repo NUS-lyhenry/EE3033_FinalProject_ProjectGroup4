@@ -61,7 +61,8 @@ class Mission(Node):
             'verify_timeout': 12.0,
             'max_xy_variance': 0.16, 'max_yaw_variance': 0.36,
             'sensor_timeout': 1.0, 'perception_timeout': 3.0, 'tf_timeout': 1.0,
-            'max_target_variance': 0.04, 'max_target_age': 2.0,
+            # Historical name retained: a preferred variance, not a rejection cap.
+            'max_target_variance': 0.01, 'max_target_age': 2.0,
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
             'min_observe_seconds': .8, 'acquisition_seconds': 15.,
             'acquisition_steps': 3, 'navigation_profile': 'original',
@@ -78,6 +79,7 @@ class Mission(Node):
         self.home = self.target = self.map = self.planner = None
         self.return_verified = False
         self.target_details = None
+        self.best_target = None
         self.route, self.seen, self.failures = [], set(), []
         self.index = 0
         self.attempted = set()
@@ -130,6 +132,7 @@ class Mission(Node):
         self.search_cost_source = 'safe grid paths'
         self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'])
         self.acquisition_wait = 0.
+        self.acquisition_retry_after = 0.
         self.started_stamp = 0.
         self.plan_cancel = threading.Event()
         self.tf = Buffer(cache_time=Duration(seconds=20))
@@ -247,6 +250,8 @@ class Mission(Node):
     def on_detections(self, msg):
         if self.state not in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING'):
             return
+        if self.state in ('SEARCHING', 'OBSERVING') and time.monotonic() < self.acquisition_retry_after:
+            return
         try:
             data = json.loads(msg.data)
             now = self.get_clock().now().nanoseconds*1e-9
@@ -319,6 +324,7 @@ class Mission(Node):
         self.p['clearance'] = self.get_parameter('clearance').value
         self.home, self.target = self.pose(), None
         self.target_details = None
+        self.best_target = None
         self.return_verified = False
         self.index, self.route, self.seen, self.failures = 0, [], set(), []
         self.attempted, self.failed_options = set(), set()
@@ -330,6 +336,7 @@ class Mission(Node):
         self.started = time.monotonic()
         self.started_stamp = self.get_clock().now().nanoseconds*1e-9
         self.acquisition.reset()
+        self.acquisition_retry_after = 0.
         self.selection_future = None
         self.finished_at = 0.0
         self.stop_window.reset()
@@ -493,6 +500,11 @@ class Mission(Node):
         self.set_state('PLANNING', 'Selecting an observation using collision-clear path costs')
 
     def resume_search(self, reason):
+        if self.acquisition.started is not None:
+            # Let the next search move actually change the observation instead
+            # of immediately reacquiring the same unresolved stationary target.
+            # Reliable filtered coordinates can still report during this pause.
+            self.acquisition_retry_after = time.monotonic()+3.
         self.acquisition.reset()
         if self.current_option is not None:
             self.failed_options.add(self.current_option)
@@ -579,22 +591,47 @@ class Mission(Node):
         if (msg.header.frame_id != self.p['map_frame']
                 or not all(math.isfinite(v) for v in (p.x, p.y, variance))
                 or not 0 <= age <= self.p['max_target_age']
-                or not 0 < variance <= self.p['max_target_variance']
+                or variance <= 0
                 or self.readiness_error()):
             return
         # Coordinates must be inside the saved assessment map.
         r, c = self.planner.world_to_cell(p.x, p.y)
         if not self.planner.in_bounds(r, c):
             return
-        self.target = {'x': p.x, 'y': p.y, 'variance': variance,
-                       'class': self.p['target_class'], 'frame': self.p['map_frame']}
+        estimate = dict(x=p.x, y=p.y, variance=variance, stamp=stamp_seconds(msg.header.stamp))
+        now = self.get_clock().now().nanoseconds*1e-9
+        if (self.best_target is None or now-self.best_target['stamp'] > self.p['max_target_age']
+                or variance <= self.best_target['variance']):
+            self.best_target = estimate
+        if variance <= self.p['max_target_variance'] or math.isclose(variance, self.p['max_target_variance'], rel_tol=1e-9):
+            self.report_target(estimate, 'preferred_precision')
+
+    def report_best_target(self):
+        """Use a fresh, multi-frame stable estimate after bounded refinement."""
+        estimate = self.best_target
+        now = self.get_clock().now().nanoseconds*1e-9
+        if (estimate is None or not 0 <= now-estimate['stamp'] <= self.p['max_target_age']
+                or self.readiness_error()):
+            return False
+        self.report_target(estimate, 'best_available')
+        return True
+
+    def report_target(self, estimate, quality):
+        if self.target is not None or self.state not in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING'):
+            return
+        self.target = {k: estimate[k] for k in ('x', 'y', 'variance')}
+        self.target.update(**{'class': self.p['target_class']}, frame=self.p['map_frame'],
+                           sigma=math.sqrt(estimate['variance']), quality=quality,
+                           preferred_sigma=math.sqrt(self.p['max_target_variance']),
+                           observation_stamp=estimate['stamp'])
         self.attach_details()
-        self.target_pub.publish(self.make_pose(p.x, p.y))
-        self.get_logger().info(f'TARGET ({p.x:.3f}, {p.y:.3f}) m in map frame')
+        self.target_pub.publish(self.make_pose(self.target['x'], self.target['y']))
+        self.get_logger().info(f'TARGET ({self.target["x"]:.3f}, {self.target["y"]:.3f}) m; sigma={self.target["sigma"]:.3f} m; {quality}')
         self.persist()
         self.result_pub.publish(String(data=json.dumps({'event': 'target_reported',
                                                          'target': self.target})))
-        self.cancel('RETURN', 'Target confirmed and reported')
+        self.cancel('RETURN', 'Target confirmed and reported' if quality=='preferred_precision'
+                    else 'Refinement budget exhausted; reporting best stable estimate with its uncertainty')
 
     def on_details(self, msg):
         try:
@@ -739,7 +776,8 @@ class Mission(Node):
                     self.cancel('FAILED', error)
                 elif self.state in ('ACQUIRING', 'LOCALIZING'):
                     if now-self.acquisition.started >= self.p['acquisition_seconds']:
-                        self.cancel('RESUME', 'Visual acquisition time limit; resuming search')
+                        if not self.report_best_target():
+                            self.cancel('RESUME', 'Visual acquisition time limit; no fresh stable estimate, resuming search')
                     elif self.state == 'ACQUIRING':
                         if self.goal_pending and now-self.goal_started > self.p['accept_timeout']:
                             self.cancel('RESUME', 'Target approach acceptance timed out')
@@ -752,7 +790,8 @@ class Mission(Node):
                         except (TimeoutError, RuntimeError):
                             goal = None
                         if goal is None:
-                            self.resume_search('Target lost or no safe observation remains')
+                            if not self.report_best_target():
+                                self.resume_search('Target lost or no safe observation remains')
                         else:
                             self.acquisition.steps += 1
                             self.send_goal(self.make_pose(*goal), 'acquire')

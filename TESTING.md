@@ -1,5 +1,54 @@
 # Validation record
 
+## Algorithm preview and soft target precision — 2026-10-27
+
+The local `main` working tree now supports a hardware-free interactive preview
+using the real console, managed stage launches, SLAM Toolbox, AMCL, Nav2,
+Mapper, Perception, TargetFilter, Mission and VelocityGate. The environment
+provides ray-cast lidar, ideal planar odometry and a rendered photographic cup.
+The running preview uses actual YOLO26n inference, not injected detections,
+target coordinates, navigation action successes or timed mission transitions.
+Physical drivers are disabled and ROS DDS is confined to the container on an
+isolated domain. Reproduction uses `scripts/Dockerfile.preview` and the commands
+in README; the local run reused the existing Humble image with the same added
+dependencies. A clean build of the new Dockerfile has not been repeated.
+
+The original `102a43a` run saw the cup but ended `NOT_FOUND`. A regression
+reproduced a detection with sigma 0.1369 m, rejected as too uncertain while
+`close_view` was still true. The fix uses total uncertainty consistently,
+avoids negligible observation moves and pauses failed reacquisition long enough
+for another search view to change the observation. Target precision is now a
+soft goal: stable settled observations retain their true sigma, and a fresh
+confirmed estimate may be reported as `best_available` after bounded refinement.
+Invalid geometry, stale/inconsistent observations and Stop cannot use this
+fallback. Sensor uncertainty is not divided by the number of correlated frames.
+
+Completed local verification:
+
+- 189 Python tests passed, including simulation ray geometry/occlusion, a closer
+  observation for an uncertain target and preservation of correlated uncertainty.
+- All 35 browser scenarios passed, including approximate-result labels and the
+  original mapping/mission/Stop flows.
+- Nine native ROS Mission/filter/gate cases passed together, including a sigma
+  0.25 m stable estimate reporting with unchanged variance after its refinement
+  budget, then returning and stopping. Stop with a cached soft estimate passed.
+  The exact sigma 0.10 m floating-point boundary case passed separately.
+- Native Image/CameraInfo/TF perception regression passed: above-goal in-range
+  uncertainty remains observable; clipping, invalid frames and out-of-envelope
+  contacts cannot manufacture a usable coordinate. Neural inference is replaced
+  only in this isolated regression, not in the interactive preview.
+- In the full real-YOLO/Nav2 preview, the revised run completed mapping, search,
+  reporting and verified return. Report: (0.9678, 0.8964) m, sigma 0.0990 m,
+  `preferred_precision`; final home distance 0.1120 m and stationary verification
+  passed. Search-through-return took 96.3 s at the original speed profile. The
+  combined timer also includes manual map review and initial-pose setup.
+- JavaScript/shell syntax, Python compilation and diff whitespace checks passed.
+
+These results are simulated software evidence. They do not validate physical
+detection accuracy, balancing dynamics, braking distances or robot deployment.
+These checks were run locally; consult GitHub Actions for remote CI status.
+No new hardware run or robot deployment is claimed.
+
 ## Visual single-target workflow and navigation trial — 2026-10-27
 
 This change retains the automatic frontier mapper and adds shared camera-only
