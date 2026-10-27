@@ -86,6 +86,36 @@ floor/contact assumptions, occlusion, distortion, lighting, model labels and
 unmeasured body pitch remain limitations. A fixed mount override cannot recover
 unreported dynamic pitch; use stationary observations and conservative ranges.
 
+Observation motion is checked over a 0.6 s odometry window ending at image
+capture time. Bounded balancing oscillation can pass even when individual
+velocity samples exceed the mean limit. Translation/heading drift and stale
+odometry still reject coordinates, and motion span contributes to sigma. A
+visible target whose valid projection is waiting for that window is deferred;
+it does not count as a new confirmation or as a detector miss. A real miss still
+breaks confirmation. Localization waits for at least 2 s, and an unresolved
+centered target can use the remaining bounded acquisition time. Unresolved
+visual viewpoints get one deferred retry after other viewpoints.
+
+The installed `usb_cam` 0.8.1 has an epoch conversion defect in
+`get_epoch_time_shift_us`: `timeval.tv_usec` is already in microseconds. Dividing
+it by 1000 introduces a startup-dependent timestamp error of up to one second.
+For that exact version, obtain the official `ros-drivers/usb_cam` tag `0.8.1`
+(commit `cb2ae6bc0a312de629f84fef933fb3e07dac1ef8`) and run:
+
+```sh
+bash scripts/build_camera_clock_fix.sh /path/to/usb_cam-0.8.1 \
+  /home/ros2_ws/group4_driver_fixes/usb_cam-0.8.1/fixed
+```
+
+This builds a separate matching camera library and checks the converted clock
+against real time. Hardware launch uses it only for the camera when that file
+exists; `GROUP4_USB_CAM_LIBRARY_DIR` selects a different explicit location.
+Restart the stopped mission stage to reload the camera. Apt-owned drivers and
+base/lidar configuration are preserved. Verify raw frame age before motion;
+do not conceal an unverified camera time offset by changing image stamps in the
+perception node. CameraInfo, physical mounting and floor contacts still need
+independent agreement; a clock repair cannot validate a mounting angle.
+
 Existing YOLO weights are loaded from `/home/ros2_ws/weights/yolo26n.pt`; weights
 are not committed. The class dropdown comes from that model's actual labels.
 The default is cup. A class detector does not establish a Pepsi brand/instance.

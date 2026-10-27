@@ -22,6 +22,7 @@ class VisualRobot(FakeRobot):
         self.mission = None
         self.states = []
         self.max_steps = 0
+        self.sensor_frames = 0
         super().__init__('absent')
         self.raw_pub = self.create_publisher(String, '/project/target_detections', 10)
 
@@ -37,7 +38,9 @@ class VisualRobot(FakeRobot):
         self.states.append(m.state)
         self.max_steps = max(self.max_steps, m.acquisition.steps)
         stamp = time.time()
+        self.sensor_frames += 1
         detections, observations = [], []
+        deferred = False
         if self.searching and self.search_goals:
             if self.mode != 'lost' or m.acquisition.started is None:
                 bearing = math.atan2(.5-self.xy_yaw[1], .5-self.xy_yaw[0])
@@ -50,8 +53,17 @@ class VisualRobot(FakeRobot):
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.1)]
             if self.mode in ('soft_precision', 'stop_soft') and m.acquisition.started is not None:
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.25)]
+            if self.mode == 'deferred_balance':
+                deferred = self.sensor_frames % 2 == 0
+                if not deferred:
+                    observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.03)]
+            if self.mode == 'centered_late':
+                detections = [dict(stamp=stamp, label='bottle', confidence=.9,
+                                   bearing=self.xy_yaw[2], origin=self.xy_yaw[:2])]
+                if m.acquisition.started is not None and time.monotonic()-m.acquisition.started > 2.2:
+                    observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.03)]
         self.raw_pub.publish(String(data=json.dumps(dict(stamp=stamp, detections=detections))))
-        self.obs_pub.publish(String(data=json.dumps(dict(stamp=stamp, observations=observations))))
+        self.obs_pub.publish(String(data=json.dumps(dict(stamp=stamp, observations=observations, deferred=deferred))))
 
 
 class VisualSearch(unittest.TestCase):
@@ -88,7 +100,7 @@ class VisualSearch(unittest.TestCase):
                     stop = robot.create_client(Trigger, '/project/stop')
                     self.assertTrue(stop.wait_for_service(timeout_sec=3))
                     response = stop.call_async(Trigger.Request()); self.assertTrue(wait(response.done))
-                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary') else 'NOT_FOUND'
+                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary', 'deferred_balance', 'centered_late') else 'NOT_FOUND'
                 self.assertTrue(wait(lambda: mission.state in ('COMPLETE', 'NOT_FOUND', 'FAILED', 'STOPPED'), 25), mission.summary())
                 time.sleep(.7)
                 self.assertEqual(mission.state, expected, mission.summary())
@@ -132,6 +144,8 @@ class VisualSearch(unittest.TestCase):
     def test_high_uncertainty_stable_target_reports_after_refinement_budget(self): self.case('soft_precision')
     def test_stop_prevents_reporting_the_retained_soft_estimate(self): self.case('stop_soft')
     def test_preferred_precision_boundary_handles_float_rounding(self): self.case('precision_boundary')
+    def test_deferred_visible_motion_frames_are_not_detector_misses(self): self.case('deferred_balance')
+    def test_centered_target_can_finish_confirmation_after_the_old_early_exit(self): self.case('centered_late')
 
 
 if __name__ == '__main__':

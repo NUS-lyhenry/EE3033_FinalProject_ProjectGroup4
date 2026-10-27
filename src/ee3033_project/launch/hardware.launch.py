@@ -1,8 +1,8 @@
-"""Use installed lab drivers without modifying their code or configuration."""
+"""Use installed lab drivers and an optional, explicitly built camera timebase fix."""
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -25,8 +25,16 @@ def setup(context):
                 kwargs['config'] = os.path.join(share, 'config', 'base_params.yaml')
             # Included launch arguments otherwise leak back into the parent:
             # the base's `config` must not replace mission/perception's YAML.
-            actions.append(GroupAction(scoped=True, actions=[IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(path), launch_arguments=kwargs.items())]))
+            driver_actions = []
+            if arg == 'camera':
+                fixed = os.environ.get('GROUP4_USB_CAM_LIBRARY_DIR',
+                    '/home/ros2_ws/group4_driver_fixes/usb_cam-0.8.1/fixed/lib')
+                if os.path.isfile(os.path.join(fixed, 'libusb_cam.so')):
+                    driver_actions.append(SetEnvironmentVariable('LD_LIBRARY_PATH',
+                        fixed+':'+context.environment.get('LD_LIBRARY_PATH', '')))
+            driver_actions.append(IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(path), launch_arguments=kwargs.items()))
+            actions.append(GroupAction(scoped=True, actions=driver_actions))
     return actions
 
 

@@ -69,6 +69,7 @@ def main():
     bridge = CvBridge()
     bad_frame = [False]
     pose_variance = [.0001, .0001]
+    balancing = [False]
     def publish():
         image = bridge.cv2_to_imgmsg(np.zeros((480, 640, 3), np.uint8), encoding='bgr8')
         image.header.stamp = fixture.get_clock().now().to_msg(); image.header.frame_id = 'project_camera_optical'
@@ -78,6 +79,10 @@ def main():
         info.k = [450., 0., 320., 0., 450., 240., 0., 0., 1.]; info.d = [0.]*5; info.distortion_model = 'plumb_bob'
         info_pub.publish(info); image_pub.publish(image)
         odom = Odometry(); odom.header = image.header
+        if balancing[0]:
+            phase=time.monotonic()*12.
+            odom.pose.pose.position.x=.005*math.sin(phase)
+            odom.twist.twist.linear.x=.06*math.cos(phase)
         odom_pub.publish(odom)
         pose = PoseWithCovarianceStamped(); pose.header.stamp = image.header.stamp
         pose.header.frame_id = 'map'; pose.pose.pose.orientation.w = 1.
@@ -107,6 +112,12 @@ def main():
         pose_variance[:] = [.0001, .0001]
         assert wait(lambda: observations[-1]['observations']
                     and detections[-1]['detections'][0]['close_view'] is True)
+        balancing[0] = True
+        previous=observations[-1]['stamp']
+        assert wait(lambda: observations[-1]['stamp']>previous+1.
+                    and observations[-1]['observations']
+                    and statuses[-1]['motion_check']['verified']), statuses[-1]
+        balancing[0] = False
         # A farther in-range contact retains its actual uncertainty too.
         detector.box = [308., 150., 332., 220.]
         assert wait(lambda: detections and detections[-1]['detections'] and detections[-1]['detections'][0].get('sigma', 0) > .10)

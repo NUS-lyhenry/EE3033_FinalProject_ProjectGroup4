@@ -22,7 +22,8 @@ from std_msgs.msg import String
 from cv_bridge import CvBridge
 from tf2_ros import Buffer, TransformListener, TransformException
 
-from .core import associate_lidar, stamp_seconds
+from .core import associate_lidar, stamp_seconds, quaternion_yaw
+from .observation_motion import ObservationMotion
 from .ros_utils import parameters, transform_arrays
 from .model_labels import validate_target
 from .calibration import load_profile, mounting_rotation, floor_point, in_envelope
@@ -48,6 +49,9 @@ class Perception(Node):
             'horizontal_fov': 0., 'camera_min_range': .35, 'camera_max_range': 2.,
             'pixel_margin': 8., 'pixel_sigma': 2., 'height_sigma': .015,
             'pitch_sigma': .034906585, 'max_report_sigma': .10,
+            'observation_window': .6, 'observation_linear_mean': .05,
+            'observation_angular_mean': .12, 'observation_position_span': .04,
+            'observation_heading_span': .10,
         })
         if self.p['localization_method'] not in ('lidar', 'ground_plane'):
             raise ValueError('localization_method must be lidar or ground_plane')
@@ -71,6 +75,10 @@ class Perception(Node):
         self.quiet_since = None
         self.odometry_time = -math.inf
         self.last_odometry_age = None
+        self.motion = ObservationMotion(self.p['observation_window'], self.p['observation_linear_mean'],
+            self.p['observation_angular_mean'], self.p['observation_position_span'],
+            self.p['observation_heading_span'])
+        self.motion_check = None
         group = ReentrantCallbackGroup()
         self.create_subscription(Image, self.p['image_topic'], self.on_image,
                                  qos_profile_sensor_data, callback_group=group)
@@ -120,6 +128,11 @@ class Perception(Node):
         now = self.get_clock().now().nanoseconds*1e-9
         self.last_odometry_age = now-stamp_seconds(msg.header.stamp)
         v, w = msg.twist.twist.linear, msg.twist.twist.angular
+        p = msg.pose.pose.position
+        with self.lock:
+            self.motion.add(stamp_seconds(msg.header.stamp), p.x, p.y,
+                            quaternion_yaw(msg.pose.pose.orientation), math.hypot(v.x, v.y),
+                            w.z, msg.header.frame_id)
         values = (v.x, v.y, w.z)
         if (not all(math.isfinite(a) for a in values)
                 or not 0 <= now-stamp_seconds(msg.header.stamp) <= .25
@@ -130,8 +143,7 @@ class Perception(Node):
         self.quiet_since = self.quiet_since or self.odometry_time
 
     def settled(self):
-        now = time.monotonic()
-        return self.quiet_since is not None and now-self.quiet_since >= .25 and now-self.odometry_time < .25
+        return bool(self.motion_check and self.motion_check['verified'])
 
     def camera_geometry(self, image, camera):
         if not image.header.frame_id:
@@ -255,6 +267,8 @@ class Perception(Node):
         if stamp == self.last_processed:
             return
         self.last_processed = stamp
+        with self.lock:
+            self.motion_check = self.motion.evaluate(stamp)
         age = self.get_clock().now().nanoseconds*1e-9 - stamp
         if not 0 <= age <= self.p['max_image_age']:
             self.warn('Stale image or unsynchronized clocks; refusing target coordinates')
@@ -262,6 +276,7 @@ class Perception(Node):
         observations = []
         detections = []
         detected_confidences=[]
+        deferred = False
         geometry_error = None
         started = time.monotonic()
         try:
@@ -313,7 +328,17 @@ class Perception(Node):
                     usable = self.projection_in_range
                     if self.p['localization_method'] == 'ground_plane' and not self.settled():
                         usable = False
-                        detection['reason'] = 'Waiting for settled odometry before reporting floor coordinates'
+                        deferred = True
+                        detection['reason'] = 'Collecting a bounded capture-time motion window'
+                    if self.p['localization_method'] == 'ground_plane' and self.motion_check:
+                        span = self.motion_check.get('position_span') or 0.
+                        heading = self.motion_check.get('heading_span') or 0.
+                        # Balance motion contributes uncertainty even when the window passes.
+                        distance = float(np.linalg.norm(point[:2]-np.asarray(detection.get('origin', point[:2]))))
+                        self.projection_sigma = math.sqrt(self.projection_sigma**2+(span/2)**2+(distance*heading/2)**2)
+                        detection['sigma'] = self.projection_sigma
+                        reliable = self.projection_in_range and self.projection_sigma <= self.p['max_report_sigma']
+                        detection['close_view'] = reliable
                     if usable:
                         observations.append({'stamp': stamp, 'x': float(point[0]),
                                          'y': float(point[1]), 'label': label,
@@ -331,7 +356,7 @@ class Perception(Node):
             self.image_pub.publish(out)
             # Publish even an empty result, so misses break confirmation streaks.
             self.obs_pub.publish(String(data=json.dumps({'stamp': stamp,
-                                                          'observations': observations})))
+                                                          'observations': observations, 'deferred': deferred})))
             self.detections_pub.publish(String(data=json.dumps({'stamp': stamp, 'detections': detections})))
             self.status_pub.publish(String(data=json.dumps({
                 'stamp': stamp, 'ready': True, 'latency': time.monotonic()-started,
@@ -342,6 +367,9 @@ class Perception(Node):
                 'geometry_ready': self.floor_camera is not None if self.p['localization_method'] == 'ground_plane' else camera is not None,
                 'geometry_error': geometry_error,
                 'observation_ready': self.settled() if self.p['localization_method'] == 'ground_plane' else True,
+                'motion_check': self.motion_check,
+                'frame_age': self.get_clock().now().nanoseconds*1e-9-stamp,
+                'projection_failures': [d['reason'] for d in detections if 'x' not in d],
                 'odometry_age': self.last_odometry_age,
                 'quiet_seconds': time.monotonic()-self.quiet_since if self.quiet_since is not None else None,
                 'camera_model': self.floor_camera.metadata() if self.floor_camera is not None else None,
