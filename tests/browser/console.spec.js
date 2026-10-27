@@ -503,3 +503,11 @@ test('accepted map display uses the reported posterior even while a new message 
   await expect(page.locator('#targetEstimateStatus')).toContainText('accepted');
   expect(f.calls).toEqual([]);
 });
+
+test('older robot software cannot silently ignore the new precision setting',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  delete f.state.mission_options.preferred_target_sigma;
+  await expect(page.locator('#preferredSigma')).toBeDisabled();
+  await expect(page.locator('#preferredSigmaHelp')).toContainText('Robot software update required');
+  expect(f.calls).toEqual([]);
+});

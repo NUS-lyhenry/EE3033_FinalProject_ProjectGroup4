@@ -318,11 +318,9 @@ the detector class and return tolerance in mission setup (0.01–1.00 m, default
 0.10 m). It is the square root of the posterior covariance's largest eigenvalue.
 Changing it requires **Apply settings & reload mission** and setting the initial
 pose again; it is locked during motion. The same setting reaches both the
-perception close-view preference and mission acceptance policy;
-
-valid settled observations retain their measured uncertainty even above that
+perception close-view preference and mission acceptance policy. Valid settled observations retain their measured uncertainty even above that
 value. Multi-frame consistency, freshness and map agreement still confirm the target.
-If precision remains below the objective after at most three observation moves
+If uncertainty remains above the objective after at most three observation moves
 or 15 seconds of refinement, a fresh stable estimate can be reported with
 `quality: best_available`, its actual `sigma` and the preferred sigma. The UI
 labels this as an approximate estimate; repeated correlated frames do not
