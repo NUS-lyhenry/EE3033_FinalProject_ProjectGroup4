@@ -36,7 +36,9 @@ from tf2_ros import Buffer, TransformListener, TransformException
 from .core import quaternion_yaw
 from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
-from .trial import LIMITS, parameter_plan, validate_trial
+from .trial import LIMITS, PROFILES, parameter_plan, validate_trial
+from .vision_geometry import validate_mount_settings
+from .assessment import atomic_json
 from . import gap
 from .console_workflow import Workflow
 from .model_labels import ModelLabels
@@ -52,7 +54,8 @@ class Console(Workflow, Node):
                                    'manage_stages':False,'stage_base':True,'stage_lidar':True,
                                    'stage_camera':True,'model':'/home/ros2_ws/weights/yolo26n.pt',
                                    'software_version':'development','calibration_file':'',
-                                   'calibration_directory':'~/ee3033_calibrations','calibration_port':8780})
+                                   'calibration_directory':'~/ee3033_calibrations','calibration_port':8780,
+                                   'navigation_profile':'original','vision_config':''})
         if self.p['phase'] not in ('mapping','mission','calibration'):
             raise ValueError('phase must be mapping or mission')
         self.lock = threading.Lock()
@@ -86,6 +89,7 @@ class Console(Workflow, Node):
         self.initial_pub = self.create_publisher(PoseWithCovarianceStamped,'/initialpose',10)
         self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop','start_waypoint')}
         node_names=set(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.)))
+        node_names.update(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.), 'mission'))
         node_names.update(gap.parameter_plan(False,'mapping'))
         node_names.update(gap.parameter_plan(False,'mission'))
         self.parameter_clients = {
@@ -93,6 +97,8 @@ class Console(Workflow, Node):
             for name in node_names for operation,kind in [
                 ('get_parameters',GetParameters),('set_parameters_atomically',SetParametersAtomically)]}
         self.init_workflow()
+        self.gate_status = None
+        self.create_subscription(String, '/project/velocity_gate_status', self.on_gate_status, 10)
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
         self.create_subscription(String,'/project/perception_status',self.on_perception_status,10)
         self.create_subscription(LaserScan,'/scan_fixed',lambda m:self.mark('Lidar'),qos_profile_sensor_data)
@@ -195,6 +201,15 @@ class Console(Workflow, Node):
         with self.lock:
             self.freshness[name] = time.monotonic()
 
+    def on_gate_status(self, msg):
+        try:
+            data = json.loads(msg.data)
+            if 0 <= self.get_clock().now().nanoseconds*1e-9-float(data['stamp']) < 2.:
+                with self.lock:
+                    self.gate_status = data
+        except (ValueError, TypeError, KeyError):
+            pass
+
     def on_status(self,msg):
         try:
             state = json.loads(msg.data)
@@ -282,6 +297,7 @@ class Console(Workflow, Node):
             return {'mission':self.state,'phase':self.p['phase'],
                     'allow_motion':self.p['allow_motion'],'pose':pose,
                     'calibration_file':self.p['calibration_file'] or None,
+                    'velocity_gate': self.gate_status,
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
@@ -308,7 +324,7 @@ class Console(Workflow, Node):
         return result
 
     def read_trial_nodes(self):
-        plan = parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.))
+        plan = parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.), self.p['phase'])
         result = {}
         for name, entries in plan.items():
             names = list(entries)
@@ -337,19 +353,21 @@ class Console(Workflow, Node):
                    for name,entries in expected.items() for key,value in entries.items())
 
     def trial_settings(self, values=None):
-        if self.p['phase']!='mapping':
-            raise ValueError('Navigation trial settings are only available in mapping mode')
+        if self.p['phase'] not in ('mapping', 'mission'):
+            raise ValueError('Navigation profiles require mapping or mission mode')
         if values is not None:
             values = validate_trial(values)
             with self.lock:
                 if (self.state['state'] not in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL','WAYPOINT_REACHED')
                         or time.monotonic()-self.freshness.get('Mission',-math.inf)>2):
-                    raise ValueError('Stop mapping and wait for fresh status before tuning')
+                    raise ValueError('Stop and wait for fresh status before tuning')
+                if self.p['phase']=='mission' and self.state['state']!='WAITING':
+                    raise ValueError('Configure navigation before mission Start')
             self.manual = (0.,0.,0.)
             self.manual_pub.publish(Twist())
         original = self.read_trial_nodes()
         if values is not None:
-            expected = parameter_plan(values)
+            expected = parameter_plan(values, self.p['phase'])
             attempted = []
             try:
                 for name, entries in expected.items():
@@ -375,11 +393,11 @@ class Console(Workflow, Node):
             self.trial_fault = None
         gate = original['project_velocity_gate']
         current = {key:gate[key] for key in ('max_linear','max_angular')}
-        current['goal_timeout'] = original['project_mapper']['goal_timeout']
+        current['goal_timeout'] = original['project_mapper' if self.p['phase']=='mapping' else 'project_mission']['goal_timeout']
         return {'success':True,'values':current,
                 'limits':{key:dict(min=v[0],max=v[1],step=v[2],unit=v[3]) for key,v in LIMITS.items()},
                 'protection':{key:gate[key] for key in ('stop_distance','rotation_clearance')},
-                'synchronized':self.trial_matches(original,parameter_plan(current)),
+                'synchronized':self.trial_matches(original,parameter_plan(current, self.p['phase'])),
                 'fault':self.trial_fault,'temporary':True,
                 'message':'Trial settings applied and verified; temporary until restart' if values is not None else ''}
 
@@ -480,7 +498,7 @@ class Console(Workflow, Node):
             raise ValueError('Wait for the stage transition to finish')
         with self.lock:
             state = self.state['state']
-            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING')
+            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING','ACQUIRING','LOCALIZING')
         if path in ('/api/start','/api/stop'):
             key = path.rsplit('/',1)[-1]
             if key=='start' and not self.p['allow_motion']:
@@ -517,6 +535,27 @@ class Console(Workflow, Node):
             return {'success':result.success,'message':result.message}
         if path=='/api/trial':
             return self.trial_settings(body)
+        if path=='/api/navigation':
+            profile = body.get('profile')
+            if set(body) != {'profile'} or profile not in PROFILES:
+                raise ValueError('Select original or fast navigation')
+            consumer = 'project_mapper' if self.p['phase']=='mapping' else 'project_mission'
+            timeout = self.read_trial_nodes()[consumer]['goal_timeout']
+            result = self.trial_settings(dict(PROFILES[profile], goal_timeout=timeout))
+            self.p['navigation_profile'] = profile
+            if self.stage:
+                self.stage.navigation_profile = profile
+            return dict(result, profile=profile)
+        if path=='/api/vision':
+            self.require_idle()
+            settings = validate_mount_settings(body)
+            path = Path(self.p['session_directory']).expanduser()/'vision.yaml'
+            atomic_json(path, {'project_perception': {'ros__parameters': settings}})
+            self.p['vision_config'] = str(path.resolve())
+            self.vision_settings = settings
+            if self.stage:
+                self.stage.vision_config = self.p['vision_config']
+            return dict(success=True, message='Camera geometry saved. Load or reload the mission to apply it.')
         if path=='/api/map_waypoint':
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Mapping waypoints are available only while stage 1 is stopped')

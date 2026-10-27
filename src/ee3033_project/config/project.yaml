@@ -45,7 +45,7 @@ project_perception:
     scan_topic: /scan_fixed
     camera_optical_frame: project_camera_optical
     map_frame: map
-    localization_method: lidar
+    localization_method: ground_plane
     max_scan_delta: 0.25
     max_image_age: 1.5
     inference_period: 0.25

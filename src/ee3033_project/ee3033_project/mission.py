@@ -16,7 +16,7 @@ import numpy as np
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Point, PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry, Path as NavPath
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateToPose, ComputePathToPose
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -25,6 +25,7 @@ from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
+from rcl_interfaces.msg import SetParametersResult
 from tf2_ros import Buffer, TransformListener, TransformException
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -33,10 +34,12 @@ from .coverage import CoveragePlanner, returned_home
 from .gap import DEFAULT_CLEARANCE, guard_clearance
 from .ros_utils import LATCHED, parameters, run, set_yaw
 from .stationary import StationaryWindow
+from .vision_geometry import FloorCamera
+from .target_acquisition import SingleTarget
 
 
 class Mission(Node):
-    ACTIVE = {'PLANNING', 'SEARCHING', 'OBSERVING', 'CANCELING', 'RETURNING', 'VERIFYING'}
+    ACTIVE = {'PLANNING', 'SEARCHING', 'OBSERVING', 'CANCELING', 'RETURNING', 'VERIFYING', 'ACQUIRING', 'LOCALIZING'}
 
     def __init__(self, **kwargs):
         super().__init__('project_mission', **kwargs)
@@ -60,7 +63,17 @@ class Mission(Node):
             'sensor_timeout': 1.0, 'perception_timeout': 3.0, 'tf_timeout': 1.0,
             'max_target_variance': 0.04, 'max_target_age': 2.0,
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
+            'min_observe_seconds': .8, 'acquisition_seconds': 15.,
+            'acquisition_steps': 3, 'navigation_profile': 'original',
+            'home_behavior_tree': '',
         })
+        if self.p['navigation_profile'] == 'fast':
+            from rclpy.parameter import Parameter
+            self.set_parameters([Parameter('search_linear_speed', value=.16),
+                                 Parameter('search_angular_speed', value=.60)])
+            self.p.update(search_linear_speed=.16, search_angular_speed=.60)
+        elif self.p['navigation_profile'] != 'original':
+            raise ValueError('navigation_profile must be original or fast')
         self.state, self.reason = 'WAITING', 'Call /project/start after localization'
         self.home = self.target = self.map = self.planner = None
         self.return_verified = False
@@ -89,6 +102,16 @@ class Mission(Node):
         self.goal_pending = False
         self.goal_serial = 0
         guard_clearance(self, lambda: self.state == 'WAITING' and not self.goal_pending and self.goal_handle is None)
+        def guard_navigation(changes):
+            bounds = {'goal_timeout': (20., 120.), 'search_linear_speed': (.04, .18),
+                      'search_angular_speed': (.15, .60)}
+            for p in changes:
+                if p.name in bounds:
+                    low, high = bounds[p.name]
+                    if self.state != 'WAITING' or type(p.value) is not float or not math.isfinite(p.value) or not low <= p.value <= high:
+                        return SetParametersResult(successful=False, reason='Configure bounded navigation parameters before mission Start')
+            return SetParametersResult(successful=True)
+        self.add_on_set_parameters_callback(guard_navigation)
         self.goal_kind = None
         self.goal_started = self.started = 0.0
         self.finished_at = 0.0
@@ -99,10 +122,20 @@ class Mission(Node):
         self.run_dir = None
         self.worker = ThreadPoolExecutor(max_workers=1)
         self.plan_future = None
+        self.selection_future = None
+        self.camera_model = None
+        self.observation_camera_model = None
+        self.geometry_error = None
+        self.geometry_fault_since = None
+        self.search_cost_source = 'safe grid paths'
+        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'])
+        self.acquisition_wait = 0.
+        self.started_stamp = 0.
         self.plan_cancel = threading.Event()
         self.tf = Buffer(cache_time=Duration(seconds=20))
         self.listener = TransformListener(self.tf, self)
         self.nav = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+        self.path_nav = ActionClient(self, ComputePathToPose, '/compute_path_to_pose')
         self.enable_pub = self.create_publisher(Bool, '/project/drive_enabled', LATCHED)
         self.search_pub = self.create_publisher(Bool, '/project/search_active', LATCHED)
         self.status_pub = self.create_publisher(String, '/project/mission_status', LATCHED)
@@ -117,6 +150,7 @@ class Mission(Node):
         self.create_subscription(Odometry, '/odom', self.on_odom, qos_profile_sensor_data)
         self.create_subscription(Twist, '/cmd_vel', self.on_final_command, 10)
         self.create_subscription(String, '/project/perception_status', self.on_perception, 10)
+        self.create_subscription(String, '/project/target_detections', self.on_detections, 10)
         self.create_subscription(PoseWithCovarianceStamped, '/project/confirmed_target',
                                  self.on_target, 10)
         self.create_subscription(String, '/project/target_details', self.on_details, 10)
@@ -185,6 +219,18 @@ class Mission(Node):
             if (data['ready'] and data['target_class'] == self.p['target_class']
                     and 0 <= age < self.p['perception_timeout']):
                 self.perception_time = time.monotonic()
+                self.geometry_error = data.get('geometry_error') if data.get('geometry_ready') is False else None
+                if data.get('geometry_ready') is False:
+                    self.geometry_fault_since = self.geometry_fault_since or time.monotonic()
+                    return
+                self.geometry_fault_since = None
+                if data.get('camera_model'):
+                    model = FloorCamera.from_metadata(data['camera_model'])
+                    self.observation_camera_model = model
+                    if self.state == 'WAITING':
+                        self.camera_model = model
+                if data.get('observation_ready') is False:
+                    return
                 if (self.state == 'OBSERVING'
                         and float(data['stamp']) >= self.observe_after_stamp):
                     current = self.pose()
@@ -198,6 +244,20 @@ class Mission(Node):
         except (ValueError, TypeError, KeyError, OverflowError):
             pass
 
+    def on_detections(self, msg):
+        if self.state not in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING'):
+            return
+        try:
+            data = json.loads(msg.data)
+            now = self.get_clock().now().nanoseconds*1e-9
+            detections = [d for d in data['detections'] if d.get('label') == self.p['target_class']]
+            locked = self.acquisition.update(detections, now, self.started_stamp)
+            if locked and self.acquisition.started is None:
+                self.acquisition.started = time.monotonic()
+                self.cancel('ACQUIRE', 'Target candidate detected; obtaining a reliable visual position')
+        except (ValueError, TypeError, KeyError, OverflowError):
+            pass
+
     def readiness_error(self, require_perception=True):
         now = time.monotonic()
         if self.map is None:
@@ -208,6 +268,9 @@ class Mission(Node):
             return 'Odometry missing or stale'
         if require_perception and now-self.perception_time > self.p['perception_timeout']:
             return 'YOLO stream missing, stale, or target class mismatched'
+        if require_perception and self.geometry_error and (
+                self.state == 'WAITING' or time.monotonic()-(self.geometry_fault_since or 0.) > self.p['sensor_timeout']):
+            return 'Camera geometry unavailable: '+self.geometry_error
         if self.amcl is None:
             return 'No AMCL pose; set the assigned initial pose before starting'
         cov = self.amcl.pose.covariance
@@ -237,6 +300,9 @@ class Mission(Node):
         if self.plan_future is not None and not self.plan_future.done():
             response.message = 'Previous search planning is still stopping'
             return response
+        if self.selection_future is not None and not self.selection_future.done():
+            response.message = 'Previous viewpoint selection is still stopping'
+            return response
         error = self.readiness_error()
         if not self.p['allow_motion']:
             error = 'Motion disabled; launch with allow_motion:=true after bench tests'
@@ -257,6 +323,9 @@ class Mission(Node):
         self.observation_retries = 0
         self.search_stop_reason = None
         self.started = time.monotonic()
+        self.started_stamp = self.get_clock().now().nanoseconds*1e-9
+        self.acquisition.reset()
+        self.selection_future = None
         self.finished_at = 0.0
         self.stop_window.reset()
         self.stationary_check = None
@@ -276,7 +345,10 @@ class Mission(Node):
                 self.p['clearance'], self.p['viewpoint_spacing'], self.p['camera_range'],
                 self.p['camera_fov'], self.p['viewpoint_headings'],
                 self.p['max_candidates'], self.p['max_goals'], self.p['coverage_fraction'],
-                candidate_limit=self.p['candidate_limit'])
+                candidate_limit=self.p['candidate_limit'], camera_model=self.camera_model)
+            if self.camera_model is not None:
+                self.planner.range = min(self.planner.range, self.camera_model.max_range)
+                self.planner.fov = min(self.planner.fov, self.camera_model.fov)
             self.plan_started = time.monotonic()
             self.plan_cancel = threading.Event()
             self.plan_future = self.worker.submit(self.planner.prepare, *self.home[:2],
@@ -320,7 +392,11 @@ class Mission(Node):
         self.goal_started = time.monotonic()
         goal = NavigateToPose.Goal()
         goal.pose = pose
-        self.set_state('RETURNING' if kind == 'home' else 'SEARCHING',
+        if kind == 'home' and not self.p['return_heading_required']:
+            from ament_index_python.packages import get_package_share_directory
+            goal.behavior_tree = self.p['home_behavior_tree'] or str(
+                Path(get_package_share_directory('ee3033_project'))/'behavior_trees'/'navigate_home.xml')
+        self.set_state('RETURNING' if kind == 'home' else 'ACQUIRING' if kind == 'acquire' else 'SEARCHING',
                        'Returning to recorded start' if kind == 'home'
                        else f'Viewpoint {self.index+1}/{len(self.route)}')
         # Keep drive disabled until Nav2 explicitly accepts this goal.
@@ -345,7 +421,7 @@ class Mission(Node):
         self.goal_handle = handle
         result = handle.get_result_async()
         result.add_done_callback(lambda f: self.goal_result(f, serial))
-        if serial != self.goal_serial or self.state not in ('SEARCHING', 'RETURNING'):
+        if serial != self.goal_serial or self.state not in ('SEARCHING', 'RETURNING', 'ACQUIRING'):
             handle.cancel_goal_async()
 
     def goal_result(self, future, serial):
@@ -354,7 +430,7 @@ class Mission(Node):
         if self.state == 'CANCELING':
             self.after_cancel()
             return
-        if serial != self.goal_serial or self.state not in ('SEARCHING', 'RETURNING'):
+        if serial != self.goal_serial or self.state not in ('SEARCHING', 'RETURNING', 'ACQUIRING'):
             return
         try:
             success = future.result().status == GoalStatus.STATUS_SUCCEEDED
@@ -363,6 +439,11 @@ class Mission(Node):
         self.goal_finished(success)
 
     def goal_finished(self, success):
+        if self.goal_kind == 'acquire':
+            self.heartbeat(False, True)
+            self.acquisition_wait = time.monotonic()
+            self.set_state('LOCALIZING', 'Collecting stable visual target coordinates' if success else 'Observation approach failed; trying another safe view')
+            return
         self.heartbeat(False, self.goal_kind == 'search')
         if self.goal_kind == 'home':
             if not success:
@@ -402,12 +483,74 @@ class Mission(Node):
         if current is None:
             self.finish('FAILED', 'No valid pose for search replanning')
             return
-        choice = self.planner.next_viewpoint(
-            current[0], current[1], self.seen,
+        self.plan_started = time.monotonic()
+        self.selection_future = self.worker.submit(self.select_viewpoint, current)
+        self.set_state('PLANNING', 'Selecting an observation using collision-clear path costs')
+
+    def resume_search(self, reason):
+        self.acquisition.reset()
+        if self.current_option is not None:
+            self.failed_options.add(self.current_option)
+        self.failures.append(self.index)
+        self.index += 1
+        self.get_logger().warning(reason)
+        self.next_viewpoint()
+
+    def select_viewpoint(self, current):
+        deadline = time.monotonic()+3.
+        def ranks(lengths=None):
+            return self.planner.rank_viewpoints(*current[:2], self.seen,
+                self.attempted | self.failed_options, yaw=current[2],
+                linear_speed=self.get_parameter('search_linear_speed').value,
+                angular_speed=self.get_parameter('search_angular_speed').value,
+                observation_seconds=min(self.p['observe_seconds'], self.p['min_observe_seconds']),
+                path_lengths=lengths, deadline=deadline, cancel=self.plan_cancel)
+        ranked = ranks()
+        lengths = {}
+        self.search_cost_source = 'safe grid paths'
+        if self.path_nav.server_is_ready():
+            for _, index in ranked[:3]:
+                if self.plan_cancel.is_set() or time.monotonic() >= deadline:
+                    break
+                v = self.planner.options[index]
+                request = ComputePathToPose.Goal()
+                request.goal = self.make_pose(v.x, v.y, v.yaw)
+                request.planner_id = 'GridBased'
+                future = self.path_nav.send_goal_async(request)
+                while not future.done() and time.monotonic() < deadline and not self.plan_cancel.is_set():
+                    time.sleep(.01)
+                if not future.done():
+                    # A late planning acceptance must be canceled too.
+                    future.add_done_callback(lambda f: f.result().cancel_goal_async() if f.result() and f.result().accepted else None)
+                    break
+                handle = future.result()
+                if not handle or not handle.accepted:
+                    continue
+                result = handle.get_result_async()
+                while not result.done() and time.monotonic() < deadline and not self.plan_cancel.is_set():
+                    time.sleep(.01)
+                if not result.done():
+                    handle.cancel_goal_async()
+                    break
+                value = result.result()
+                if value.status == GoalStatus.STATUS_SUCCEEDED and value.result.path.poses:
+                    points = [p.pose.position for p in value.result.path.poses]
+                    lengths[index] = sum(math.hypot(b.x-a.x, b.y-a.y) for a, b in zip(points, points[1:]))
+                    self.search_cost_source = 'Nav2 paths + safe grid paths'
+                else:
+                    lengths[index] = math.inf
+        if self.plan_cancel.is_set():
+            raise RuntimeError('Search planning canceled')
+        # Re-ranking is bounded even if Nav2 consumed its whole budget.
+        ranked = self.planner.rank_viewpoints(*current[:2], self.seen,
             self.attempted | self.failed_options, yaw=current[2],
-            linear_speed=self.p['search_linear_speed'],
-            angular_speed=self.p['search_angular_speed'],
-            observation_seconds=self.p['observe_seconds'])
+            linear_speed=self.get_parameter('search_linear_speed').value,
+            angular_speed=self.get_parameter('search_angular_speed').value,
+            observation_seconds=min(self.p['observe_seconds'], self.p['min_observe_seconds']),
+            path_lengths=lengths)
+        return ranked[0][1] if ranked else None
+
+    def dispatch_viewpoint(self, choice):
         if choice is None:
             self.search_stop_reason = 'No remaining candidate viewpoints; target absence is not established'
             # This is NOT proof that the target is absent; report coverage.
@@ -423,7 +566,7 @@ class Mission(Node):
         self.send_goal(self.make_pose(v.x, v.y, v.yaw), 'search')
 
     def on_target(self, msg):
-        if self.state not in ('SEARCHING', 'OBSERVING') or self.target is not None:
+        if self.state not in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING') or self.target is not None:
             return
         p = msg.pose.pose.position
         age = self.get_clock().now().nanoseconds*1e-9 - stamp_seconds(msg.header.stamp)
@@ -478,6 +621,11 @@ class Mission(Node):
             self.set_state('CANCELING', reason)
             if self.goal_handle is not None:
                 self.goal_handle.cancel_goal_async()
+        elif next_state == 'ACQUIRE':
+            self.acquisition_wait = time.monotonic()
+            self.set_state('LOCALIZING', 'Confirming target before choosing a closer view')
+        elif next_state == 'RESUME':
+            self.resume_search(reason)
         elif next_state == 'RETURN':
             self.begin_return()
         else:
@@ -485,7 +633,12 @@ class Mission(Node):
 
     def after_cancel(self):
         next_state, self.cancel_next = self.cancel_next, None
-        if next_state == 'RETURN':
+        if next_state == 'ACQUIRE':
+            self.acquisition_wait = time.monotonic()
+            self.set_state('LOCALIZING', 'Confirming target before choosing a closer view')
+        elif next_state == 'RESUME':
+            self.resume_search(self.reason)
+        elif next_state == 'RETURN':
             self.begin_return()
         else:
             self.finish(next_state or 'FAILED', self.reason)
@@ -545,7 +698,10 @@ class Mission(Node):
                 'available_viewpoints': len(self.planner.options) if self.planner else 0,
                 'search_stop_reason': self.search_stop_reason,
                 'observation_retries': self.observation_retries,
-                'processed_frames_this_view': len(self.observation_stamps)}
+                 'processed_frames_this_view': len(self.observation_stamps),
+                 'search_cost_source': self.search_cost_source,
+                 'camera_model': self.camera_model.metadata() if self.camera_model else None,
+                 'acquisition_steps': self.acquisition.steps}
 
     def persist(self):
         if self.run_dir is None:
@@ -560,9 +716,10 @@ class Mission(Node):
             self.get_logger().error('Could not save mission result: ' + str(exc))
 
     def tick(self):
+        self.p['goal_timeout'] = self.get_parameter('goal_timeout').value
         now = time.monotonic()
-        active_search = self.state in ('SEARCHING', 'OBSERVING')
-        moving = self.state in ('SEARCHING', 'RETURNING') and self.goal_handle is not None
+        active_search = self.state in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING')
+        moving = self.state in ('SEARCHING', 'RETURNING', 'ACQUIRING') and self.goal_handle is not None
         self.heartbeat(moving, active_search)
         if self.state in self.ACTIVE:
             if self.state == 'CANCELING':
@@ -575,8 +732,31 @@ class Mission(Node):
                                                and self.state != 'VERIFYING')
                 if error:
                     self.cancel('FAILED', error)
+                elif self.state in ('ACQUIRING', 'LOCALIZING'):
+                    if now-self.acquisition.started >= self.p['acquisition_seconds']:
+                        self.cancel('RESUME', 'Visual acquisition time limit; resuming search')
+                    elif self.state == 'ACQUIRING':
+                        if self.goal_pending and now-self.goal_started > self.p['accept_timeout']:
+                            self.cancel('RESUME', 'Target approach acceptance timed out')
+                    elif now-self.acquisition_wait >= 1.2:
+                        candidate = self.acquisition.candidate
+                        fresh = candidate and 0 <= self.get_clock().now().nanoseconds*1e-9-candidate['stamp'] <= 1.5
+                        goal = None if not fresh or self.acquisition.expired(now) else self.acquisition.observation_goal(self.planner, self.pose())
+                        if goal is None:
+                            self.resume_search('Target lost or no safe observation remains')
+                        else:
+                            self.acquisition.steps += 1
+                            self.send_goal(self.make_pose(*goal), 'acquire')
                 elif self.state == 'PLANNING':
-                    if self.plan_future.done():
+                    if self.selection_future is not None:
+                        if self.selection_future.done():
+                            try:
+                                choice = self.selection_future.result()
+                                self.selection_future = None
+                                self.dispatch_viewpoint(choice)
+                            except Exception as exc:
+                                self.finish('FAILED', 'Viewpoint selection failed: '+str(exc))
+                    elif self.plan_future.done():
                         try:
                             candidates = self.plan_future.result()
                             if not candidates:
@@ -592,7 +772,11 @@ class Mission(Node):
                         self.cancel('FAILED', 'Nav2 goal acceptance timed out')
                     elif now-self.goal_started > self.p['goal_timeout']:
                         self.cancel('FAILED', 'Navigation goal time limit exceeded')
-                elif self.state == 'OBSERVING' and now-self.observe_started >= self.p['observe_seconds']:
+                elif self.state == 'OBSERVING' and (
+                        now-self.observe_started >= self.p['observe_seconds'] or
+                        (now-self.observe_started >= self.p['min_observe_seconds']
+                         and len(self.observation_stamps) >= self.p['min_observation_frames']
+                         and not self.observation_candidate_seen)):
                     current = self.pose()
                     v = (self.planner.options[self.current_option]
                          if self.current_option is not None else None)
@@ -605,7 +789,8 @@ class Mission(Node):
                     enough_frames = len(self.observation_stamps) >= self.p['min_observation_frames']
                     if aligned and enough_frames and not self.observation_candidate_seen:
                         row, col = self.planner.world_to_cell(*current[:2])
-                        self.seen.update(self.planner.visible(row, col, current[2]))
+                        self.seen.update(self.planner.visible(row, col, current[2],
+                                                             camera_model=self.observation_camera_model))
                         self.observation_retries = 0
                         self.index += 1
                         self.next_viewpoint()

@@ -24,7 +24,13 @@ def validate_trial(values):
     return result
 
 
-def parameter_plan(values):
+PROFILES = {
+    'original': dict(max_linear=.12, max_angular=.40, goal_timeout=60.),
+    'fast': dict(max_linear=.16, max_angular=.60, goal_timeout=60.),
+}
+
+
+def parameter_plan(values, phase='mapping'):
     values = validate_trial(values)
     linear, angular = values['max_linear'], values['max_angular']
     return {
@@ -33,9 +39,12 @@ def parameter_plan(values):
             'FollowPath.max_vel_x': linear,
             'FollowPath.max_speed_xy': linear,
             'FollowPath.max_vel_theta': angular,
-            'FollowPath.rotate_to_heading_angular_vel': angular * 0.875,
+            'FollowPath.rotate_to_heading_angular_vel': .55 if angular >= .60 else angular * 0.875,
         },
-        'project_mapper': {'goal_timeout': values['goal_timeout']},
+        'project_mapper' if phase == 'mapping' else 'project_mission':
+            ({'goal_timeout': values['goal_timeout']} if phase == 'mapping' else
+             {'goal_timeout': values['goal_timeout'], 'search_linear_speed': linear,
+              'search_angular_speed': angular}),
     }
 
 

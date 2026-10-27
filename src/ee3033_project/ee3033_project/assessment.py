@@ -17,7 +17,7 @@ import time
 import yaml
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
-                    'VERIFYING','MAPPING','SAVING','CALIBRATING'))
+                    'VERIFYING','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING'))
 
 
 def utc_now():
@@ -210,7 +210,7 @@ def require_current_mapping_map(phase, running, saved_path, selected_path):
 
 def mission_options(values):
     target = values.get('target_class','cup')
-    method = values.get('localization_method','lidar')
+    method = values.get('localization_method','ground_plane')
     tolerance = values.get('return_tolerance',.20)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
         raise ValueError('Use the detector class label, for example cup or bottle')
@@ -230,6 +230,8 @@ class StageProcess:
         self.hardware = hardware or dict(base=True,lidar=True,camera=True)
         self.model = model
         self.calibration_file = calibration_file
+        self.navigation_profile = 'original'
+        self.vision_config = ''
         self.calibration_directory = '~/ee3033_calibrations'
         self.calibration_port, self.console_port = 8780, 8765
         self.calibration_initial_pose = None
@@ -286,7 +288,8 @@ class StageProcess:
                          zip(('initial_x','initial_y','initial_yaw'), self.calibration_initial_pose)]]
             if self.model: args.append('model:='+self.model)
         else:
-            args += ['console:=false','map_directory:='+str(map_directory)]
+            args += ['console:=false','map_directory:='+str(map_directory),
+                     'navigation_profile:='+self.navigation_profile]
         for name,enabled in self.hardware.items():
             if name!='camera' or phase in ('mission','calibration'): args.append(name+':='+str(bool(enabled)).lower())
         if phase=='mission':
@@ -295,6 +298,7 @@ class StageProcess:
             args += ['map:='+str(map_path),*[(key+':='+str(value)) for key,value in options.items()]]
             if self.model: args.append('model:='+self.model)
             if self.calibration_file: args.append('calibration_file:='+self.calibration_file)
+            if self.vision_config: args.append('vision_config:='+self.vision_config)
         with self.log.open('w') as stream:
             self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
         self.phase,self.fault=phase,None

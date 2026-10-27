@@ -38,7 +38,9 @@ def generate_launch_description():
         DeclareLaunchArgument('config', default_value=os.path.join(share, 'config', 'project.yaml')),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share, 'config', 'navigation.yaml')),
         DeclareLaunchArgument('model', default_value='/home/ros2_ws/weights/yolo26n.pt'),
-        DeclareLaunchArgument('localization_method', default_value='lidar'),
+        DeclareLaunchArgument('localization_method', default_value='ground_plane'),
+        DeclareLaunchArgument('vision_config', default_value=os.path.join(share, 'config', 'vision.yaml')),
+        DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         DeclareLaunchArgument('calibration_file', default_value=''),
         DeclareLaunchArgument('return_tolerance', default_value='0.20'),
         OpaqueFunction(function=check_map),
@@ -48,18 +50,20 @@ def generate_launch_description():
             'map': LaunchConfiguration('map'), 'params_file': LaunchConfiguration('nav_config'),
             'use_sim_time': 'false', 'use_composition': 'False', 'use_respawn': 'False'}),
         include(os.path.join(share, 'launch', 'navigation.launch.py'), {
-            'nav_config': LaunchConfiguration('nav_config')}),
+            'nav_config': LaunchConfiguration('nav_config'),
+            'navigation_profile': LaunchConfiguration('navigation_profile')}),
         Node(package='ee3033_project', executable='perception', output='screen', parameters=[
-            config, {'target_class': target,
+            config, LaunchConfiguration('vision_config'), {'target_class': target,
                      'calibration_file': ParameterValue(LaunchConfiguration('calibration_file'), value_type=str),
                      'model': ParameterValue(LaunchConfiguration('model'), value_type=str),
                      'localization_method': ParameterValue(LaunchConfiguration('localization_method'),
                                                           value_type=str)}]),
         Node(package='ee3033_project', executable='target_filter', output='screen', parameters=[config]),
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
-            config, {'allow_motion': motion}]),
+            config, {'allow_motion': motion, 'navigation_profile': LaunchConfiguration('navigation_profile')}]),
         Node(package='ee3033_project', executable='mission', output='screen', parameters=[
             config, {'target_class': target, 'allow_motion': motion,
+                     'navigation_profile': LaunchConfiguration('navigation_profile'),
                      'return_tolerance':ParameterValue(LaunchConfiguration('return_tolerance'),value_type=float)}]),
         Node(package='ee3033_project',executable='console',output='screen',
              condition=IfCondition(LaunchConfiguration('console')),parameters=[{

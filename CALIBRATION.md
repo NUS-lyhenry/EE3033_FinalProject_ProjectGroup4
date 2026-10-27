@@ -1,4 +1,9 @@
-# Camera calibration from a known map point
+# Legacy camera calibration from a known map point
+
+This optional preparation tool is retained for existing explicit profiles. The
+default mission now uses camera geometry directly; no bottle collection or
+validated profile is required. Open this tool from Advanced, or use the legacy
+`/#/calibration` link. A profile is used only when explicitly selected.
 
 Use **Camera setup** in the main console (`/#/calibration`). The operator marks
 where the bottle base will be on a saved map, places it there and enters its

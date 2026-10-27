@@ -1,5 +1,34 @@
 # Validation record
 
+## Visual single-target workflow and navigation trial — 2026-10-27
+
+This change retains the automatic frontier mapper and adds shared camera-only
+floor geometry, obstacle-aware search costs, bounded target acquisition,
+XY-only home arrival and a single-page operator workflow. Legacy calibration is
+optional and only explicitly selected profiles affect a mission.
+
+Local checks completed:
+
+- 184 algorithm tests passed, including floor projection/uncertainty, camera
+  FOV and near blind zones, wall-detour cost, candidate association and safe
+  observation goals. Python compilation and diff whitespace checks passed.
+- The existing 30 browser scenarios passed before the last layout adjustment.
+  The subsequent full 34-case run exposed an offscreen coordinate in an older
+  waypoint test; that test now scrolls to the map, matching operator behavior.
+  Its six affected/new scenarios passed after the fix. Final full-run results
+  and native Humble CI are recorded below when complete.
+- Added native fixtures for real image/CameraInfo/TF floor projection (neural
+  inference substituted), target approach/loss/budget/Stop races, the fast
+  controller/gate profile, and home arrival without final heading alignment.
+
+Physical validation has not been performed. Original speed (0.12 m/s,
+0.40 rad/s) remains default. The explicit Fast trial profile (0.16 m/s,
+0.60 rad/s, shim 0.55 rad/s) and changed rotation thresholds require physical
+turn/stopping/localization comparison. No target-location accuracy, physical
+coverage, turn-time improvement, complete mission or deployment is claimed.
+Independent camera measurements must validate the mount/intrinsics and the
+initial 0.35–2.0 m usable range. Report sigma is a model, not an accuracy result.
+
 ## Map-point calibration replacement — 2026-10-27
 
 The old image-centred / measured-distance process has been replaced by a fixed

@@ -20,8 +20,9 @@ class CameraSetup:
             try: return path.stat().st_mtime_ns
             except OSError: return -1
         candidates = ([Path(self.p['calibration_file']).expanduser()]
-                      if self.explicit_calibration and self.p['phase'] != 'calibration'
-                      else sorted(root.glob('camera_*.json'), key=modified, reverse=True))
+                       if self.explicit_calibration and self.p['phase'] != 'calibration'
+                       else sorted(root.glob('camera_*.json'), key=modified, reverse=True)
+                       if self.p['phase'] == 'calibration' else [])
         for path in candidates:
             try:
                 stat = path.stat()

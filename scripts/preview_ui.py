@@ -16,7 +16,7 @@ def preview_state():
                      home=None,target=None,ready=False,elapsed_seconds=0,return_verified=False),
         stage=dict(managed=True,running=False,phase=None,transitioning=False,fault=None),
         assessment=dict(elapsed_seconds=0,started=None,finished=None,running=False,timing_valid=False,maps=[]),
-        mission_options=dict(target_class='cup',localization_method='lidar',return_tolerance=.2),
+        mission_options=dict(target_class='cup',localization_method='ground_plane',return_tolerance=.2),
         map_revision=0,pose=None,route=[],path=[],health={},events=[],camera_source=None,
         battery=dict(voltage=None,fresh=False,age=None),control_fault=None,initial_pose_sent=False)
 
