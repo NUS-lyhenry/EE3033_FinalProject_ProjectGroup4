@@ -17,7 +17,7 @@ import time
 import yaml
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
-                    'VERIFYING','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING'))
+                    'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING'))
 
 
 def utc_now():
@@ -38,6 +38,28 @@ def atomic_json(path, data):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def require_preserved_unknown(path):
+    """Block only the identified canonical PGM/threshold mismatch on load.
+
+    Other image formats and noncanonical maps remain the loader's concern;
+    gray 205 alone is not sufficient to reinterpret an arbitrary map.
+    """
+    from .map_io import read_pgm
+    path=Path(path)
+    try:
+        data=yaml.safe_load(path.read_text())
+        if (data.get('mode','trinary')!='trinary' or data.get('negate')!=0
+                or float(data.get('free_thresh',0))<=50/255):return
+        image=path.parent/data['image']
+        if image.suffix.lower()!='.pgm':return
+        pixels=read_pgm(image)
+        levels=set(pixels.ravel().tolist())
+    except (ValueError,TypeError,OSError,KeyError,yaml.YAMLError):
+        return
+    if 205 in levels and levels<={0,205,254}:
+        raise ValueError('This map would load unknown cells as free space. Select and review its corrected copy before searching.')
 
 
 class TrialRecord:
@@ -74,6 +96,23 @@ class TrialRecord:
             self.data = self.empty()
             self.persist()
 
+    def repeat_search(self, map_id):
+        """Archive the last attempt and reuse its map without claiming new mapping."""
+        with self.lock:
+            if not isinstance(map_id,str) or not map_id:
+                raise ValueError('Select the loaded map before repeating a search')
+            self.persist()
+            previous = self.data['id']
+            self.data = self.empty()
+            self.data.update(maps=[map_id], reused_map_from_trial=previous)
+            self.persist()
+
+    def restore(self, data):
+        """Restore an archived attempt when a successor was explicitly rejected."""
+        with self.lock:
+            self.data = json.loads(json.dumps(data))
+            self.persist()
+
     def start(self, phase):
         with self.lock:
             if self.data['interrupted'] or self.data['finished'] is not None:
@@ -101,8 +140,9 @@ class TrialRecord:
             self.data['events'].append(dict(phase=phase,state=status.get('state'),
                 reason=status.get('reason',''),utc=utc_now(),elapsed_seconds=self.clock()-self.data['started']))
             self.data['stages'].setdefault(phase,{})['last_status'] = status
-            if (phase=='mission' and status.get('state')=='COMPLETE'
-                    and status.get('target') and status.get('return_verified') is True):
+            if (phase=='mission' and status.get('state') in ('COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE')
+                    and status.get('return_verified') is True
+                    and (status.get('state')!='COMPLETE' or status.get('target'))):
                 self.data['finished'] = self.clock()
                 self.data['result'] = status
             self.persist()
@@ -210,12 +250,12 @@ def require_current_mapping_map(phase, running, saved_path, selected_path):
 
 def mission_options(values):
     target = values.get('target_class','cup')
-    method = values.get('localization_method','ground_plane')
+    method = values.get('localization_method','hybrid')
     tolerance = values.get('return_tolerance',.20)
     sigma = values.get('preferred_target_sigma',.10)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
         raise ValueError('Use the detector class label, for example cup or bottle')
-    if method not in ('lidar','ground_plane'):
+    if method not in ('lidar','ground_plane','hybrid'):
         raise ValueError('Select lidar or ground_plane localization')
     if isinstance(tolerance,bool) or not isinstance(tolerance,(int,float)) or not math.isfinite(tolerance) or not .02<=tolerance<=1.:
         raise ValueError('Return tolerance must be 0.02–1.00 m')
@@ -299,7 +339,8 @@ class StageProcess:
         if phase=='mission':
             if map_path is None: raise ValueError('A reviewed saved map is required')
             options=mission_options(options or {})
-            args += ['map:='+str(map_path),*[(key+':='+str(value)) for key,value in options.items()]]
+            args.append('results_directory:='+str(self.root.parent/'mission_runs'))
+            args += ['map_partial:='+str(bool(getattr(self,'map_partial',False))).lower(), 'map:='+str(map_path),*[(key+':='+str(value)) for key,value in options.items()]]
             if self.model: args.append('model:='+self.model)
             if self.calibration_file: args.append('calibration_file:='+self.calibration_file)
             if self.vision_config: args.append('vision_config:='+self.vision_config)

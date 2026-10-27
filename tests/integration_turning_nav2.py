@@ -50,6 +50,8 @@ class Chassis(Node):
         self.running=False
         self.frozen=False
         self.close=False
+        self.rear_blind=False
+        self.forward_blocked=False
         self.deadband=0.
         self.command=(0.,0.)
         self.commands=[]
@@ -82,6 +84,9 @@ class Chassis(Node):
         v,w=self.command
         if self.running and not self.frozen:
             if abs(w)<self.deadband:w=0.
+            if self.forward_blocked:
+                if self.xyz[0]<-.12:self.forward_blocked=False
+                elif v>0:v=0.
             self.xyz[0]+=v*math.cos(self.xyz[2])*dt
             self.xyz[1]+=v*math.sin(self.xyz[2])*dt
             self.xyz[2]+=w*dt
@@ -98,6 +103,9 @@ class Chassis(Node):
         scan=LaserScan();scan.header.stamp=stamp;scan.header.frame_id='base_footprint'
         scan.angle_min=-math.pi;scan.angle_max=math.pi;scan.angle_increment=2*math.pi/99
         scan.range_min=.08;scan.range_max=8.;scan.ranges=[5.]*100
+        if self.rear_blind:
+            scan.ranges=[r if math.cos(scan.angle_min+i*scan.angle_increment)>=0 else float('nan')
+                         for i,r in enumerate(scan.ranges)]
         if self.close:scan.ranges[90]=.13
         self.scan_pub.publish(scan)
         self.drive.publish(Bool(data=self.running))

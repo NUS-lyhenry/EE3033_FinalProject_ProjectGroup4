@@ -1,12 +1,9 @@
-<!--
-  Keep path following and 1 Hz replanning. On failure, refresh both costmaps,
-  hold for one second so fresh observations can arrive, and try once more.
-  A persistent failure is returned to the mapper/mission so it can defer this
-  goal. Recovery itself never spins or reverses the balancing robot; normal
-  heading changes remain the collision-checked controller's responsibility.
--->
+<!-- Refresh and replan first. Only persistent failure reaches one bounded
+     BackUp fallback. The final velocity gate requires a fresh localized pose
+     and an uncertainty-inflated known-free swept map corridor for reversing. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="1" name="LastResortReverseRecovery">
     <RecoveryNode number_of_retries="1" name="BoundedNavigationRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
@@ -19,6 +16,8 @@
         <ClearEntireCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
         <Wait wait_duration="1"/>
       </Sequence>
+    </RecoveryNode>
+      <BackUp backup_dist="0.20" backup_speed="0.04" time_allowance="8"/>
     </RecoveryNode>
   </BehaviorTree>
 </root>

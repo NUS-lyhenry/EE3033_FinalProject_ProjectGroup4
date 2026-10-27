@@ -26,6 +26,7 @@ def generate_launch_description():
     nav_share = get_package_share_directory('nav2_bringup')
     return LaunchDescription([
         DeclareLaunchArgument('map', description='On-site map YAML (required)'),
+        DeclareLaunchArgument('map_partial', default_value='false'),
         DeclareLaunchArgument('target_class', default_value='cup'),
         DeclareLaunchArgument('allow_motion', default_value='false'),
         DeclareLaunchArgument('base', default_value='true'),
@@ -38,12 +39,13 @@ def generate_launch_description():
         DeclareLaunchArgument('config', default_value=os.path.join(share, 'config', 'project.yaml')),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share, 'config', 'navigation.yaml')),
         DeclareLaunchArgument('model', default_value='/home/ros2_ws/weights/yolo26n.pt'),
-        DeclareLaunchArgument('localization_method', default_value='ground_plane'),
+        DeclareLaunchArgument('localization_method', default_value='hybrid'),
         DeclareLaunchArgument('vision_config', default_value=os.path.join(share, 'config', 'vision.yaml')),
         DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         DeclareLaunchArgument('calibration_file', default_value=''),
         DeclareLaunchArgument('return_tolerance', default_value='0.20'),
         DeclareLaunchArgument('preferred_target_sigma', default_value='0.10'),
+        DeclareLaunchArgument('results_directory', default_value='~/ee3033_results'),
         OpaqueFunction(function=check_map),
         include(os.path.join(share, 'launch', 'hardware.launch.py'), {
             k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}),
@@ -65,6 +67,8 @@ def generate_launch_description():
             config, {'allow_motion': motion, 'navigation_profile': LaunchConfiguration('navigation_profile')}]),
         Node(package='ee3033_project', executable='mission', output='screen', parameters=[
             config, {'target_class': target, 'allow_motion': motion,
+                     'results_directory':LaunchConfiguration('results_directory'),
+                     'map_partial':ParameterValue(LaunchConfiguration('map_partial'),value_type=bool),
                      'max_target_variance':ParameterValue(PythonExpression(['float(', LaunchConfiguration('preferred_target_sigma'), ') ** 2']),value_type=float),
                      'navigation_profile': LaunchConfiguration('navigation_profile'),
                      'return_tolerance':ParameterValue(LaunchConfiguration('return_tolerance'),value_type=float)}]),

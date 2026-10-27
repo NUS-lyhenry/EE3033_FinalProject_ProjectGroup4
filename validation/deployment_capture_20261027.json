@@ -1,0 +1,36 @@
+{
+  "release": "capture_20261027_62b14551d2",
+  "source_sha256": "62b14551d284570cc487c18b1891d4946d792dd867b326b25ca478d3c4f6f160",
+  "archive": "/private/tmp/capture_20261027_62b14551d2.tar.gz",
+  "archive_sha256": "c4af52f77a86d3b46d6ce6ad636829e0b8ca2c8cdc39fc04703cda57af3976e8",
+  "files": 127,
+  "deployed": true,
+  "robot": "balance6",
+  "verified_version": "capture_20261027_62b14551d2",
+  "python_tests_passed": 320,
+  "real_diagnostic_message_received": true,
+  "diagnostic_topic": "/project/localization_diagnostics",
+  "journal_pattern": "/home/ros2_ws/group4_results/assessment_capture_20261027_62b14551d2/mission_runs/mission_*/localization_frames.jsonl",
+  "journal_limit_bytes_per_mission": 8388608,
+  "state_after_deployment": "WAITING",
+  "initial_pose_required": true,
+  "autonomous_start_issued": false,
+  "full_simulation": "not run; deploy-first requested",
+  "storage_cleanup": {
+    "removed": "rebuildable *.o compilation intermediates only",
+    "runtime_maps_results_preserved": true,
+    "free_mb_after_build": 43
+  },
+  "preserved": {
+    "map_id": "onsite_74jh9pqj/map.yaml",
+    "navigation_profile": "fast",
+    "target_class": "bottle",
+    "method": "hybrid",
+    "preferred_sigma": 0.14,
+    "camera_range": [
+      0.4,
+      0.8
+    ],
+    "pitch_degrees": 28.6
+  }
+}

@@ -1,6 +1,9 @@
-<!-- Home requires XY arrival; search viewpoints still require facing. -->
+<!-- Refresh and replan first. Only persistent failure reaches one bounded
+     BackUp fallback. The final velocity gate requires a fresh localized pose
+     and an uncertainty-inflated known-free swept map corridor for reversing. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="1" name="LastResortReverseRecovery">
     <RecoveryNode number_of_retries="1" name="BoundedHomeRecovery">
       <PipelineSequence name="ReturnWithReplanning">
         <RateController hz="1.0">
@@ -13,6 +16,8 @@
         <ClearEntireCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
         <Wait wait_duration="1"/>
       </Sequence>
+    </RecoveryNode>
+      <BackUp backup_dist="0.20" backup_speed="0.04" time_allowance="8"/>
     </RecoveryNode>
   </BehaviorTree>
 </root>

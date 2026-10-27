@@ -9,6 +9,9 @@ from rclpy.node import Node
 from .core import quaternion_yaw
 from .ros_utils import LATCHED, parameters, run
 from .target_estimate import MapMMSE
+from .triangulation import BearingIntersection
+from .target_acquisition import SingleTarget
+from .localization_diagnostics import DiagnosticHistory, mmse_rejection_reason
 
 
 class TargetFilter(Node):
@@ -22,10 +25,16 @@ class TargetFilter(Node):
             max_age=self.p['max_observation_age'],confidence=self.p['confidence'],
             common_fraction=self.p['common_error_fraction'],unknown_weight=self.p['unknown_prior_weight'])
         self.active=False
+        self.target_locked=False
+        self.association=SingleTarget()
+        self.intersection=BearingIntersection()
+        self.geometry_conflict=False
         self.armed_at=0.
         self.seed=None
         self.mission_stamp=None
         self.last_frame_stamp=0.
+        self.diagnostics=DiagnosticHistory()
+        self.diagnostics_pub=self.create_publisher(String,'/project/localization_diagnostics',20)
         self.pose_pub=self.create_publisher(PoseWithCovarianceStamped,'/project/confirmed_target',10)
         self.details_pub=self.create_publisher(String,'/project/target_details',10)
         self.estimate_pub=self.create_publisher(String,'/project/target_estimate',LATCHED)
@@ -45,7 +54,10 @@ class TargetFilter(Node):
         try:
             grid=np.array(msg.data).reshape(msg.info.height,msg.info.width)
             pose=msg.info.origin
+            previous_signature=self.tracker.signature
             self.tracker.set_map(grid,msg.info.resolution,[pose.position.x,pose.position.y,quaternion_yaw(pose.orientation)])
+            if previous_signature != self.tracker.signature:
+                self.intersection.reset();self.association.reset()
             if self.seed:self.tracker.set_seed(*self.seed)
             self.publish()
         except (ValueError,TypeError) as exc:self.get_logger().warning('MMSE map unavailable: '+str(exc))
@@ -59,6 +71,8 @@ class TargetFilter(Node):
 
     def on_initial_pose(self,msg):
         self.tracker.reset()
+        self.intersection.reset()
+        self.association.reset()
         self.on_pose(msg)
         self.publish()
 
@@ -67,16 +81,92 @@ class TargetFilter(Node):
         self.publish()
 
     def on_frame(self,msg):
+        now=self.now()
+        event=dict(schema_version=1,stamp=None,published_stamp=now,mission_stamp=self.mission_stamp,
+            target_locked=self.target_locked,reason_codes=[],frame={},selected=None,
+            association=dict(attempted=False,matched=False),intersection=dict(attempted=False),
+            mmse=dict(attempted=False,updated=False,stable=False))
+        codes=event['reason_codes']
         try:
-            data=json.loads(msg.data);stamp=float(data['stamp']);now=self.now()
-            if not 0<=now-stamp<=self.p['max_observation_age'] or stamp<self.armed_at or stamp<=self.last_frame_stamp:return
+            data=json.loads(msg.data);stamp=float(data['stamp'])
+            event.update(stamp=stamp,frame_age=now-stamp)
+            event['frame']=dict(data.get('diagnostics') or {})
+            event['frame'].update(observation_count=len(data.get('observations',[])),
+                bearing_count=len(data.get('bearings',[])),deferred=data.get('deferred') is True)
+            codes.extend(event['frame'].get('reason_codes',[]))
+            for detection in event['frame'].get('detections',[]):codes.extend(detection.get('reason_codes',[]))
+            if not math.isfinite(stamp) or not 0<=now-stamp<=self.p['max_observation_age']:
+                codes.append('frame_stale_future_or_invalid');return
+            if stamp<self.armed_at:
+                codes.append('frame_before_current_mission');return
+            if stamp<=self.last_frame_stamp:
+                codes.append('frame_duplicate_or_reordered');return
             self.last_frame_stamp=stamp
             candidates=[o for o in data['observations'] if o.get('stamp')==stamp and (not self.p['target_class'] or o.get('label')==self.p['target_class'])]
             candidates.sort(key=lambda o:o.get('confidence',0),reverse=True)
-            updated=bool(candidates and self.tracker.update(candidates[0],now))
+            bearings = [d for d in data.get('bearings', []) if d.get('stamp') == stamp
+                        and (not self.p['target_class'] or d.get('label') == self.p['target_class'])]
+            updated=False
+            selected=None
+            if self.tracker.factor and now-self.tracker.factor['stamp'] > self.p['max_observation_age']:
+                self.tracker.reset()
+                codes.append('mmse_intersection_expired_recollecting')
+            if self.target_locked and bearings:
+                locked=self.association.update(bearings, now, self.armed_at)
+                selected=self.association.candidate
+                matched=bool(selected and selected['stamp']==stamp)
+                event['association']=dict(attempted=True,matched=matched,locked=locked,
+                    frames=self.association.frames,candidate_count=len(bearings))
+                if not matched:codes.append('bearing_association_rejected')
+                if selected and selected['stamp'] == stamp:
+                    event['selected']=dict(selected)
+                    candidates=[o for o in candidates if o.get('box')==selected.get('box')]
+                    factor=self.intersection.add(selected)
+                    event['intersection']=dict(attempted=True,accepted=factor is not None,
+                        frame_accepted=self.intersection.frame_accepted,reason=self.intersection.reason,
+                        reason_code=self.intersection.reason_code)
+                    codes.extend(self.intersection.last_events)
+                    if factor:
+                        event['intersection']['factor']=factor
+                        self.geometry_conflict=False
+                        if candidates:
+                            floor=candidates[0]
+                            distance=math.hypot(floor['x']-factor['x'], floor['y']-factor['y'])
+                            self.geometry_conflict=distance>max(.20,3*math.hypot(floor['sigma'],factor['sigma']))
+                        if not self.geometry_conflict:
+                            event['mmse']['attempted']=True
+                            updated=self.tracker.update_factor(factor,now)
+                            if not updated:codes.append('mmse_intersection_factor_rejected')
+                        else:codes.append('bearing_floor_geometry_conflict')
+                # Floor and bearing factors must refer to the same detection,
+                # not simply whichever same-class box has highest confidence.
+                if selected and selected['stamp']==stamp and 'box' in selected:
+                    candidates=[o for o in candidates if o.get('box')==selected['box']]
+                elif selected is None or selected['stamp']!=stamp:
+                    candidates=[]
+            elif self.target_locked:
+                codes.append('no_bearing_measurement')
+            elif bearings:
+                codes.append('bearing_waiting_for_target_lock')
+            if not updated and self.tracker.factor is None:
+                if candidates:
+                    event['mmse']['attempted']=True
+                    floor=candidates[0]
+                    updated=self.tracker.update(floor,now)
+                    if not updated:codes.append(mmse_rejection_reason(self.tracker,floor,now))
+                else:codes.append('no_usable_floor_measurement')
+            elif not updated and candidates:
+                codes.append('mmse_floor_evidence_replaced_by_intersection')
             if not updated:self.tracker.miss(stamp,data.get('deferred') is True)
             self.publish()
             estimate=self.tracker.snapshot(now)
+            event['mmse'].update(updated=updated,stable=bool(estimate and estimate['stable']),
+                source=estimate.get('source','floor_projection') if estimate else None,
+                prior_conflict=bool(estimate and estimate.get('prior_conflict')),
+                samples=len(self.tracker.samples),confirmation_streak=self.tracker.streak)
+            if estimate and estimate.get('prior_conflict'):codes.append('mmse_map_prior_conflict')
+            elif updated and not estimate['stable']:codes.append('mmse_collecting_confirmation')
+            elif updated:codes.append('mmse_stable_estimate')
             if self.active and updated and estimate and estimate['stable']:
                 pose=PoseWithCovarianceStamped()
                 pose.header.frame_id=self.p['map_frame']
@@ -89,16 +179,29 @@ class TargetFilter(Node):
                 pose.pose.covariance[6],pose.pose.covariance[7]=c[1]
                 self.pose_pub.publish(pose)
                 self.details_pub.publish(String(data=json.dumps(estimate)))
-        except (ValueError,TypeError,KeyError,OverflowError):pass
+        except (ValueError,TypeError,KeyError,AttributeError,IndexError,OverflowError,np.linalg.LinAlgError) as exc:
+            codes.append('localization_frame_processing_error')
+            event['error']=str(exc)
+        finally:
+            event['progress']=self.intersection.progress()
+            event['geometry_conflict']=self.geometry_conflict
+            event=self.diagnostics.add(event)
+            self.diagnostics_pub.publish(String(data=json.dumps(event,allow_nan=False)))
 
     def on_status(self,msg):
         try:
             data=json.loads(msg.data);stamp=data.get('started_stamp')
+            self.target_locked=bool(data.get('target_detected'))
+            if self.target_locked:self.association.started=1.
             if stamp and stamp!=self.mission_stamp:
                 self.mission_stamp=stamp
                 self.armed_at=float(stamp)
                 self.last_frame_stamp=0.
                 self.tracker.reset()
+                self.intersection.reset()
+                self.association.reset()
+                self.geometry_conflict=False
+                self.diagnostics.reset()
                 self.publish()
         except (ValueError,TypeError):pass
 
@@ -118,7 +221,16 @@ class TargetFilter(Node):
         if result:
             result['frame_id']=self.p['map_frame']
             result['mission_stamp']=self.mission_stamp
-        self.estimate_pub.publish(String(data=json.dumps(result or dict(available=False,map_signature=self.tracker.signature))))
+            result['geometry_conflict']=self.geometry_conflict
+            result['intersection_reason']=self.intersection.reason
+        result=result or dict(available=False,map_signature=self.tracker.signature)
+        result['mission_stamp']=self.mission_stamp
+        result['bearing_progress']=self.intersection.progress()
+        result['target_locked']=self.target_locked
+        result['geometry_conflict']=self.geometry_conflict
+        result['intersection_reason']=self.intersection.reason
+        result['diagnostics_summary']=self.diagnostics.summary()
+        self.estimate_pub.publish(String(data=json.dumps(result)))
 
 
 def main():run(TargetFilter)

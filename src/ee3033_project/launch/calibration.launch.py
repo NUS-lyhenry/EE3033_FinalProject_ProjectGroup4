@@ -70,6 +70,7 @@ def start(context):
                                  launch_arguments={k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}.items()),
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
             os.path.join(share, 'config', 'project.yaml'), dict(allow_motion=motion,
+                reverse_policy='calibration',
                 max_linear=.04, max_angular=.15, rotation_clearance=.16)]),
         Node(package='ee3033_project', executable='camera_calibration', output='screen', parameters=[{
             'map_file': map_path, 'allow_motion': motion, 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),

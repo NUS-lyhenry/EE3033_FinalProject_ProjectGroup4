@@ -5,7 +5,8 @@
 project_perception:
   ros__parameters:
     camera_height: 0.0
-    camera_pitch: 0.0
+    camera_pitch: 0.4991641660703783  # User-provided 28.6 degrees; validate against surveyed points.
+    use_pitch_override: true
     camera_yaw: 0.0
     camera_x: 0.0
     camera_y: 0.0

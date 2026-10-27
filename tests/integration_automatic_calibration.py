@@ -137,7 +137,8 @@ class Robot(Node):
 def virtual_process(kind, telemetry, shift, stop):
     rclpy.init()
     node = (Robot(telemetry, shift) if kind=='robot' else VelocityGate(parameter_overrides=[
-        Parameter('allow_motion',value=True),Parameter('max_linear',value=.04),Parameter('max_angular',value=.15)]))
+        Parameter('allow_motion',value=True),Parameter('reverse_policy',value='calibration'),
+        Parameter('max_linear',value=.04),Parameter('max_angular',value=.15)]))
     try:
         while not stop.is_set():rclpy.spin_once(node,timeout_sec=.03)
     finally:

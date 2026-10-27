@@ -1,0 +1,23 @@
+<!-- Refresh and replan first. Only persistent failure reaches one bounded
+     BackUp fallback. The final velocity gate requires a fresh localized pose
+     and an uncertainty-inflated known-free swept map corridor for reversing. -->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="1" name="LastResortReverseRecovery">
+    <RecoveryNode number_of_retries="1" name="BoundedNavigationRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="observation_goal_checker"/>
+      </PipelineSequence>
+      <Sequence name="RefreshAndPause">
+        <ClearEntireCostmap name="ClearLocalCostmap" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
+        <Wait wait_duration="1"/>
+      </Sequence>
+    </RecoveryNode>
+      <BackUp backup_dist="0.20" backup_speed="0.04" time_allowance="8"/>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

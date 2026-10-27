@@ -33,7 +33,7 @@ from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener, TransformException
 
-from .core import quaternion_yaw
+from .core import quaternion_yaw, stamp_seconds
 from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
 from .trial import LIMITS, PROFILES, parameter_plan, validate_trial
@@ -185,7 +185,7 @@ class Console(Workflow, Node):
                         with node.control_lock:
                             if node.stage and self.headers.get('X-Control-Generation')!=str(node.control_generation):
                                 raise ValueError('Control context changed; refresh state before retrying')
-                            result = node.command(path,body)
+                            result = node.command(path,body,expected_generation=int(self.headers.get('X-Control-Generation',node.control_generation)))
                     return self.reply(200,result)
                 except (ValueError,TypeError,KeyError) as exc:
                     return self.reply(400,{'error':str(exc)})
@@ -219,6 +219,10 @@ class Console(Workflow, Node):
                 return
             if state.get('phase') and state['phase']!=self.p['phase']:
                 return
+            if (self.p['phase']=='mission' and self.retry_after_stamp>-math.inf
+                    and float(state.get('started_stamp',-math.inf))<=self.retry_after_stamp):
+                if not (self.retry_stop_generation is not None and state.get('state') in ('CANCELING','STOPPED')):
+                    return
             with self.lock:
                 if state['state'] != self.state['state']:
                     self.events.appendleft({'time':time.strftime('%H:%M:%S'),
@@ -226,7 +230,7 @@ class Console(Workflow, Node):
                 self.state = state
                 self.freshness['Mission'] = time.monotonic()
             self.workflow_status(state)
-        except (ValueError,KeyError):
+        except (ValueError,TypeError,KeyError):
             pass
 
     def on_amcl(self,msg):
@@ -237,6 +241,8 @@ class Console(Workflow, Node):
     def on_target_estimate(self, msg):
         try:
             data=json.loads(msg.data)
+            if (self.retry_after_stamp>-math.inf
+                    and float(data.get('mission_stamp',-math.inf))<=self.retry_after_stamp):return
             if data.get('available') is False:
                 with self.lock:self.target_estimate=None
                 return
@@ -279,10 +285,12 @@ class Console(Workflow, Node):
             self.freshness['Map'] = time.monotonic()
 
     def on_route(self,msg):
+        if self.retry_after_stamp>-math.inf and stamp_seconds(msg.header.stamp)<=self.retry_after_stamp:return
         with self.lock:
             self.route = [[p.pose.position.x,p.pose.position.y] for p in msg.poses]
 
     def on_path(self,msg):
+        if self.retry_after_stamp>-math.inf and stamp_seconds(msg.header.stamp)<=self.retry_after_stamp:return
         with self.lock:
             self.path = [[p.pose.position.x,p.pose.position.y] for p in msg.poses]
 
@@ -514,7 +522,8 @@ class Console(Workflow, Node):
                     message='Navigation policy applied and verified; temporary until restart' if changing else '')
         return data
 
-    def command(self,path,body):
+    def command(self,path,body,expected_generation=None):
+        request_generation=self.control_generation if expected_generation is None else expected_generation
         if not isinstance(body,dict):
             raise ValueError('Request must be a JSON object')
         if path == '/api/calibration_target':
@@ -528,9 +537,25 @@ class Console(Workflow, Node):
             raise ValueError('Wait for the stage transition to finish')
         with self.lock:
             state = self.state['state']
-            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING','ACQUIRING','LOCALIZING')
+            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','VERIFYING_HOME','MAPPING','SAVING','ACQUIRING','LOCALIZING','RECOVERING')
         if path in ('/api/start','/api/stop'):
             key = path.rsplit('/',1)[-1]
+            start_generation=request_generation
+            def stopped_during_start(reissue=False):
+                if key!='start' or self.control_generation==start_generation:return None
+                if reissue:
+                    # One final Stop is ordered after the late Start response.
+                    # Do not recurse into setup or retry a Start in the background.
+                    stopper=self.command_clients['stop']
+                    if stopper.wait_for_service(timeout_sec=.5):
+                        stopped=stopper.call_async(Trigger.Request())
+                        limit=time.monotonic()+2.
+                        while not stopped.done() and time.monotonic()<limit:time.sleep(.02)
+                        if not stopped.done() or not stopped.result().success:
+                            self.workflow_fault='Stop after a delayed Start could not be confirmed; inspect robot status'
+                    else:
+                        self.workflow_fault='Stop service unavailable after a delayed Start; inspect robot status'
+                return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
             if key=='start' and not self.p['allow_motion']:
                 raise ValueError('Motion disabled in this console')
             if key=='start' and (self.trial_fault or self.gap_fault or self.workflow_fault):
@@ -546,6 +571,7 @@ class Console(Workflow, Node):
                     self.stage.cancel.set()
                 with self.lock:
                     self.control_generation+=1
+                    if self.retry_after_stamp>-math.inf:self.retry_stop_generation=self.control_generation
                 self.manual = (0.,0.,0.)
                 self.manual_pub.publish(Twist())
             client = self.command_clients[key]
@@ -553,15 +579,26 @@ class Console(Workflow, Node):
                 if key=='stop' and self.stage:
                     return {'success':True,'message':'Stop recorded; no active stage service'}
                 raise RuntimeError('Mission service is not available')
+            canceled=stopped_during_start()
+            if canceled:return canceled
             future = client.call_async(Trigger.Request())
             deadline = time.monotonic()+5
             while not future.done() and time.monotonic()<deadline:
                 time.sleep(0.02)
             if not future.done():
+                canceled=stopped_during_start(reissue=True)
+                if canceled:
+                    self.workflow_fault=self.workflow_fault or 'Start response timed out after Stop; inspect robot status'
+                    return canceled
                 raise RuntimeError('Mission service timed out; inspect mission status')
             result = future.result()
+            canceled=stopped_during_start(reissue=True)
+            if canceled:return canceled
             if key=='start' and result.success:
-                self.record.start(self.p['phase'])
+                with self.lock:
+                    changed=self.control_generation!=start_generation
+                    if not changed:self.record.start(self.p['phase'])
+                if changed:return stopped_during_start(reissue=True)
             return {'success':result.success,'message':result.message}
         if path=='/api/trial':
             return self.trial_settings(body)

@@ -111,13 +111,19 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
     assert not target.update([wrong], 10.5, 9.)
     assert target.candidate['stamp'] == 10.25
     assert not target.update([detection(7.)], 10.5, 9.)
-    assert target.expired(16.)
+    assert not target.expired(16.)
+    target.advance_clock(1.,working=True)
+    target.advance_clock(16.,working=False,traveling=True)
+    target.advance_clock(76.,working=True)
+    assert not target.expired(76.)  # the minute of navigation is excluded
+    target.advance_clock(106.)
+    assert target.expired(46.)
     target.reset()
     assert not target.update([detection(20., x=1., y=1.)], 20., 19.)
     assert not target.update([detection(20.25, x=2., y=1.)], 20.25, 19.)
 
 
-def test_approach_is_reachable_with_standoff_and_bearing_only_never_translates():
+def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
     target = SingleTarget()
     target.candidate = detection(10., x=2., y=1., sigma=.3)
@@ -126,7 +132,35 @@ def test_approach_is_reachable_with_standoff_and_bearing_only_never_translates()
     assert .45 < math.hypot(goal[0]-2, goal[1]-1) < 1.2
     target.candidate = detection(10.)
     assert target.observation_goal(planner, (1., 1., .5)) == (1., 1., 0.)
-    assert target.observation_goal(planner, (1., 1., .5)) is None
+    alternative=target.observation_goal(planner, (1., 1., .5))
+    assert alternative and math.dist(alternative[:2],(1.,1.))>=.3
+
+
+def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline():
+    planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
+    target=SingleTarget();target.candidate=detection(10.)
+    pose=(2.,2.,.5)
+    first=target.observation_goal(planner,pose)
+    assert first[:2]==pose[:2]
+    # Simulate fresh detections repeatedly requesting small corrections.
+    target.candidate=detection(10.5);target.candidate['bearing']=.1
+    second=target.observation_goal(planner,pose)
+    assert second[:2]==pose[:2]
+    target.candidate=detection(11.);target.candidate['bearing']=.2
+    third=target.observation_goal(planner,pose)
+    assert third and math.dist(third[:2],pose[:2])>=.3
+    assert target.turns_at(pose)==2
+
+
+def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline():
+    planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
+    target=SingleTarget();target.candidate=detection(10.,x=20.,y=20.)
+    pose=(2.,2.,0.)
+    # The north-side point is Nav2-blocked; south is usable.
+    goal=target.observation_goal(planner,pose,force_baseline=True,
+        allowed=lambda x,y:y<2.)
+    assert goal and goal[1]<2. and math.dist(goal[:2],pose[:2])>=.3
+    assert target.last_goal_reason=='Depth-free lateral baseline'
 
 
 def test_fast_profile_synchronizes_both_stages_and_search_estimates():
@@ -145,7 +179,8 @@ def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
     pose = (1.4, 1., 0.)
     goal = target.observation_goal(planner, pose)
     assert goal and planner.safe[planner.world_to_cell(*goal[:2])]
-    assert .35 < math.hypot(goal[0]-2, goal[1]-1) < .55
+    assert .35 < math.hypot(goal[0]-2, goal[1]-1) < 1.1
+    assert abs(math.atan2(1.-goal[1],2.-goal[0])) > math.radians(15.)
     assert math.dist(goal[:2], pose[:2]) >= .12 or abs(goal[2]-pose[2]) >= .2
 
 
@@ -153,8 +188,10 @@ def test_centered_bearing_only_target_does_not_spend_a_step_on_a_noop():
     target = SingleTarget()
     target.candidate = detection(10.)
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
-    assert target.observation_goal(planner, (1., 1., .04)) is None
-    assert not target.visited
+    # An already centered target should acquire parallax, not another turn.
+    goal=target.observation_goal(planner, (1., 1., 0.))
+    assert goal and math.dist(goal[:2],(1.,1.))>=.3
+    assert planner.safe[planner.world_to_cell(*goal[:2])]
 
 
 def test_camera_settings_reject_nonfinite_values_without_inventing_mount_dimensions():
@@ -165,3 +202,13 @@ def test_camera_settings_reject_nonfinite_values_without_inventing_mount_dimensi
         validate_mount_settings(dict(settings, camera_height=math.nan))
     with pytest.raises(ValueError):
         validate_mount_settings(dict(settings, camera_min_range=1., camera_max_range=.5))
+
+
+def test_horizontal_clipping_only_guides_a_mapped_retreat_not_depth():
+    planner=CoveragePlanner(np.zeros((40,40)),.1,(0,0,0))
+    target=SingleTarget();target.candidate=dict(stamp=10.,label='cup',confidence=.9,
+        box=[0,100,60,350],steering_bearing=0.)
+    goal=target.observation_goal(planner,(1.,1.,0.))
+    assert goal and goal[0]<1. and goal[1]==pytest.approx(1.)
+    assert math.dist(goal[:2],(1.,1.))==pytest.approx(.3)
+    assert planner.safe[planner.world_to_cell(*goal[:2])]

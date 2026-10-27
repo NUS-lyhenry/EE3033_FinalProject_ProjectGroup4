@@ -1,0 +1,37 @@
+{
+  "release": "parallax_20261027_50f9b06f72",
+  "source_sha256": "50f9b06f7274c13cfff17b1084fa5879c413a2aa23556f1ccc2afb46fc958c9a",
+  "archive": "/private/tmp/parallax_20261027_50f9b06f72.tar.gz",
+  "archive_sha256": "41c4ae1c3c082bfb45dfb29c76efb79fbde296cbf2937c61936f5edf8f921be0",
+  "files": 124,
+  "deployed": true,
+  "robot": "balance6",
+  "verified_api_version": "parallax_20261027_50f9b06f72",
+  "map": "onsite_74jh9pqj/map.yaml",
+  "options": {
+    "target_class": "bottle",
+    "localization_method": "hybrid",
+    "preferred_target_sigma": 0.14,
+    "return_tolerance": 0.2
+  },
+  "python_tests_passed": 302,
+  "full_simulation": "not run; user requests deploy first",
+  "real_AB_success": "not established; current new-version trial is searching",
+  "previous_trial_evidence": {
+    "version": "recovery_20261027_6136d65c75",
+    "active_localization_seconds": 28.3162777,
+    "travel_seconds": 0.0,
+    "motion_goals": 4,
+    "valid_sites": 1,
+    "valid_frames": 1,
+    "outcome": "FOUND_UNLOCALIZED"
+  },
+  "changes": [
+    "At most two in-place turns per site; never dispatch a centering no-op",
+    "Prefer a lateral baseline after repeated turns or sampling hold",
+    "Depth-free baseline fallback even when floor coordinates are unusable",
+    "Check Nav2 costmap during candidate selection and after cell quantization",
+    "Four valid bearing frames in a six-second per-site window; A preserved during B travel",
+    "Eight-second station hold includes settling; explicit A/B/C stage and motion trace"
+  ]
+}

@@ -77,6 +77,11 @@ async function fixture(page,{phase='mapping',active=false}={}){
     }else if(path==='/api/calibration_target'){state.calibration_live.target={xy:[body.x,body.y]};state.calibration_live.plan={goals:[],reverse_extent_m:.8};}
     else if(path==='/api/initial_pose'){state.initial_pose_sent=true;state.health.AMCL.ok=true;state.mission.ready=true;}
     else if(path==='/api/start'){state.mission.state=state.phase==='mapping'?'MAPPING':'SEARCHING';state.mission.home=[1,1,0];}
+    else if(path==='/api/retry_search'){
+      state.mission={...state.mission,state:'SEARCHING',home:[1,1,0],target:null,target_detected:false};
+      state.target_estimate=null;state.route=[];state.path=[];state.control_generation++;
+      state.assessment={...state.assessment,finished:null,includes_mapping:false,timing_valid:false,elapsed_seconds:0};
+    }
     else if(path==='/api/map_waypoint'){state.mission.state='MAPPING';state.mission.mapping_mode='waypoint';state.mission.waypoint=[body.x,body.y,body.yaw];state.mission.waypoint_verified=false;}
     else if(path==='/api/stop'){state.mission.state='STOPPED';state.control_generation++;}
     else if(path==='/api/result')json={simulated:true,assessment:state.assessment,mission:state.mission,selected_map:state.selected_map};
@@ -105,6 +110,71 @@ test('preview is explicitly simulated and cannot command robot motion',async({pa
   await page.goto('/');await expect(page.locator('#previewNotice')).toBeVisible();
   await expect(page.locator('#start')).toBeDisabled();await expect(page.locator('#loadMapping')).toBeDisabled();
   const response=await request.post('/api/start',{data:{}});expect(response.status()).toBe(403);
+});
+
+test('Search again reuses the loaded map after a completed search without rebuilding',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  const entry={id:'room/map.yaml',path:'/SIMULATED/maps/room/map.yaml',reviewed:true,quality:'mapped'};
+  f.setMaps([entry]);f.state.selected_map=entry;f.state.initial_pose_sent=true;
+  f.state.mission={...f.state.mission,state:'FOUND_UNLOCALIZED',target_detected:true,home:[1,1,0]};
+  f.state.assessment.finished=70;f.state.assessment.maps=[entry.id];
+  await expect(page.getByRole('button',{name:'Search again',exact:true})).toBeVisible();
+  await expect(page.locator('#retrySearch')).toBeEnabled();
+  await expect(page.locator('#startMission')).toBeHidden();
+  await page.locator('#retrySearch').click();
+  await expect(page.locator('#state')).toHaveText('SEARCHING');
+  await expect(page.locator('#retrySearch')).toBeHidden();
+  expect(f.calls.map(c=>c.path)).toEqual(['/api/retry_search']);
+  expect(f.state.selected_map).toEqual(entry);expect(f.state.initial_pose_sent).toBe(true);
+  expect(f.state.assessment.includes_mapping).toBe(false);
+  expect(f.errors).toEqual([]);
+});
+
+test('Search again waits for localization and is unavailable during recovery or transition',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  f.state.initial_pose_sent=true;f.state.mission.state='FAILED';
+  f.state.mission.ready=false;
+  await expect(page.locator('#retrySearch')).toBeVisible();
+  await expect(page.locator('#retrySearch')).toBeDisabled();
+  await expect(page.locator('#loadMission')).toHaveText('Reload map & set start pose');
+  f.state.mission.ready=true;f.state.stage.transitioning=true;
+  await expect(page.locator('#retrySearch')).toBeDisabled();
+  f.state.stage.transitioning=false;
+  await expect(page.locator('#retrySearch')).toBeEnabled();
+  f.state.mission.state='RECOVERING';
+  await expect(page.locator('#retrySearch')).toBeHidden();
+  await expect(page.locator('#newTrial')).toBeDisabled();
+  await expect(page.locator('#loadMapping')).toBeDisabled();
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('workflow can load a reviewed saved map after restart without rebuilding or starting motion',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  const entry={id:'previous_room/map.yaml',path:'/SIMULATED/maps/previous_room/map.yaml',reviewed:true,quality:'mapped'};
+  f.setMaps([entry]);f.state.assessment.finished=70;f.state.stage.running=false;
+  await page.locator('#refreshMaps').click();
+  await expect(page.locator('#mapLibrary')).toBeVisible();
+  await expect(page.locator('#savedMaps')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Use saved map',exact:true})).toBeEnabled();
+  await page.locator('#useSavedMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  await expect(page.locator('#setup')).toBeVisible();
+  await expect(page.locator('#startMission')).toBeDisabled();
+  expect(f.calls.filter(c=>c.path==='/api/stage').map(c=>c.body.map_id)).toEqual([entry.id]);
+  expect(f.calls.some(c=>['/api/new_trial','/api/start'].includes(c.path))).toBe(false);
+  expect(f.errors).toEqual([]);
+});
+
+test('localization work and waypoint travel use separate displayed timers',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  f.state.mission={...f.state.mission,state:'LOCALIZING',target_detected:true,
+    localization_active_seconds:8.2,localization_travel_seconds:61.4,
+    localization_stage:'B: collecting settled bearing frames',
+    bearing_progress:{sites:[{ready:true,frames:4},{ready:false,frames:2}]}};
+  await expect(page.locator('#localizationProgress')).toContainText('8.2 / 45 s');
+  await expect(page.locator('#localizationProgress')).toContainText('Travel between views: 61.4 s');
+  await expect(page.locator('#localizationProgress')).toContainText('A: ready · B: 2/4 frames');
+  expect(f.errors).toEqual([]);
 });
 
 test('camera setup is a preparation page and shows saved profile reuse',async({page})=>{
@@ -188,7 +258,7 @@ test('unverified home success and absent targets never look like a complete miss
   f.state.mission={...f.state.mission,state:'COMPLETE',target:{x:1,y:2,class:'cup'},return_verified:false};
   await expect(page.locator('#state')).toHaveText('COMPLETE');await expect(page.locator('#resultOutcome')).toHaveText('Trial not complete');
   f.state.mission={...f.state.mission,state:'NOT_FOUND',target:null,return_verified:true,return_distance:.05};
-  await expect(page.locator('#resultOutcome')).toHaveText('Target not found');await expect(page.locator('#resultTarget')).toHaveText('Awaiting target');
+  await expect(page.locator('#resultOutcome')).toHaveText('Search completed · target not found');await expect(page.locator('#resultTarget')).toHaveText('Awaiting target');
 });
 
 test('target selector contains only model labels and locks mission setup until labels arrive',async({page})=>{
@@ -403,7 +473,7 @@ test('single-page workflow hides optional tools and prepares a visual mission af
   await expect(page.locator('#targetClass')).toBeHidden();
   await page.locator('#saveMap').click();await expect(page.locator('#targetClass')).toBeVisible();await page.locator('#reviewMap').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
-  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe('ground_plane');
+  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe('hybrid');
   await expect(page.locator('#setup')).toBeVisible();await page.locator('#setPose').click();
   await page.locator('#startMission').click();await expect(page.locator('#state')).toHaveText('SEARCHING');
   f.state.mission.state='ACQUIRING';await expect(page.locator('#startMission')).toBeDisabled();
@@ -429,7 +499,7 @@ test('default workflow can apply a changed target without starting the mission',
   await expect(page.locator('#loadMission')).toBeHidden();
   expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body).toEqual({
     phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'bottle',
-    localization_method:'ground_plane',return_tolerance:.2,preferred_target_sigma:.1});
+    localization_method:'hybrid',return_tolerance:.2,preferred_target_sigma:.1});
   expect(new URL(page.url()).hash).toBe('#/workflow');
   await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -510,4 +580,26 @@ test('older robot software cannot silently ignore the new precision setting',asy
   await expect(page.locator('#preferredSigma')).toBeDisabled();
   await expect(page.locator('#preferredSigmaHelp')).toContainText('Robot software update required');
   expect(f.calls).toEqual([]);
+});
+
+
+test('found without coordinates and incomplete search have distinct return outcomes',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.mission={...f.state.mission,state:'FOUND_UNLOCALIZED',target_detected:true,target:null,return_verified:true,reason:'No safe observation remains'};
+  await expect(page.locator('#resultOutcome')).toHaveText('Target found · position unavailable');
+  await expect(page.locator('#resultReturn')).toContainText('Verified');
+  f.state.mission={...f.state.mission,state:'SEARCH_INCOMPLETE',target_detected:false,reason:'Wall-side region remains blocked'};
+  await expect(page.locator('#resultOutcome')).toHaveText('Search incomplete');
+  await expect(page.locator('#resultReason')).toContainText('Wall-side region');
+});
+
+test('TF pitch override is saved as a boolean with radians',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  await page.goto('/#/workflow');await page.locator('#advancedTools').evaluate(el=>el.open=true);
+  await page.locator('#visionPitch').fill('28.6');
+  await page.locator('#visionPitchOverride').check();
+  await page.locator('#saveVision').click();
+  await expect.poll(()=>f.calls.some(c=>c.path==='/api/vision')).toBe(true);
+  const body=f.calls.find(c=>c.path==='/api/vision').body;
+  expect(body.use_pitch_override).toBe(true);expect(body.camera_pitch).toBeCloseTo(28.6*Math.PI/180,8);
 });

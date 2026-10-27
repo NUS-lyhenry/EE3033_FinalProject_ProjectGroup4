@@ -31,14 +31,35 @@ def test_slanted_frontier_is_not_discarded_as_single_cell_noise():
     assert planner.safe[planner.world_to_cell(*goal[:2])]
 
 
-def test_frontier_failures_suppress_nearby_goals():
+def test_frontier_failure_excludes_the_approach_but_preserves_nearby_alternatives():
     grid=np.full((40,40),-1)
     grid[1:39,1:25]=0
     first,count=frontier_goal(grid,0.1,(0,0,0),(1,1,0))
     assert first and count
     second,_=frontier_goal(grid,0.1,(0,0,0),(1,1,0),failed=[first[:2]])
     if second:
-        assert np.linalg.norm(np.array(second[:2])-first[:2])>=0.4
+        assert np.linalg.norm(np.array(second[:2])-first[:2])>=0.2
+
+
+def test_native_costmap_mask_rejects_a_grid_safe_frontier_goal():
+    grid=np.full((50,60),-1,dtype=int)
+    grid[5:45,5:35]=0
+    first,_=frontier_goal(grid,.05,(0,0,0),(.8,1.2,0),clearance=.14)
+    assert first is not None
+    planner=CoveragePlanner(grid,.05,(0,0,0),clearance=.15)
+    mask=np.ones_like(grid,dtype=bool)
+    r,c=planner.world_to_cell(*first[:2]);mask[r-1:r+2,c-1:c+2]=False
+    second,count=frontier_goal(grid,.05,(0,0,0),(.8,1.2,0),clearance=.14,safe_mask=mask)
+    assert count and second is not None
+    assert mask[planner.world_to_cell(*second[:2])]
+
+
+def test_small_unresolved_frontier_is_not_evidence_of_complete_mapping():
+    grid=np.full((30,30),100)
+    grid[1:29,1:29]=0
+    grid[1,10]=-1
+    goal,count=frontier_goal(grid,.05,(0,0,0),(.8,.8,0),min_frontier_cells=5)
+    assert goal is None and count>0
 
 
 def test_frontier_outside_map_fails_closed():

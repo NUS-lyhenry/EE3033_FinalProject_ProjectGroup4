@@ -22,12 +22,12 @@ from std_msgs.msg import String
 from cv_bridge import CvBridge
 from tf2_ros import Buffer, TransformListener, TransformException
 
-from .core import associate_lidar, stamp_seconds, quaternion_yaw
+from .core import associate_lidar, stamp_seconds, quaternion_yaw, angle_difference
 from .observation_motion import ObservationMotion
 from .ros_utils import parameters, transform_arrays
 from .model_labels import validate_target
 from .calibration import load_profile, mounting_rotation, floor_point, in_envelope
-from .vision_geometry import FloorCamera, camera_matrix
+from .vision_geometry import FloorCamera, camera_matrix, override_pitch
 
 
 class Perception(Node):
@@ -38,14 +38,14 @@ class Perception(Node):
             'confidence': 0.60, 'image_topic': '/image_raw',
             'camera_info_topic': '/camera_info', 'scan_topic': '/scan_fixed',
             'camera_optical_frame': 'project_camera_optical', 'map_frame': 'map',
-            'localization_method': 'ground_plane', 'max_scan_delta': 0.25,
+            'localization_method': 'hybrid', 'max_scan_delta': 0.25,
             'max_image_age': 1.5, 'inference_period': 0.25, 'image_size': 416,
             'max_range': 3.0, 'ground_z': 0.0, 'position_sigma': 0.10,
             'min_lidar_points': 2, 'cluster_gap': 0.12, 'max_cluster_width': 0.5,
             'cpu_threads': 1,
             'calibration_file': '',
             'base_frame': 'base_footprint', 'camera_height': 0., 'camera_pitch': 0.,
-            'camera_yaw': 0., 'camera_x': 0., 'camera_y': 0.,
+            'camera_yaw': 0., 'use_pitch_override': False, 'odom_frame': 'odom_combined', 'camera_x': 0., 'camera_y': 0.,
             'horizontal_fov': 0., 'camera_min_range': .35, 'camera_max_range': 2.,
             'pixel_margin': 8., 'pixel_sigma': 2., 'height_sigma': .015,
             'pitch_sigma': .034906585, 'max_report_sigma': .10,
@@ -53,8 +53,8 @@ class Perception(Node):
             'observation_angular_mean': .12, 'observation_position_span': .04,
             'observation_heading_span': .10,
         })
-        if self.p['localization_method'] not in ('lidar', 'ground_plane'):
-            raise ValueError('localization_method must be lidar or ground_plane')
+        if self.p['localization_method'] not in ('lidar', 'ground_plane', 'hybrid'):
+            raise ValueError('localization_method must be lidar, ground_plane or hybrid')
         self.calibration = load_profile(self.p['calibration_file']) if self.p['calibration_file'] else None
         self.model = self.load_detector()
         validate_target(self.model.names,self.p['target_class'])
@@ -145,6 +145,15 @@ class Perception(Node):
     def settled(self):
         return bool(self.motion_check and self.motion_check['verified'])
 
+    def diagnostic_frame(self,image,stamp,detections=(),reason_codes=(),error=None):
+        return dict(image_frame=image.header.frame_id,width=image.width,height=image.height,
+            frame_age=self.get_clock().now().nanoseconds*1e-9-stamp,
+            target_class=self.p['target_class'],localization_method=self.p['localization_method'],
+            detector_confidence_threshold=self.p['confidence'],motion_check=self.motion_check,
+            odometry_age=self.last_odometry_age,detections=list(detections)[:16],
+            detection_count=len(detections),detections_truncated=len(detections)>16,
+            reason_codes=list(reason_codes),error=error)
+
     def camera_geometry(self, image, camera):
         if not image.header.frame_id:
             raise ValueError('Camera image needs a frame ID')
@@ -177,6 +186,9 @@ class Perception(Node):
                     self.p['camera_optical_frame'], Time.from_msg(image.header.stamp))
                 rotation, translation = transform_arrays(transform)
                 source += ' + timestamped TF mount'
+                if self.p.get('use_pitch_override', False):
+                    rotation = override_pitch(rotation, self.p['camera_pitch'])
+                    source += ' + explicit pitch override (unverified)'
         geometry = FloorCamera(image.width, image.height, k, d, rotation, translation, source,
             self.p['camera_min_range'], self.p['camera_max_range'], self.p['pixel_margin'],
             self.p['pixel_sigma'], self.p['height_sigma'], self.p['pitch_sigma'])
@@ -193,7 +205,7 @@ class Perception(Node):
             self.last_warning = time.monotonic()
 
     def locate(self, box, image, camera, scans):
-        if self.p['localization_method'] == 'ground_plane' and self.calibration is not None:
+        if self.p['localization_method'] in ('ground_plane', 'hybrid') and self.calibration is not None:
             profile = self.calibration
             c = profile['camera']
             if (c['width'], c['height'], c['frame_id']) != (image.width, image.height, image.header.frame_id):
@@ -206,7 +218,7 @@ class Perception(Node):
             transform = self.buffer.lookup_transform(self.p['map_frame'], profile['base_frame'], Time.from_msg(image.header.stamp))
             rotation, translation = transform_arrays(transform)
             return rotation@point+translation
-        if self.p['localization_method'] == 'ground_plane':
+        if self.p['localization_method'] in ('ground_plane', 'hybrid'):
             geometry = self.floor_camera or self.camera_geometry(image, camera)
             point, sigma, distance = geometry.project_box(box, coarse_max_range=self.p['max_range'])
             self.geometric_sigma = sigma
@@ -272,12 +284,16 @@ class Perception(Node):
         age = self.get_clock().now().nanoseconds*1e-9 - stamp
         if not 0 <= age <= self.p['max_image_age']:
             self.warn('Stale image or unsynchronized clocks; refusing target coordinates')
+            self.obs_pub.publish(String(data=json.dumps(dict(stamp=stamp,observations=[],bearings=[],
+                diagnostics=self.diagnostic_frame(image,stamp,reason_codes=['perception_image_stale_or_future'])))))
             return
         observations = []
         detections = []
+        bearings = []
         detected_confidences=[]
         deferred = False
         geometry_error = None
+        frame_codes=[]
         started = time.monotonic()
         try:
             frame = self.bridge.imgmsg_to_cv2(image, desired_encoding='bgr8')
@@ -285,11 +301,12 @@ class Perception(Node):
                                         conf=self.p['confidence'], device='cpu',
                                         verbose=False)[0]
             self.floor_camera = None
-            if self.p['localization_method'] == 'ground_plane':
+            if self.p['localization_method'] in ('ground_plane', 'hybrid'):
                 try:
                     self.floor_camera = self.camera_geometry(image, camera)
                 except (TransformException, ValueError, cv2.error) as exc:
                     geometry_error = str(exc)
+                    frame_codes.append('camera_geometry_tf_error' if isinstance(exc,TransformException) else 'camera_geometry_invalid')
             annotated = result.plot()
             for b in result.boxes:
                 label = result.names[int(b.cls.item())]
@@ -298,7 +315,14 @@ class Perception(Node):
                 detected_confidences.append(float(b.conf.item()))
                 box = b.xyxy[0].cpu().numpy().astype(float)
                 detection = {'stamp': stamp, 'label': label, 'confidence': float(b.conf.item()),
-                             'box': box.tolist(), 'reason': geometry_error}
+                             'box': box.tolist(), 'reason': geometry_error,'reason_codes':[],
+                             'settled':self.settled(),'motion_check':self.motion_check,
+                             'frame_age':self.get_clock().now().nanoseconds*1e-9-stamp}
+                if box[0]<self.p['pixel_margin'] or box[2]>image.width-self.p['pixel_margin']:
+                    detection['reason_codes'].append('bearing_horizontal_clipping')
+                if box[1]<self.p['pixel_margin'] or box[3]>image.height-self.p['pixel_margin']:
+                    detection['reason_codes'].append('detection_vertical_clipping')
+                if not detection['settled']:detection['reason_codes'].append('capture_motion_unsettled')
                 point = None
                 self.projection_sigma = self.p['position_sigma']
                 self.geometric_sigma = self.p['position_sigma']
@@ -308,29 +332,69 @@ class Perception(Node):
                         point = self.locate(box, image, camera, scans)
                     except (TransformException, ValueError, cv2.error) as exc:
                         detection['reason'] = str(exc)
+                        detection['projection_error']=str(exc)
+                        detection['reason_codes'].append('projection_tf_error' if isinstance(exc,TransformException) else 'projection_geometry_rejected')
                         self.warn('Target projection unavailable: ' + str(exc))
                 if self.floor_camera is not None:
+                    detection['bearing_stage']='map_transform'
                     try:
                         tr = self.buffer.lookup_transform(self.p['map_frame'], self.p['base_frame'], Time.from_msg(image.header.stamp))
                         rot, origin = transform_arrays(tr)
                         ray = cv2.undistortPoints(np.array([[[(box[0]+box[2])/2, (box[1]+box[3])/2]]]), self.floor_camera.k, self.floor_camera.d).reshape(2)
                         direction = rot@self.floor_camera.rotation@np.r_[ray, 1.]
+                        if not np.isfinite(direction).all() or np.linalg.norm(direction[:2])<=1e-8:
+                            raise ValueError('Nonfinite or vertical bearing ray')
+                        horizontal_valid = (box[0] >= self.p['pixel_margin']
+                            and box[2] <= image.width-self.p['pixel_margin'] and box[2]-box[0] >= 4)
+                        # A cropped horizontal centre can guide a bounded
+                        # retreat but is never geometric localization evidence.
+                        detection['steering_bearing'] = math.atan2(direction[1], direction[0])
+                        detection['bearing_stage']='map_ray'
+                        if not horizontal_valid:
+                            raise ValueError('Horizontal clipping; reframe before measuring a bearing')
                         detection.update(bearing=math.atan2(direction[1], direction[0]),
                             origin=(rot@self.floor_camera.translation+origin)[:2].tolist())
-                    except (TransformException, ValueError, cv2.error):
-                        pass
+                        optical_direction = self.floor_camera.rotation@np.r_[ray, 1.]
+                        center_error = angle_difference(math.atan2(optical_direction[1], optical_direction[0]),self.floor_camera.yaw)
+                        detection.update(center_error=center_error, settled=self.settled(),
+                            bearing_sigma=math.sqrt((self.p['pixel_sigma']/self.floor_camera.k[0,0])**2+self.pose_variance[1]),
+                            position_sigma=math.sqrt(max(.0004, self.pose_variance[0])))
+                        if abs(center_error)>math.radians(2.):detection['reason_codes'].append('bearing_not_centered')
+                        detection['bearing_stage']='odom_transform'
+                        odom_tf = self.buffer.lookup_transform(self.p['odom_frame'], self.p['base_frame'], Time.from_msg(image.header.stamp))
+                        odom_rot, odom_translation = transform_arrays(odom_tf)
+                        map_tf = self.buffer.lookup_transform(self.p['map_frame'], self.p['odom_frame'], Time.from_msg(image.header.stamp))
+                        map_rot, map_translation = transform_arrays(map_tf)
+                        odom_direction = odom_rot@optical_direction
+                        detection.update(odom_origin=(odom_rot@self.floor_camera.translation+odom_translation)[:2].tolist(),
+                            odom_bearing=math.atan2(odom_direction[1], odom_direction[0]),
+                            map_odom=[float(map_translation[0]), float(map_translation[1]), math.atan2(map_rot[1,0], map_rot[0,0])])
+                        if not np.isfinite([*detection['odom_origin'],detection['odom_bearing'],*detection['map_odom']]).all():
+                            raise ValueError('Nonfinite continuous-odometry bearing geometry')
+                        detection['bearing_stage']='complete'
+                        detection['bearing_valid']=True
+                        if self.p['localization_method']=='hybrid':
+                            bearings.append(dict(detection))
+                    except (TransformException, ValueError, cv2.error) as exc:
+                        detection['bearing_valid']=False
+                        detection['bearing_error']=str(exc)
+                        detection['reason_codes'].append('bearing_tf_error' if isinstance(exc,TransformException) else 'bearing_geometry_rejected')
+                elif self.p['localization_method']=='hybrid':
+                    detection['bearing_valid']=False
+                    detection['reason_codes'].append('bearing_camera_geometry_unavailable')
                 if point is not None and np.all(np.isfinite(point)):
                     reliable = self.projection_in_range and self.projection_sigma <= self.p['max_report_sigma']
                     detection.update(x=float(point[0]), y=float(point[1]), sigma=self.projection_sigma,
                                      close_view=reliable)
                     if not reliable:
                         detection['reason'] = 'Position uncertainty exceeds preferred precision; seeking a better view'
+                        detection['reason_codes'].append('projection_uncertain_or_out_of_range')
                     usable = self.projection_in_range
-                    if self.p['localization_method'] == 'ground_plane' and not self.settled():
+                    if self.p['localization_method'] in ('ground_plane', 'hybrid') and not self.settled():
                         usable = False
                         deferred = True
                         detection['reason'] = 'Collecting a bounded capture-time motion window'
-                    if self.p['localization_method'] == 'ground_plane' and self.motion_check:
+                    if self.p['localization_method'] in ('ground_plane', 'hybrid') and self.motion_check:
                         span = self.motion_check.get('position_span') or 0.
                         heading = self.motion_check.get('heading_span') or 0.
                         # Balance motion contributes uncertainty even when the window passes.
@@ -344,6 +408,7 @@ class Perception(Node):
                                          'y': float(point[1]), 'label': label,
                                          'confidence': float(b.conf.item()),
                                          'sigma': self.projection_sigma,
+                                         'box': box.tolist(), 'source_frame': stamp,
                                          'method': self.p['localization_method']})
                     caption = (f'map: ({point[0]:.2f}, {point[1]:.2f}) m' if reliable and usable else
                                f'candidate: ({point[0]:.2f}, {point[1]:.2f}) +/- {self.projection_sigma:.2f} m')
@@ -356,7 +421,9 @@ class Perception(Node):
             self.image_pub.publish(out)
             # Publish even an empty result, so misses break confirmation streaks.
             self.obs_pub.publish(String(data=json.dumps({'stamp': stamp,
-                                                          'observations': observations, 'deferred': deferred})))
+                'observations': observations, 'bearings': bearings, 'deferred': deferred,
+                'diagnostics':self.diagnostic_frame(image,stamp,detections,
+                    frame_codes+([] if detections else ['detector_no_target_above_threshold']))})))
             self.detections_pub.publish(String(data=json.dumps({'stamp': stamp, 'detections': detections})))
             self.status_pub.publish(String(data=json.dumps({
                 'stamp': stamp, 'ready': True, 'latency': time.monotonic()-started,
@@ -364,9 +431,9 @@ class Perception(Node):
                 'detected_candidates':len(detected_confidences),
                 'highest_confidence':max(detected_confidences) if detected_confidences else None,
                 'target_class': self.p['target_class'],
-                'geometry_ready': self.floor_camera is not None if self.p['localization_method'] == 'ground_plane' else camera is not None,
+                'geometry_ready': self.floor_camera is not None if self.p['localization_method'] in ('ground_plane', 'hybrid') else camera is not None,
                 'geometry_error': geometry_error,
-                'observation_ready': self.settled() if self.p['localization_method'] == 'ground_plane' else True,
+                'observation_ready': self.settled() if self.p['localization_method'] in ('ground_plane', 'hybrid') else True,
                 'motion_check': self.motion_check,
                 'frame_age': self.get_clock().now().nanoseconds*1e-9-stamp,
                 'projection_failures': [d['reason'] for d in detections if 'x' not in d],
@@ -378,7 +445,9 @@ class Perception(Node):
         except Exception as exc:
             self.warn('Perception failed: ' + str(exc))
             self.obs_pub.publish(String(data=json.dumps({'stamp': stamp,
-                                                          'observations': []})))
+                'observations': [],'bearings':[],
+                'diagnostics':self.diagnostic_frame(image,stamp,detections,
+                    frame_codes+['perception_processing_error'],error=type(exc).__name__+': '+str(exc))})))
 
 
 def main():

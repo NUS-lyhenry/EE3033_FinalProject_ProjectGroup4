@@ -2,7 +2,11 @@
 import math
 import time
 import json
-from geometry_msgs.msg import Twist
+import numpy as np
+from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformListener, TransformException
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 from rclpy.node import Node
@@ -10,6 +14,8 @@ from rclpy.qos import qos_profile_sensor_data
 from .ros_utils import LATCHED, parameters, run
 from .trial import guarded_parameters
 from .gap import DEFAULT_AUDACITY, TURNING, guard_rotation
+from .core import quaternion_yaw, stamp_seconds
+from .reverse_safety import reverse_clearance
 
 
 class VelocityGate(Node):
@@ -21,7 +27,13 @@ class VelocityGate(Node):
             'max_linear': 0.15, 'max_angular': 0.45,
             'stop_distance': 0.25, 'rotation_clearance': TURNING[DEFAULT_AUDACITY]['stop'],
             'navigation_profile': 'original',
+            'reverse_speed': .04, 'reverse_distance': .20,
+            'reverse_reserve': .04, 'reverse_radius': .15,
+            'odom_frame': 'odom_combined', 'base_frame': 'base_footprint',
+            'reverse_policy': 'recovery',
         })
+        if self.p['reverse_policy'] not in ('recovery','calibration'):
+            raise ValueError('reverse_policy must be recovery or calibration')
         if self.p['navigation_profile'] not in ('original', 'fast'):
             raise ValueError('navigation_profile must be original or fast')
         if self.p['navigation_profile'] == 'fast':
@@ -37,6 +49,14 @@ class VelocityGate(Node):
         self.command = Twist()
         self.commands = {'manual': (Twist(), -math.inf), 'nav': (Twist(), -math.inf)}
         self.scan = None
+        self.map = None
+        self.localization = None
+        self.reverse_start = None
+        self.reverse_idle = None
+        self.reverse_reason = None
+        self.reverse_envelope = None
+        self.tf = Buffer()
+        self.listener = TransformListener(self.tf, self)
         self.pub = self.create_publisher(Twist, self.p['output_topic'], 10)
         self.status_pub = self.create_publisher(String, '/project/velocity_gate_status', 10)
         self.last_status = 0.
@@ -48,7 +68,52 @@ class VelocityGate(Node):
             self.create_subscription(Twist, '/project/manual_cmd_vel',
                                      lambda msg:self.on_command(msg,'manual'), 10)
         self.create_subscription(LaserScan, '/scan_fixed', self.on_scan, qos_profile_sensor_data)
+        self.create_subscription(OccupancyGrid, '/map', self.on_map, LATCHED)
+        self.create_subscription(PoseWithCovarianceStamped,
+            '/pose' if self.p['mapping_mode'] else '/amcl_pose', self.on_localization, 10)
         self.create_timer(0.05, self.tick)
+
+    def on_map(self, msg):
+        if msg.header.frame_id == 'map':
+            self.map = msg
+
+    def on_localization(self, msg):
+        if msg.header.frame_id == 'map':
+            self.localization = msg
+
+    def approve_reverse(self, now):
+        """Rear laser coverage is optional; known map and fresh pose are required."""
+        self.reverse_envelope = None
+        if self.map is None or self.localization is None:
+            return False, 'reverse_map_or_localization_missing'
+        clock = self.get_clock().now().nanoseconds*1e-9
+        if not 0 <= clock-stamp_seconds(self.localization.header.stamp) <= 5.:
+            return False, 'reverse_localization_stale'
+        try:
+            tr = self.tf.lookup_transform('map', self.p['base_frame'], Time())
+            od = self.tf.lookup_transform(self.p['odom_frame'], self.p['base_frame'], Time())
+            if any(not -.5 <= clock-stamp_seconds(t.header.stamp) <= .5 for t in (tr,od)):
+                return False, 'reverse_transform_stale'
+            p,q = tr.transform.translation,tr.transform.rotation
+            op = od.transform.translation
+            if self.reverse_start is None:
+                self.reverse_start = (now, op.x, op.y)
+            duration = now-self.reverse_start[0]
+            traveled = math.hypot(op.x-self.reverse_start[1],op.y-self.reverse_start[2])
+            if duration > 8. or traveled >= self.p['reverse_distance']:
+                return False, 'reverse_distance_or_time_limit'
+            m=self.map;o=m.info.origin
+            covariance=np.asarray(self.localization.pose.covariance).reshape(6,6)[np.ix_([0,1,5],[0,1,5])]
+            allowed,reason,envelope = reverse_clearance(
+                np.asarray(m.data).reshape(m.info.height,m.info.width),m.info.resolution,
+                (o.position.x,o.position.y,quaternion_yaw(o.orientation)),
+                (p.x,p.y,quaternion_yaw(q)),covariance,
+                distance=self.p['reverse_distance']-traveled+.04,
+                radius=self.p['reverse_radius'],reserve=self.p['reverse_reserve'])
+            self.reverse_envelope = envelope
+            return allowed, reason
+        except (TransformException, ValueError, TypeError):
+            return False, 'reverse_pose_unavailable'
 
     def on_enable(self, msg):
         self.enabled, self.enable_time = msg.data, time.monotonic()
@@ -90,6 +155,19 @@ class VelocityGate(Node):
                 reason = 'passing'
                 out.linear.x = max(-self.p['max_linear'], min(self.p['max_linear'], vx))
                 out.angular.z = max(-self.p['max_angular'], min(self.p['max_angular'], wz))
+                if vx < -1e-5 and self.p['reverse_policy']=='recovery':
+                    self.reverse_idle = None
+                    approved,self.reverse_reason = self.approve_reverse(now)
+                    if approved and abs(wz) <= .01:
+                        out.linear.x = max(-self.p['reverse_speed'],out.linear.x)
+                        reason = 'bounded_map_checked_reverse'
+                    else:
+                        out = Twist()
+                        reason = self.reverse_reason if not approved else 'reverse_must_be_straight'
+                else:
+                    self.reverse_idle = self.reverse_idle or now
+                    if now-self.reverse_idle >= .5:
+                        self.reverse_start = None
                 front, back, clearance = math.inf, math.inf, math.inf
                 usable = 0
                 for i, distance in enumerate(self.scan.ranges):

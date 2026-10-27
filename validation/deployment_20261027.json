@@ -1,0 +1,32 @@
+{
+  "checked_at": "2026-10-27T20:14:32.426543+08:00",
+  "robot": "balance6",
+  "release": "joint_20261027_ebbf200d32",
+  "source_sha256": "ebbf200d3226642413b7a968ea1cf534522fa4cbffe6a8e5c33f6946de94289b",
+  "local_ui": "http://127.0.0.1:8765/#/workflow",
+  "build": "passed on robot",
+  "phase": "mapping",
+  "state": "WAITING",
+  "stage": {
+    "managed": true,
+    "phase": null,
+    "running": false,
+    "transitioning": false,
+    "fault": null,
+    "log_path": null
+  },
+  "navigation_profile": "original",
+  "vision_settings": {
+    "camera_height": 0.31,
+    "camera_pitch": 0.4991641660703783,
+    "camera_yaw": 0.0,
+    "camera_x": 0.0,
+    "camera_y": 0.0,
+    "horizontal_fov": 0.0,
+    "camera_min_range": 0.3,
+    "camera_max_range": 1.5
+  },
+  "detector_labels_ready": true,
+  "agent_requested_stage_start": false,
+  "previous_source_maps_and_sessions": "preserved; independent release, overlay and session"
+}

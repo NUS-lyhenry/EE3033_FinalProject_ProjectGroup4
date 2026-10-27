@@ -21,7 +21,8 @@ from rclpy.parameter import Parameter
 from action_msgs.msg import GoalStatusArray
 from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import OccupancyGrid
-from nav2_msgs.action import NavigateToPose
+from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav2_msgs.action import NavigateToPose, BackUp
 from nav2_msgs.srv import GetCostmap, ManageLifecycleNodes
 from rcl_interfaces.srv import GetParameters, SetParametersAtomically
 import yaml
@@ -41,13 +42,25 @@ def until(predicate, seconds=10):
 class RecoveryChassis(Chassis):
     def __init__(self):
         super().__init__()
+        self.localization_valid=True
+        self.rear_blind=True
+        self.localization=self.create_publisher(PoseWithCovarianceStamped,'/amcl_pose',10)
         self.behaviors={name:set() for name in ('spin','backup','wait')}
         for name in self.behaviors:
             self.create_subscription(GoalStatusArray, '/'+name+'/_action/status',
                 lambda msg,key=name: self.behaviors[key].update(
                     bytes(s.goal_info.goal_id.uuid) for s in msg.status_list), 10)
 
-    def map_wall(self, blocked):
+    def tick(self):
+        super().tick()
+        pose=PoseWithCovarianceStamped();pose.header.frame_id='map'
+        pose.header.stamp=self.get_clock().now().to_msg()
+        pose.pose.pose.position.x,pose.pose.pose.position.y=self.xyz[:2]
+        set_yaw(pose.pose.pose.orientation,self.xyz[2])
+        for i in (0,7,35):pose.pose.covariance[i]=.0004 if self.localization_valid else .25
+        self.localization.publish(pose)
+
+    def map_wall(self, blocked, unknown_rear=False):
         msg=OccupancyGrid();msg.header.frame_id='map'
         msg.header.stamp=self.get_clock().now().to_msg()
         msg.info.width=msg.info.height=100;msg.info.resolution=.05
@@ -55,6 +68,7 @@ class RecoveryChassis(Chassis):
         msg.info.origin.orientation.w=1.
         grid=np.zeros((100,100),np.int8);grid[[0,-1],:]=100;grid[:,[0,-1]]=100
         if blocked:grid[:,57]=100 # Sealed divider at x=0.35 m.
+        if unknown_rear:grid[45:56,40:47]=-1
         msg.data=grid.ravel().tolist();self.maps.publish(msg)
 
 
@@ -82,11 +96,12 @@ def main():
             for node in (chassis,gate):executor.add_node(node)
             thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
             nav=ActionClient(chassis,NavigateToPose,'/navigate_to_pose')
+            backup=ActionClient(chassis,BackUp,'/backup')
             cost=chassis.create_client(GetCostmap,'/global_costmap/get_costmap')
             handle=None
 
-            def wall(blocked):
-                chassis.map_wall(blocked)
+            def wall(blocked,unknown_rear=False):
+                chassis.map_wall(blocked,unknown_rear)
                 def updated():
                     m=wait(cost.call_async(GetCostmap.Request())).map
                     col=math.floor((.375-m.metadata.origin.position.x)/m.metadata.resolution)
@@ -107,6 +122,15 @@ def main():
                 h=wait(nav.send_goal_async(goal));assert h.accepted
                 return h
 
+            def reverse(seconds=8):
+                chassis.xyz=[0.,0.,0.];chassis.command=(0.,0.);chassis.commands=[]
+                chassis.frozen=False;chassis.forward_blocked=False
+                chassis.running=False;time.sleep(.7);chassis.running=True
+                goal=BackUp.Goal();goal.target.x=.20;goal.speed=.04
+                goal.time_allowance.sec=seconds
+                h=wait(backup.send_goal_async(goal));assert h.accepted
+                return h
+
             def counts():return {name:len(ids) for name,ids in chassis.behaviors.items()}
 
             def finish(h, seconds=10):
@@ -122,6 +146,7 @@ def main():
                     assert client.wait_for_service(timeout_sec=25)
                     until(lambda:wait(client.call_async(GetState.Request())).current_state.id==3,30)
                 assert nav.wait_for_server(timeout_sec=10) and cost.wait_for_service(timeout_sec=5)
+                assert backup.wait_for_server(timeout_sec=5)
                 getter=chassis.create_client(GetParameters,'/bt_navigator/get_parameters')
                 assert getter.wait_for_service(timeout_sec=5)
                 loaded=wait(getter.call_async(GetParameters.Request(names=['default_nav_to_pose_bt_xml'])))
@@ -143,13 +168,34 @@ def main():
                 assert wait(manager.call_async(ManageLifecycleNodes.Request(command=0)),30).success # STARTUP
                 print('PASS Nav2-only lifecycle reload: map and simulated chassis preserved',flush=True)
 
-                wall(True);before=counts();started=time.monotonic();handle=begin()
-                result=finish(handle);handle=None;elapsed=time.monotonic()-started
-                assert result.status==6 and elapsed<6,(result.status,elapsed)
-                assert counts()['wait']==before['wait']+1,counts()
-                assert chassis.commands and all(abs(v)<1e-6 and abs(w)<1e-6 for v,w in chassis.commands)
-                print(f'PASS persistent no-path: aborted in {elapsed:.2f}s; one pause, no motion',flush=True)
+                wall(False);chassis.localization_valid=True
+                handle=reverse();result=finish(handle,10);handle=None
+                assert result.status==4 and -.23<chassis.xyz[0]<-.18,(result.status,chassis.xyz)
+                assert any(v<-.01 for v,w in chassis.commands)
+                assert all(v>=-.040001 for v,w in chassis.commands)
+                print(f'PASS no rear laser returns: map/AMCL-checked reverse {chassis.xyz}',flush=True)
 
+                wall(False,True);handle=reverse(2)
+                result=finish(handle,4);handle=None
+                assert result.status==6 and abs(chassis.xyz[0])<.01,(result.status,chassis.xyz)
+                assert not any(v<-.001 for v,w in chassis.commands)
+                print('PASS unknown rear map prevents reversing',flush=True)
+
+                wall(False);chassis.localization_valid=False;handle=reverse(2)
+                result=finish(handle,4);handle=None
+                assert result.status==6 and abs(chassis.xyz[0])<.01,(result.status,chassis.xyz)
+                assert not any(v<-.001 for v,w in chassis.commands)
+                print('PASS uncertain localization prevents reversing',flush=True)
+
+                wall(True);before=counts();started=time.monotonic();handle=begin()
+                result=finish(handle,15);handle=None;elapsed=time.monotonic()-started
+                assert result.status==6 and elapsed<13,(result.status,elapsed)
+                assert counts()['wait']==before['wait']+1,counts()
+                assert counts()['backup']==before['backup']+1,counts()
+                assert chassis.commands and all(abs(v)<1e-6 and abs(w)<1e-6 for v,w in chassis.commands)
+                print(f'PASS persistent no-path: abort {elapsed:.2f}s; one gated backup fallback, no motion',flush=True)
+
+                chassis.localization_valid=True
                 wall(True);before=counts();handle=begin(yaw=2.)
                 until(lambda:counts()['wait']==before['wait']+1)
                 wall(False)
@@ -157,12 +203,25 @@ def main():
                 assert result.status==4 and chassis.xyz[0]>.60,(result.status,chassis.xyz)
                 turns=[w for v,w in chassis.commands if abs(w)>.10]
                 assert turns and turns[0]<0,turns[:10]
+                assert counts()['backup']==before['backup'],counts()
                 print(f'PASS transient blockage: path recovers; clockwise path alignment and arrival {chassis.xyz}',flush=True)
 
+                # A chassis caught against a corner cannot move forward until a
+                # bounded retreat creates space. The map remains free and Nav2
+                # owns every command; reverse is reached only after replan fails.
+                wall(False);before=counts();handle=begin()
+                chassis.forward_blocked=True
+                result=finish(handle,40);handle=None
+                assert result.status==4 and chassis.xyz[0]>.60,(result.status,chassis.xyz)
+                assert counts()['backup']==before['backup']+1,counts()
+                assert any(v<-.01 for v,w in chassis.commands)
+                print(f'PASS constrained corner: one fallback retreat then forward arrival {chassis.xyz}',flush=True)
+
                 wall(False);before=counts();started=time.monotonic();handle=begin(frozen=True)
-                result=finish(handle);handle=None;elapsed=time.monotonic()-started
-                assert result.status==6 and elapsed<9,(result.status,elapsed)
+                result=finish(handle,18);handle=None;elapsed=time.monotonic()-started
+                assert result.status==6 and elapsed<17,(result.status,elapsed)
                 assert counts()['wait']==before['wait']+1,counts()
+                assert counts()['backup']==before['backup']+1,counts()
                 assert chassis.xyz==[0.,0.,0.]
                 print(f'PASS frozen chassis: controller retries once then aborts in {elapsed:.2f}s',flush=True)
 
@@ -173,8 +232,8 @@ def main():
                 assert result.status==5 and time.monotonic()-started<2,result.status
                 old=counts();time.sleep(1.2)
                 assert counts()==old and all(abs(v)<1e-6 for v in chassis.command)
-                assert counts()['spin']==counts()['backup']==0,counts()
-                print('PASS cancel during recovery: terminal stop; no successor, spins or backups',flush=True)
+                assert counts()['spin']==before['spin'] and counts()['backup']==before['backup'],counts()
+                print('PASS cancel during recovery: terminal stop; no successor or fallback after cancel',flush=True)
                 assert chassis.count_publishers('/cmd_vel')==0
             finally:
                 chassis.running=False

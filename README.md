@@ -46,9 +46,59 @@ clearance, camera mounting and diagnostics. Manual drive/goals are stage-1 only;
 initial pose and setup are locked during the autonomous mission. Legacy page
 links remain available, but normal operation needs no page switching.
 
+## Target lock, hybrid localization and search completeness
+
+The default `localization_method:=hybrid` keeps the shared map-constrained MMSE
+estimator and adds timestamped bearing intersection. Two consistent distinct
+visual detections lock the one target even when depth is unavailable. After
+cancelling the search goal, the mission only reframes/centres this target and
+collects local observations; losing depth or the target does not restart map
+traversal. A fresh stable estimate meeting the selected soft precision goal
+returns immediately. Refinement is bounded to 45 seconds of observation, centering and local
+reacquisition, three observation positions. Motion counts are recorded but cannot end refinement
+before its localization-work budget is used. Navigation
+to observation positions is timed separately; goal deadlines, the overall
+mission deadline and the return-time reserve still apply. A valid lower
+precision estimate remains labelled `best_available`; no usable coordinates
+produces `FOUND_UNLOCALIZED` after a verified return.
+
+At least four settled, horizontally centred frames are collected per bearing
+site. A/B/C geometry uses continuous odometry, camera offsets and residual
+pixel angles, rejects intersection angles below 15 degrees and map-to-odometry
+jumps, and replaces the correlated floor measurements in MMSE rather than
+counting the same images twice. Vertical clipping can preserve a bearing;
+horizontal clipping only supplies a bounded retreat hint. Detector class alone
+still cannot establish brand identity or distinguish arbitrary identical objects.
+
+`config/vision.yaml` now selects the user's provisional 28.6-degree downward
+pitch with `use_pitch_override: true` and TF translation. This is not a surveyed
+calibration. Set the flag false to use the complete installed TF. A positive
+manual height retains the existing complete manual mount. Saved session settings
+or explicit legacy profiles still take precedence; inspect the effective pitch
+and source in the console. The simulated world has its own explicit TF-only
+configuration and retains its independently specified 10-degree camera.
+
+Before target lock, a bounded three-step beam search ranks early new coverage,
+travel, turning and observations. It keeps diverse candidates, repairs coarse
+coverage holes at 0.325/0.15 m spacing and asks Nav2 to verify disconnected
+components. Green/gold/red map overlays show observed/pending/blocked samples.
+Candidate exhaustion and failed navigation are not empty-space evidence.
+`SEARCH_INCOMPLETE` distinguishes a partial map, blocked/missing regions or an
+exhausted budget. `NOT_FOUND` requires at least 98% of the full target-cell set,
+no unresolved blockage and no missing connected patch of 0.09 square metres.
+These labels describe search evidence, not proof of object absence.
+
+Planner-only comparisons can be reproduced with
+`PYTHONPATH=src/ee3033_project python3 scripts/benchmark_search.py`.
+Results depend on layout: lookahead is not guaranteed faster than greedy.
+See `validation/search_benchmark_20261027.json` and `TESTING.md`.
+For a real-YOLO simulation workflow check, run
+`python3 scripts/verify_algorithm_preview.py --url http://127.0.0.1:8792`;
+this script refuses a physical-robot console.
+
 ## Camera-only target localization
 
-The default `localization_method:=ground_plane` uses the visible bottom contact
+The explicit `localization_method:=ground_plane` uses the visible bottom contact
 of a target resting directly on a flat floor. Target depth does not use lidar.
 Lidar still supplies SLAM, AMCL, navigation and obstacle protection.
 
@@ -127,8 +177,8 @@ odometry still reject coordinates, and motion span contributes to sigma. A
 visible target whose valid projection is waiting for that window is deferred;
 it does not count as a new confirmation or as a detector miss. A real miss still
 breaks confirmation. Localization waits for at least 2 s, and an unresolved
-centered target can use the remaining bounded acquisition time. Unresolved
-visual viewpoints get one deferred retry after other viewpoints.
+centered target can use the remaining bounded acquisition time. Unresolved empty visual viewpoints get one deferred retry after other viewpoints;
+a locked target instead finishes local refinement and returns.
 
 The installed `usb_cam` 0.8.1 has an epoch conversion defect in
 `get_epoch_time_shift_us`: `timeval.tv_usec` is already in microseconds. Dividing
@@ -215,11 +265,11 @@ existing maps. Deliberate driver reuse uses `base:=false`, `lidar:=false` and
 
 ## Single-target search
 
-The online greedy selector ranks newly visible floor cells against travel,
+The online bounded-lookahead selector ranks newly visible floor cells against travel,
 heading change and observation time. Travel uses shortest paths on the
 clearance-inflated grid rather than Euclidean shortcuts through obstacles.
 The top three candidates receive native Nav2 path-length refinement when its
-planner is available, within a three-second decision budget. Timeouts retain
+planner is available, within a 1.5-second decision budget. Timeouts retain
 grid-path estimates; rejected native paths are excluded for that decision.
 This remains an estimated cost, not a path-time guarantee.
 
@@ -239,10 +289,11 @@ evidence.
 Two consistent fresh detections interrupt coverage and select a single target.
 Reliable coordinates report directly after confirmation. Otherwise the mission
 tries a reachable, visible 0.6–1.0 m standoff observation. Bearing-only candidates
-may reorient in place but do not command a blind forward approach. Acquisition
-is bounded to three goals and fifteen seconds, including movement. Losing the
-candidate or exhausting the budget resumes coverage after confirmed
-cancellation. No overlapping motion goals are allowed.
+may center and take a map-safe lateral baseline, without a blind forward
+approach. After visual lock, refinement uses a 45-second work budget
+of localization work, excluding travel to observation positions. Temporary loss
+enters bounded local reacquisition and preserves the target lock. Exhausted
+recovery alternatives or budget ends refinement without restarting coverage. No overlapping motion goals are allowed.
 
 Finding the one target ends search immediately. Exhausting candidates, the
 coverage threshold, time or goal limits does not establish target absence.
@@ -323,8 +374,8 @@ Changing it requires **Apply settings & reload mission** and setting the initial
 pose again; it is locked during motion. The same setting reaches both the
 perception close-view preference and mission acceptance policy. Valid settled observations retain their measured uncertainty even above that
 value. Multi-frame consistency, freshness and map agreement still confirm the target.
-If uncertainty remains above the objective after at most three observation moves
-or 15 seconds of refinement, a fresh stable estimate can be reported with
+If uncertainty remains above the objective after bounded A/B/C refinement
+(45 seconds of localization work, excluding observation-point travel), a fresh stable estimate can be reported with
 `quality: best_available`, its actual `sigma` and the preferred sigma. The UI
 labels this as an approximate estimate; repeated correlated frames do not
 artificially shrink its uncertainty. Missing, stale, inconsistent or geometrically
@@ -346,3 +397,47 @@ To reproduce the hardware-free Humble suite locally:
 docker build -f tests/Dockerfile.humble -t ee3033-visual-tests .
 docker run --rm --network none --shm-size=512m ee3033-visual-tests
 ```
+
+
+### Navigation fallback and repeat searches
+
+Normal navigation remains forward-driving. Persistent failure after refreshing
+costmaps and replanning can trigger one Nav2 BackUp fallback: 0.20 m at 0.04 m/s,
+with an eight-second deadline. The final gate continuously requires a fresh
+localized pose and known-free swept map corridor, enlarged by two-sigma pose
+uncertainty, four centimetres of reserve, and cell intersection allowance. Rear
+laser returns still stop the motion when available; missing rear readings alone
+are not treated as proof of free space. Unknown space, stale/uncertain poses and
+Stop prevent reversing. Navigation also monitors continuous odometry for blocked
+translation, oscillation and nonconverging final turns; spinning alone cannot
+keep a travel goal alive indefinitely. Camera calibration retains its separate
+existing bounded route controller rather than inheriting the 20 cm recovery cap.
+
+After a terminal mission, **Search again** reuses the loaded map and current
+valid AMCL state without restarting ROS. It resets search/target evidence and
+preserves the previous record as a separate attempt. **Reload map & set start
+pose** handles invalid localization. **Use saved map** loads a reviewed map after
+a console restart. Reused-map attempts are explicitly mission-only; their times
+are not presented as fresh mapping-plus-search assessment times.
+
+New trinary maps explicitly save with free/occupied thresholds 0.196/0.65 and
+validate the saved image classifications. For a known legacy 0/205/254 map whose
+0.25 free threshold aliases unknown pixels to free, use
+`scripts/repair_legacy_map.py`: it creates an unreviewed corrected copy and leaves
+the original map and assessment records untouched.
+
+
+Per-frame localization decisions are published on
+`/project/localization_diagnostics`. A managed mission persists them in its
+assessment session under `mission_runs/mission_*/localization_frames.jsonl`.
+The exported mission summary identifies that file, counted rejection reasons,
+logging errors and any explicit truncation at the 8 MiB per-mission cap.
+Original frame/mission timestamps, capture motion, centering, TF errors,
+association, site progress, geometric conflict and MMSE acceptance are retained.
+
+The navigation watchdog starts a separate arrival-heading window after reaching
+the goal's XY tolerance; preceding travel does not consume that window. Arrival
+centering counts as localization work. No remaining motion/site candidate means
+holding safely and observing until the work budget, rather than ending because
+five actions were sent. Preferred precision, return reserve, Stop and faults
+retain their independent termination rules.
