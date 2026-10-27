@@ -134,7 +134,8 @@ function render(){
   document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=!mapping||!loaded||!idle||!s.allow_motion||!!fault||!s.health?.Lidar?.ok);
   const labelReady=modelLabels?.ready===true&&modelLabels.labels.includes($('targetClass').value);
   const targetChanged=s.phase==='mission'&&$('targetClass').value!==s.mission_options?.target_class;
-  const settingsChanged=targetChanged||s.phase==='mission'&&(Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2));
+  const mmseReady=s.mission_options?.preferred_target_sigma!=null||m.preferred_target_sigma!=null;
+  const settingsChanged=targetChanged||s.phase==='mission'&&(mmseReady&&Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2));
   const validSettings=$('preferredSigma').checkValidity()&&$('preferredSigma').value!==''&&$('returnTolerance').checkValidity()&&$('returnTolerance').value!=='';
   $('loadMission').hidden=!managed||(currentPage==='workflow'&&!settingsChanged);
   $('loadMission').textContent=settingsChanged?'Apply settings & reload mission':'Load selected map for mission';
@@ -151,6 +152,8 @@ function render(){
   ['poseX','poseY','poseYaw'].forEach(id=>$(id).disabled=!poseAllowed);
   $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
   ['targetClass','localizationMethod','returnTolerance','preferredSigma'].forEach(id=>$(id).disabled=!idle);
+  $('preferredSigma').disabled=!idle||!mmseReady;
+  $('preferredSigmaHelp').textContent=mmseReady?'Soft goal, not guaranteed error. After bounded refinement, the best stable estimate can still be accepted.':'Robot software update required to apply MMSE precision settings.';
   $('targetClass').disabled=!idle||!modelLabels?.ready;
   $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Apply target & reload mission, then set the initial pose again.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
   $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Camera-only floor localization. Mount settings are under Advanced; no bottle collection is required.':'Legacy camera + lidar localization.';

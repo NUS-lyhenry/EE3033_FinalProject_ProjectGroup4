@@ -104,8 +104,8 @@ class MapMMSE:
         if self.label!=name:
             self.reset();self.label=name
         if self.samples and stamp<=self.samples[-1][0]:return False
-        while self.samples and stamp-self.samples[0][0]>self.seconds:self.samples.popleft()
         if self.samples and stamp-self.samples[-1][0]>self.max_gap:self.streak=0
+        while self.samples and stamp-self.samples[0][0]>self.seconds:self.samples.popleft()
         if self.result is not None and self.samples:
             delta=np.array([x,y])-np.asarray(self.result['likelihood_mean'])
             innovation=np.asarray(self.result['likelihood_covariance'])+covariance
@@ -159,8 +159,8 @@ class MapMMSE:
         age=now-source['stamp']
         if self.frozen is None and not 0<=age<=30:return None
         return dict(source,age=max(0.,age),stale=self.frozen is None and age>self.max_age,
-            stable=self.frozen is not None or (self.streak>=self.frames and 0<=age<=self.max_age and not source['prior_conflict']),
-            frames=self.streak,confirmed=self.frozen is not None,frame_id='map')
+            stable=self.frozen is not None or (self.streak>=self.frames and len(self.samples)>=self.frames and 0<=age<=self.max_age and not source['prior_conflict']),
+            frames=source.get('frames',source.get('confirmation_frames',self.streak)) if self.frozen is not None else self.streak,confirmed=self.frozen is not None,frame_id='map')
 
     def freeze(self,estimate):
         if estimate.get('map_signature')!=self.signature:return

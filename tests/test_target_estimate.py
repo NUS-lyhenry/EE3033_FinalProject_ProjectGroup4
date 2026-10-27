@@ -122,3 +122,12 @@ def test_no_map_no_observation_and_map_fingerprint_consistency():
     assert t.signature==map_signature(np.zeros((50,50),int),.02,(0.,0.,0.))
     r=update(t);t.set_map(np.zeros((50,50),int),.02,(0.,0.,0.))
     assert t.snapshot(10.3)['estimate_id']==r['estimate_id']
+
+
+def test_window_expiration_requires_four_new_frames_without_intermediate_misses():
+    t=tracker();update(t)
+    assert t.update(detection(stamp=20.),20.)
+    assert t.snapshot(20.)['samples']==1
+    assert not t.snapshot(20.)['stable']
+    for stamp in (20.1,20.2,20.3):assert t.update(detection(stamp=stamp),stamp)
+    assert t.snapshot(20.3)['stable']
