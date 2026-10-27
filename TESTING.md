@@ -1,5 +1,17 @@
 # Validation record
 
+## Near-field/occlusion follow-up — 2026-10-28
+
+After PR #7 merged as 7441622, isolated subagent commits 1643036 (camera LOS)
+and e6dfd59 (near-field reframing) were integrated on fix/near-field-occlusion.
+All 353 Python checks passed, including wall/unknown/corner supercover rejection,
+camera mount offsets, range/FOV constraints, source-anchored bearing hypotheses,
+near/crop recovery hints and preservation of strict projection validity.
+Full ROS/YOLO simulation was not run, consistent with the deploy-first request.
+Deployment was attempted only as a read-only connectivity check; robot SSH at
+10.221.243.174 timed out, so this follow-up has **not been deployed** or physically
+validated. The existing capture release remains the last confirmed deployment.
+
 ## Capture diagnostics and full localization budget — 2026-10-27
 
 Release `capture_20261027_62b14551d2` separates translation/arrival-heading

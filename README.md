@@ -441,3 +441,21 @@ centering counts as localization work. No remaining motion/site candidate means
 holding safely and observing until the work budget, rather than ending because
 five actions were sent. Preferred precision, return reserve, Stop and faults
 retain their independent termination rules.
+
+
+### Near-field reframing and camera occlusion
+
+A clipped or below-minimum-range view can select up to two safe 0.18–0.30 m
+observation moves away from the last observed ray (at most 0.6 m total). These
+are Nav2 destinations, not unconditional reverse commands. Strict measurement
+range/crop checks and the independent bearing route remain in force; a range
+hint used to choose a move is never estimator evidence.
+
+Observation candidates must be navigable and camera-visible. Visibility uses
+the mounted camera origin, FOV/range, a conservative grid supercover with a
+4 cm margin, and rejects unknown/out-of-map/occupied sightlines. Without trusted
+depth it checks support across source-visible bearing/depth hypotheses instead
+of treating a made-up one-metre point as the target. Intermediate near-field
+reframing may remain below measurement range, explicitly labelled separately;
+LOS, FOV and maximum range still apply. The 2-D map treats obstacles as opaque
+and cannot prove visibility over low furniture or detect new unmapped occluders.
