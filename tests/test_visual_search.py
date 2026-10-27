@@ -43,6 +43,10 @@ def test_geometric_uncertainty_increases_with_distance_and_is_not_zero_for_stabl
     far = model.project_box(box_at(model, 1.8, .02))[1]
     assert far > near*3
     assert near > .015
+    with pytest.raises(ValueError):
+        model.project_box(box_at(model, 2.5, .02))
+    point, sigma, distance = model.project_box(box_at(model, 2.5, .02), coarse_max_range=3.)
+    assert distance > 2. and sigma > .10
 
 
 @pytest.mark.parametrize('box', [[0, 200, 30, 300], [300, 200, 330, 479],
@@ -108,6 +112,9 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
     assert target.candidate['stamp'] == 10.25
     assert not target.update([detection(7.)], 10.5, 9.)
     assert target.expired(16.)
+    target.reset()
+    assert not target.update([detection(20., x=1., y=1.)], 20., 19.)
+    assert not target.update([detection(20.25, x=2., y=1.)], 20.25, 19.)
 
 
 def test_approach_is_reachable_with_standoff_and_bearing_only_never_translates():

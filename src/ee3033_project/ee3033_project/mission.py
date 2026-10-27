@@ -219,7 +219,7 @@ class Mission(Node):
             if (data['ready'] and data['target_class'] == self.p['target_class']
                     and 0 <= age < self.p['perception_timeout']):
                 self.perception_time = time.monotonic()
-                self.geometry_error = data.get('geometry_error') if data.get('geometry_ready') is False else None
+                self.geometry_error = (data.get('geometry_error') or 'Camera geometry is not ready') if data.get('geometry_ready') is False else None
                 if data.get('geometry_ready') is False:
                     self.geometry_fault_since = self.geometry_fault_since or time.monotonic()
                     return
@@ -255,6 +255,11 @@ class Mission(Node):
             if locked and self.acquisition.started is None:
                 self.acquisition.started = time.monotonic()
                 self.cancel('ACQUIRE', 'Target candidate detected; obtaining a reliable visual position')
+            elif (locked and self.state == 'ACQUIRING' and self.acquisition.candidate.get('close_view') is True
+                  and (self.goal_pending or self.goal_handle is not None)):
+                # A coarse far-range goal must not carry the car past a target
+                # whose nearer observation has already become accurate.
+                self.cancel('ACQUIRE', 'Good close view obtained; stopping the approach for confirmation')
         except (ValueError, TypeError, KeyError, OverflowError):
             pass
 
@@ -741,7 +746,11 @@ class Mission(Node):
                     elif now-self.acquisition_wait >= 1.2:
                         candidate = self.acquisition.candidate
                         fresh = candidate and 0 <= self.get_clock().now().nanoseconds*1e-9-candidate['stamp'] <= 1.5
-                        goal = None if not fresh or self.acquisition.expired(now) else self.acquisition.observation_goal(self.planner, self.pose())
+                        try:
+                            goal = None if not fresh or self.acquisition.expired(now) else self.acquisition.observation_goal(
+                                self.planner, self.pose(), deadline=time.monotonic()+.2, cancel=self.plan_cancel)
+                        except (TimeoutError, RuntimeError):
+                            goal = None
                         if goal is None:
                             self.resume_search('Target lost or no safe observation remains')
                         else:

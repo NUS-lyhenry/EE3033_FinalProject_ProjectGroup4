@@ -12,7 +12,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import Image, CameraInfo
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from tf2_ros import StaticTransformBroadcaster
@@ -32,6 +32,8 @@ class Detector:
     names = {0: 'bottle'}
     box = [308., 266., 332., 316.]
     def predict(self, frame, **kwargs):
+        # Sensor callbacks must remain fresh during a slow CPU inference.
+        time.sleep(.30)
         box = SimpleNamespace(cls=SimpleNamespace(item=lambda: 0), conf=SimpleNamespace(item=lambda: .9), xyxy=[Array(self.box)])
         return [SimpleNamespace(boxes=[box], names=self.names, plot=lambda: frame.copy())]
 
@@ -60,24 +62,34 @@ def main():
     image_pub = fixture.create_publisher(Image, '/test/image', 10)
     info_pub = fixture.create_publisher(CameraInfo, '/test/camera', 10)
     odom_pub = fixture.create_publisher(Odometry, '/odom', 10)
+    pose_pub = fixture.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
     observations, detections, statuses = [], [], []
     for topic, output in [('/project/target_observations', observations), ('/project/target_detections', detections), ('/project/perception_status', statuses)]:
         fixture.create_subscription(String, topic, lambda msg, output=output: output.append(json.loads(msg.data)), 10)
     bridge = CvBridge()
+    bad_frame = [False]
     def publish():
         image = bridge.cv2_to_imgmsg(np.zeros((480, 640, 3), np.uint8), encoding='bgr8')
         image.header.stamp = fixture.get_clock().now().to_msg(); image.header.frame_id = 'project_camera_optical'
-        info = CameraInfo(); info.header = image.header; info.width = 640; info.height = 480
+        info = CameraInfo(); info.header.stamp = image.header.stamp
+        info.header.frame_id = 'wrong_camera' if bad_frame[0] else image.header.frame_id
+        info.width = 640; info.height = 480
         info.k = [450., 0., 320., 0., 450., 240., 0., 0., 1.]; info.d = [0.]*5; info.distortion_model = 'plumb_bob'
         info_pub.publish(info); image_pub.publish(image)
         odom = Odometry(); odom.header = image.header
         odom_pub.publish(odom)
+        pose = PoseWithCovarianceStamped(); pose.header.stamp = image.header.stamp
+        pose.header.frame_id = 'map'; pose.pose.pose.orientation.w = 1.
+        pose.pose.covariance[0] = pose.pose.covariance[7] = pose.pose.covariance[35] = .0001
+        pose_pub.publish(pose)
     fixture.create_timer(.1, publish)
     executor = MultiThreadedExecutor(num_threads=4)
     for node in (fixture, perception): executor.add_node(node)
     thread = threading.Thread(target=executor.spin, daemon=True); thread.start()
     try:
-        assert wait(lambda: observations and observations[-1]['observations']), statuses[-1:] 
+        # Separate ROS topics may be delivered in either order.
+        assert wait(lambda: observations and observations[-1]['observations']
+                    and statuses and statuses[-1].get('geometry_ready')), (statuses[-1:], detections[-1:])
         assert fixture.count_subscribers('/scan_fixed') == 0
         assert statuses[-1]['geometry_ready'] and statuses[-1]['camera_model']
         assert observations[-1]['observations'][0]['method'] == 'ground_plane'
@@ -88,6 +100,10 @@ def main():
         assert wait(lambda: observations and not observations[-1]['observations'])
         detector.box = [0., 200., 20., 316.]
         assert wait(lambda: detections[-1]['detections'][0].get('reason', '').startswith('Target is too small'))
+        assert not observations[-1]['observations']
+        bad_frame[0] = True
+        assert wait(lambda: statuses[-1].get('geometry_ready') is False)
+        assert 'frame' in statuses[-1]['geometry_error']
         assert not observations[-1]['observations']
         print('PASS native visual perception: no lidar, no fitted profile, geometry and uncertainty checks', flush=True)
     finally:

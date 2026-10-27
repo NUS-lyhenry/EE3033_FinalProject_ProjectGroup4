@@ -7,19 +7,36 @@ floor geometry, obstacle-aware search costs, bounded target acquisition,
 XY-only home arrival and a single-page operator workflow. Legacy calibration is
 optional and only explicitly selected profiles affect a mission.
 
-Local checks completed:
+Completed local verification:
 
-- 184 algorithm tests passed, including floor projection/uncertainty, camera
-  FOV and near blind zones, wall-detour cost, candidate association and safe
-  observation goals. Python compilation and diff whitespace checks passed.
-- The existing 30 browser scenarios passed before the last layout adjustment.
-  The subsequent full 34-case run exposed an offscreen coordinate in an older
-  waypoint test; that test now scrolls to the map, matching operator behavior.
-  Its six affected/new scenarios passed after the fix. Final full-run results
-  and native Humble CI are recorded below when complete.
-- Added native fixtures for real image/CameraInfo/TF floor projection (neural
-  inference substituted), target approach/loss/budget/Stop races, the fast
-  controller/gate profile, and home arrival without final heading alignment.
+- Python 3.12 on macOS: 184 algorithm tests passed. Python compilation and
+  diff whitespace checks passed.
+- Chromium/Playwright: all 34 browser scenarios passed, including the single
+  workflow page, explicit mounting values, fast-profile responses, map dragging,
+  phone layout, active-state lockouts and Stop.
+- ARM64 Ubuntu 22.04 / ROS 2 Humble / Nav2 1.1.20: overlay build and the full
+  isolated suite passed. This includes hardware-launch configuration, HTTP/ROS
+  transactions, original mission/search/stationary/mapping/waypoint regressions,
+  legacy calibration compatibility, native turning/recovery and NavFn passage
+  checks at 0.05 m and 0.01 m resolution.
+- Seven visual mission scenarios passed: immediate reliable report, approach
+  then report, stopping an approach once a good close view appears, lost target,
+  exhausted acquisition budget, Stop during localization, and late approach
+  acceptance. They use actual Mission/filter/gate callbacks and synthetic motion.
+- The image pipeline passed with actual ROS Image/CameraInfo/odometry/AMCL/TF,
+  no lidar subscription and no fitted profile. Neural inference alone is
+  substituted, including a 0.30-second delay. Far/clipped targets and mismatched
+  camera frames cannot produce report-quality coordinates.
+- Native fast turning built commands above 0.45 rad/s under the 0.60 cap. Home
+  arrival completed without rotating to a deliberately different final yaw.
+  These are synthetic controller results, not physical speed measurements.
+- Final HTTP/ROS checks passed for saving measured camera settings, applying a
+  mission speed profile without changing its 75-second deadline, setup lockout
+  during localization and Stop. Legacy projection checks were rerun successfully.
+
+The reproducible local suite is `tests/run_humble_checks.sh`; its isolated Docker
+runtime is `tests/Dockerfile.humble`. Native tests use separate ROS domains and
+localhost-only DDS. The local Docker test had networking disabled.
 
 Physical validation has not been performed. Original speed (0.12 m/s,
 0.40 rad/s) remains default. The explicit Fast trial profile (0.16 m/s,

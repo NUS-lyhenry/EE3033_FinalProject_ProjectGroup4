@@ -79,8 +79,10 @@ independent surveyed accuracy**. Placement errors, map scale/localization errors
 varying balancing pitch, bottle silhouettes and floor slope can bias results.
 Verify physical accuracy before claiming a measured localization error.
 
-After calibration, choose the mission's **ground-plane camera** coordinate method
-for upright floor objects below lidar height. Detection plus the saved geometry
+To use a legacy result, explicitly pass its saved path as
+`calibration_file:=/absolute/path/camera_....json` when launching the assessment
+console or mission. Select the **ground-plane camera** method for upright floor
+objects below lidar height. Detection plus the explicitly selected geometry
 projects the bottom of the object to the floor and transforms it into the map.
 The calibration marker is never used as a mission target. Keep the lens settings,
 mounting and floor conditions consistent, and stay within the calibrated range.

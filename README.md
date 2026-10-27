@@ -219,3 +219,10 @@ real. These checks do not establish physical detection accuracy or performance.
 
 See [RUNBOOK.md](RUNBOOK.md) for operation and [TESTING.md](TESTING.md) for the
 software evidence and outstanding physical measurements.
+
+To reproduce the hardware-free Humble suite locally:
+
+```bash
+docker build -f tests/Dockerfile.humble -t ee3033-visual-tests .
+docker run --rm --network none --shm-size=512m ee3033-visual-tests
+```

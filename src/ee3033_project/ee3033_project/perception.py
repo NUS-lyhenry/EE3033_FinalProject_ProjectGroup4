@@ -65,9 +65,12 @@ class Perception(Node):
         self.last_warning = 0.0
         self.floor_camera = None
         self.projection_sigma = self.p['position_sigma']
+        self.geometric_sigma = self.p['position_sigma']
+        self.projection_in_range = True
         self.pose_variance = (.0025, .0025)
         self.quiet_since = None
         self.odometry_time = -math.inf
+        self.last_odometry_age = None
         group = ReentrantCallbackGroup()
         self.create_subscription(Image, self.p['image_topic'], self.on_image,
                                  qos_profile_sensor_data, callback_group=group)
@@ -76,8 +79,8 @@ class Perception(Node):
         if self.p['localization_method'] == 'lidar':
             self.create_subscription(LaserScan, self.p['scan_topic'], self.on_scan,
                                      qos_profile_sensor_data, callback_group=group)
-        self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_pose, 10)
-        self.create_subscription(Odometry, '/odom', self.on_odometry, qos_profile_sensor_data)
+        self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_pose, 10, callback_group=group)
+        self.create_subscription(Odometry, '/odom', self.on_odometry, qos_profile_sensor_data, callback_group=group)
         self.image_pub = self.create_publisher(Image, '/project/detection_image',
                                                 qos_profile_sensor_data)
         self.obs_pub = self.create_publisher(String, '/project/target_observations', 10)
@@ -115,6 +118,7 @@ class Perception(Node):
 
     def on_odometry(self, msg):
         now = self.get_clock().now().nanoseconds*1e-9
+        self.last_odometry_age = now-stamp_seconds(msg.header.stamp)
         v, w = msg.twist.twist.linear, msg.twist.twist.angular
         values = (v.x, v.y, w.z)
         if (not all(math.isfinite(a) for a in values)
@@ -130,6 +134,8 @@ class Perception(Node):
         return self.quiet_since is not None and now-self.quiet_since >= .25 and now-self.odometry_time < .25
 
     def camera_geometry(self, image, camera):
+        if not image.header.frame_id:
+            raise ValueError('Camera image needs a frame ID')
         profile = self.calibration
         c = profile['camera'] if profile else None
         if c:
@@ -143,6 +149,8 @@ class Perception(Node):
         else:
             if camera is not None and (camera.width != image.width or camera.height != image.height):
                 raise ValueError('CameraInfo resolution does not match the image')
+            if camera is not None and camera.header.frame_id != image.header.frame_id:
+                raise ValueError('CameraInfo frame does not match the image')
             if camera is not None and camera.distortion_model not in ('', 'plumb_bob', 'rational_polynomial'):
                 raise ValueError('Unsupported camera distortion model')
             k, d, source = camera_matrix(image.width, image.height,
@@ -188,7 +196,9 @@ class Perception(Node):
             return rotation@point+translation
         if self.p['localization_method'] == 'ground_plane':
             geometry = self.floor_camera or self.camera_geometry(image, camera)
-            point, sigma, distance = geometry.project_box(box)
+            point, sigma, distance = geometry.project_box(box, coarse_max_range=self.p['max_range'])
+            self.geometric_sigma = sigma
+            self.projection_in_range = distance <= geometry.max_range
             transform = self.buffer.lookup_transform(self.p['map_frame'], self.p['base_frame'],
                                                       Time.from_msg(image.header.stamp))
             rotation, translation = transform_arrays(transform)
@@ -276,7 +286,9 @@ class Perception(Node):
                              'box': box.tolist(), 'reason': geometry_error}
                 point = None
                 self.projection_sigma = self.p['position_sigma']
-                if self.floor_camera is not None or (self.p['localization_method'] == 'lidar' and camera is not None):
+                self.geometric_sigma = self.p['position_sigma']
+                self.projection_in_range = True
+                if self.floor_camera is not None or (self.p['localization_method'] == 'lidar' and (camera is not None or self.calibration is not None)):
                     try:
                         point = self.locate(box, image, camera, scans)
                     except (TransformException, ValueError, cv2.error) as exc:
@@ -293,8 +305,9 @@ class Perception(Node):
                     except (TransformException, ValueError, cv2.error):
                         pass
                 if point is not None and np.all(np.isfinite(point)):
-                    detection.update(x=float(point[0]), y=float(point[1]), sigma=self.projection_sigma)
-                    reliable = self.projection_sigma <= self.p['max_report_sigma']
+                    detection.update(x=float(point[0]), y=float(point[1]), sigma=self.projection_sigma,
+                                     close_view=self.projection_in_range and self.geometric_sigma <= self.p['max_report_sigma'])
+                    reliable = self.projection_in_range and self.projection_sigma <= self.p['max_report_sigma']
                     if not reliable:
                         detection['reason'] = 'Position uncertainty is high; seek a closer view'
                     if self.p['localization_method'] == 'ground_plane' and not self.settled():
@@ -306,7 +319,9 @@ class Perception(Node):
                                          'confidence': float(b.conf.item()),
                                          'sigma': self.projection_sigma,
                                          'method': self.p['localization_method']})
-                    cv2.putText(annotated, f'map: ({point[0]:.2f}, {point[1]:.2f}) m',
+                    caption = (f'map: ({point[0]:.2f}, {point[1]:.2f}) m' if reliable else
+                               f'candidate: ({point[0]:.2f}, {point[1]:.2f}) +/- {self.projection_sigma:.2f} m')
+                    cv2.putText(annotated, caption,
                                 (int(box[0]), max(20, int(box[3])+20)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1)
                 detections.append(detection)
@@ -326,6 +341,8 @@ class Perception(Node):
                 'geometry_ready': self.floor_camera is not None if self.p['localization_method'] == 'ground_plane' else camera is not None,
                 'geometry_error': geometry_error,
                 'observation_ready': self.settled() if self.p['localization_method'] == 'ground_plane' else True,
+                'odometry_age': self.last_odometry_age,
+                'quiet_seconds': time.monotonic()-self.quiet_since if self.quiet_since is not None else None,
                 'camera_model': self.floor_camera.metadata() if self.floor_camera is not None else None,
                 'calibration_file': self.p['calibration_file'] or None,
                 'localization_method': self.p['localization_method']})))

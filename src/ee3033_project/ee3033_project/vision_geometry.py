@@ -115,7 +115,7 @@ class FloorCamera:
             raise ValueError('Contact ray is above or too close to the horizon')
         return origin-direction*(origin[2]/direction[2])
 
-    def project_box(self, box):
+    def project_box(self, box, coarse_max_range=None):
         x1, y1, x2, y2 = [float(v) for v in box]
         if (not np.isfinite([x1, y1, x2, y2]).all()
                 or not self.margin <= x1 < x2 <= self.width-self.margin
@@ -125,7 +125,8 @@ class FloorCamera:
         pixel = np.array([(x1+x2)/2, y2])
         point = self.intersection(pixel)
         distance = np.linalg.norm(point[:2]-self.translation[:2])
-        if not self.min_range <= distance <= self.max_range:
+        limit = self.max_range if coarse_max_range is None else max(self.max_range, coarse_max_range)
+        if not self.min_range <= distance <= limit:
             raise ValueError('Target contact is outside the reliable camera range')
         derivatives = []
         for axis in range(2):

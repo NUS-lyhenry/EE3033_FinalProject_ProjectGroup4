@@ -42,8 +42,9 @@ class VisualRobot(FakeRobot):
             if self.mode != 'lost' or m.acquisition.started is None:
                 bearing = math.atan2(.5-self.xy_yaw[1], .5-self.xy_yaw[0])
                 detections = [dict(stamp=stamp, label='bottle', confidence=.9,
-                                   bearing=bearing, origin=self.xy_yaw[:2], x=.5, y=.5, sigma=.3)]
-            if self.mode == 'direct' or (self.mode == 'approach' and m.goal_kind == 'acquire' and m.state == 'LOCALIZING'):
+                                   bearing=bearing, origin=self.xy_yaw[:2], x=.5, y=.5, sigma=.3,
+                                   close_view=self.mode == 'close_stop' and m.goal_kind == 'acquire')]
+            if self.mode == 'direct' or (self.mode in ('approach', 'close_stop') and m.goal_kind == 'acquire' and m.state == 'LOCALIZING'):
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.03)]
         self.raw_pub.publish(String(data=json.dumps(dict(stamp=stamp, detections=detections))))
         self.obs_pub.publish(String(data=json.dumps(dict(stamp=stamp, observations=observations))))
@@ -77,10 +78,11 @@ class VisualSearch(unittest.TestCase):
                 if mode.startswith('stop'):
                     predicate = (lambda: mission.state == 'ACQUIRING' and mission.goal_pending) if mode == 'stop_pending' else (lambda: mission.state == 'LOCALIZING')
                     self.assertTrue(wait(predicate), mission.summary())
+                    robot.states.append(mission.state)
                     stop = robot.create_client(Trigger, '/project/stop')
                     self.assertTrue(stop.wait_for_service(timeout_sec=3))
                     response = stop.call_async(Trigger.Request()); self.assertTrue(wait(response.done))
-                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach') else 'NOT_FOUND'
+                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop') else 'NOT_FOUND'
                 self.assertTrue(wait(lambda: mission.state in ('COMPLETE', 'NOT_FOUND', 'FAILED', 'STOPPED'), 25), mission.summary())
                 time.sleep(.7)
                 self.assertEqual(mission.state, expected, mission.summary())
@@ -109,6 +111,7 @@ class VisualSearch(unittest.TestCase):
 
     def test_reliable_coordinates_report_without_approach(self): self.case('direct')
     def test_uncertain_candidate_approaches_then_reports(self): self.case('approach')
+    def test_approach_stops_as_soon_as_a_close_view_is_available(self): self.case('close_stop')
     def test_lost_candidate_resumes_bounded_search(self): self.case('lost')
     def test_unlocalizable_candidate_exhausts_budget(self): self.case('budget')
     def test_stop_during_localization(self): self.case('stop_localizing')

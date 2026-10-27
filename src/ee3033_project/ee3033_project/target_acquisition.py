@@ -1,5 +1,6 @@
 """Bounded single-target association and map-safe observation goals."""
 import math
+import time
 from .core import angle_difference
 
 
@@ -42,12 +43,14 @@ class SingleTarget:
             # During acquisition, do not silently switch to another detection.
             if self.started is not None and not matched:
                 return False
+            if not matched:
+                self.frames = 0
+                self.candidate = None
             choices = matched or choices
         d = max(choices, key=lambda d: d['confidence'])
         if self.candidate and d['stamp'] <= self.candidate['stamp']:
             return False
-        consistent = bool(self.candidate and d['stamp']-self.candidate['stamp'] <= 1.2
-                          and abs(angle_difference(d['bearing'], self.candidate['bearing'])) < .25)
+        consistent = bool(self.candidate and d['stamp']-self.candidate['stamp'] <= 1.2 and same(d))
         self.frames = self.frames+1 if consistent else 1
         self.candidate = d
         return self.frames >= 2
@@ -55,7 +58,7 @@ class SingleTarget:
     def expired(self, now):
         return self.started is not None and (now-self.started >= self.timeout or self.steps >= self.max_steps)
 
-    def observation_goal(self, planner, pose):
+    def observation_goal(self, planner, pose, deadline=None, cancel=None):
         """Prefer a safe .6 m standoff; bearing-only detections only turn in place."""
         d = self.candidate
         if d is None:
@@ -67,11 +70,13 @@ class SingleTarget:
             self.visited.add(key)
             return (pose[0], pose[1], d['bearing']-(planner.camera_model.yaw if planner.camera_model else 0.))
         tx, ty = d['x'], d['y']
-        distances, _ = planner.travel_field(*pose[:2])
+        distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
         goals = []
         base_angle = math.atan2(pose[1]-ty, pose[0]-tx)
         for radius in (.6, .8, 1.):
             for offset in (0., -.45, .45, -.9, .9):
+                if (deadline is not None and time.monotonic() >= deadline) or (cancel is not None and cancel.is_set()):
+                    return None
                 a = base_angle+offset
                 x, y = tx+radius*math.cos(a), ty+radius*math.sin(a)
                 cell = planner.world_to_cell(x, y)

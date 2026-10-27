@@ -34,7 +34,9 @@ class CameraSetup:
                 self.p['calibration_file'] = str(path.resolve())
                 self.calibration_status = dict(ready=True, path=self.p['calibration_file'],
                     created_utc=profile['created_utc'], camera=profile['camera']['frame_id'],
-                    message='Saved calibration will be used automatically when the mission loads.')
+                    message=('Explicitly selected legacy profile will be used for this mission.'
+                             if self.explicit_calibration else
+                             'Legacy profile saved. Select it with calibration_file to opt in; default missions use camera geometry.'))
                 if self.stage:
                     self.stage.calibration_file = self.p['calibration_file']
                 return
