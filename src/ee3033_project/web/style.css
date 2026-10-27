@@ -17,3 +17,7 @@
 #advancedTools input{display:block;width:100%;min-width:0;border:1px solid var(--line);border-radius:5px;padding:8px;margin:5px 0 12px;font:inherit}
 #advancedTools label{font-size:12px}#advancedTools .field{margin:15px 0}
 @media(max-width:650px){#advancedTools .form-grid{grid-template-columns:1fr 1fr}.page-heading{flex-wrap:wrap}.breadcrumb{max-width:120px}}
+
+.map-tool-status{display:flex;flex-wrap:wrap;gap:8px 20px;padding:0 20px 12px;font-size:11px;color:var(--muted)}.map-tool-status span{max-width:100%}.dot.estimate{background:transparent;border:1.5px dashed #be761e}.map-panel button[aria-pressed="true"]{background:#fff3d9;border-color:#c48730;color:#845212}.map-wrap.measuring canvas{cursor:crosshair}
+
+.legend{flex-wrap:wrap}

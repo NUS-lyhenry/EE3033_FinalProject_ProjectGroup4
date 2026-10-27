@@ -1,6 +1,39 @@
 const {test,expect}=require('@playwright/test');
 async function view(page,name){await page.evaluate(p=>location.hash='/'+p,name);await expect(page.locator('.page-tabs [data-page-link="'+name+'"]')).toHaveAttribute('aria-current','page');}
 
+test('live uncertain estimates update without becoming reported targets',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.target_estimate={x:2,y:1.5,sigma:.65,label:'bottle',samples:5,age:.2,stale:false,confirmed:false};
+  await expect(page.locator('#targetEstimateStatus')).toContainText('Estimated bottle: (2.00, 1.50)');
+  await expect(page.locator('#confidence')).toContainText('Estimated bottle · σ 0.65 m');
+  await expect(page.locator('#resultTarget')).toHaveText('Awaiting target');
+  f.state.target_estimate={...f.state.target_estimate,x:2.3,sigma:.4,samples:8};
+  await expect(page.locator('#targetEstimateStatus')).toContainText('(2.30, 1.50)');
+  f.state.target_estimate.stale=true;f.state.target_estimate.age=4;
+  await expect(page.locator('#targetEstimateStatus')).toContainText('last seen 4.0 s ago');
+  expect(f.calls).toEqual([]);
+});
+
+test('map ruler supports two clicks and dragging without pose commands',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  await expect(page.locator('#measureMap')).toBeEnabled();
+  const initialPose=await page.locator('#poseX').inputValue();
+  await page.getByRole('button',{name:'Measure distance',exact:true}).click();
+  const rect=await page.locator('#map').boundingBox();
+  await page.mouse.click(rect.x+rect.width*.2,rect.y+rect.height*.3);
+  await expect(page.locator('#measurementStatus')).toContainText('Select the second point');
+  await page.mouse.click(rect.x+rect.width*.7,rect.y+rect.height*.3);
+  await expect(page.locator('#measurementStatus')).toContainText('Distance: 3.00 m');
+  await page.getByRole('button',{name:'Clear measurement',exact:true}).click();
+  await page.mouse.move(rect.x+rect.width*.2,rect.y+rect.height*.3);await page.mouse.down();
+  await page.mouse.move(rect.x+rect.width*.2,rect.y+rect.height*.8);await page.mouse.up();
+  await expect(page.locator('#measurementStatus')).toContainText('Distance: 2.00 m');
+  await expect(page.locator('#poseX')).toHaveValue(initialPose);
+  expect(f.calls).toEqual([]);
+  await page.getByRole('button',{name:'Done measuring',exact:true}).click();
+  await expect(page.locator('#measureMap')).toHaveAttribute('aria-pressed','false');
+});
+
 async function fixture(page,{phase='mapping',active=false}={}){
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const state={simulated:true,read_only:false,phase,allow_motion:true,token:'test-only',control_generation:0,

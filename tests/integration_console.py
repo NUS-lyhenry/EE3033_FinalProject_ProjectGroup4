@@ -26,6 +26,23 @@ from ee3033_project.mission import Mission
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_uncertain_estimate_updates_before_mission_start(self):
+        rclpy.init()
+        console=self.make_console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value='mission')])
+        try:
+            console.on_status(String(data=json.dumps(dict(state='WAITING',reason='Fixture',target_class='bottle',target=None,home=None))))
+            now=console.get_clock().now().nanoseconds*1e-9
+            for stamp,x,sigma in [(now-.1,0.,.2),(now,1.,.8)]:
+                console.on_target_detections(String(data=json.dumps({'detections':[dict(stamp=stamp,label='bottle',confidence=.9,x=x,y=1.,sigma=sigma)]})))
+            state=json.load(urlopen(f'http://127.0.0.1:{console.p["port"]}/api/state'))
+            self.assertIsNone(state['mission']['target'])
+            self.assertIsNotNone(state['target_estimate'])
+            self.assertLess(state['target_estimate']['x'],.1)
+            self.assertFalse(state['target_estimate']['confirmed'])
+            print('PASS: uncertain map estimate updates without starting or confirming a mission')
+        finally:
+            console.destroy_node();rclpy.shutdown()
+
     def make_console(self,**kwargs):
         root=tempfile.TemporaryDirectory(prefix='group4_console_record_')
         self.addCleanup(root.cleanup)

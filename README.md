@@ -58,6 +58,15 @@ uses matching `CameraInfo` and the image-timestamp transform from
 when the installed driver supplies it. Keep the real camera mount/optical axes
 correct; a mathematically valid default CameraInfo is not proof of accuracy.
 
+The map also shows an unconfirmed live target estimate before mission reporting.
+Recent finite detections are weighted by inverse variance and age over an 8 s
+window. The dashed circle shows one-sigma uncertainty including sensor error
+and observed scatter; correlated camera frames do not artificially eliminate
+the uncertainty floor. Lost estimates fade and expire after 30 s. These display
+estimates never start navigation or bypass mission confirmation. **Measure
+distance** supports two clicks or a drag on the map, without sending pose or
+motion commands.
+
 If the installed mounting TF is unsuitable, enter measured height, downward
 pitch, yaw and horizontal offsets under Advanced. Height zero selects existing
 TF; a positive height selects the fixed measured mount. UI angles are degrees,
