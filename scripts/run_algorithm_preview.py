@@ -25,7 +25,7 @@ class SimulationConsole(Console):
     def snapshot(self):
         data = super().snapshot()
         data.update(simulated=True, preview_interactive=True, preview_backend='main-ros',
-            preview_hint='真实 main 程序 + SLAM / Nav2 / YOLO；仅传感器和底盘为简化模型，保持原速度和超时。')
+            preview_hint='Current main programs with SLAM, Nav2 and YOLO; only sensors and the chassis are simplified. Original speeds and timeouts are retained.')
         return data
 
     def workflow_get(self, path):
