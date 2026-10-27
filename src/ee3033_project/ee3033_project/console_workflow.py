@@ -9,7 +9,7 @@ from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
-from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map, calibration_pose_source
+from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map, calibration_pose_source, require_preserved_unknown
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
@@ -31,16 +31,19 @@ class Workflow(CameraSetup):
         self.command_stamp = -math.inf
         self.workflow_fault = None
         self.last_registered_map = None
+        self.retry_after_stamp = -math.inf
+        self.retry_stop_generation = None
         self.stage = StageProcess(Path(self.p['session_directory']).expanduser()/'logs',
             allow_motion=self.p['allow_motion'], model=self.p['model'],
             calibration_file=self.p['calibration_file'],
             hardware={name:self.p['stage_'+name] for name in ('base','lidar','camera')}) if self.p['manage_stages'] else None
-        self.vision_settings = dict(camera_height=0., camera_pitch=0., camera_yaw=0.,
+        self.vision_settings = dict(camera_height=0., camera_pitch=.4991641660703783, use_pitch_override=True, camera_yaw=0.,
             camera_x=0., camera_y=0., horizontal_fov=0., camera_min_range=.35, camera_max_range=2.)
         saved = Path(self.p['vision_config']).expanduser() if self.p['vision_config'] else Path(self.p['session_directory']).expanduser()/'vision.yaml'
         if saved.is_file():
             data = yaml.safe_load(saved.read_text())['project_perception']['ros__parameters']
-            self.vision_settings = validate_mount_settings({k: data[k] for k in self.vision_settings})
+            self.vision_settings = validate_mount_settings({k: data.get(k, False) if k=='use_pitch_override' else data[k] for k in self.vision_settings})
+            if data.get('use_pitch_override') is True:self.vision_settings['use_pitch_override']=True
             self.p['vision_config'] = str(saved.resolve())
         if self.stage:
             self.stage.navigation_profile = self.p['navigation_profile']
@@ -75,6 +78,7 @@ class Workflow(CameraSetup):
         try:
             data=json.loads(msg.data)
             if data.get('phase')!='mission' or self.p['phase']!='mission': return
+            if self.retry_after_stamp>-math.inf and float(data.get('started_stamp',-math.inf)) <= self.retry_after_stamp: return
             if self.stage and float(data.get('stamp',-math.inf))<self.status_after: return
             with self.lock: self.result_data=data
         except (ValueError,TypeError): pass
@@ -87,6 +91,9 @@ class Workflow(CameraSetup):
 
     def workflow_status(self,status):
         try:
+            if (self.p['phase']=='mission' and self.retry_after_stamp>-math.inf
+                    and float(status.get('started_stamp',-math.inf)) <= self.retry_after_stamp):
+                return
             self.record.status(self.p['phase'],status)
             saved=status.get('saved_map')
             if saved and saved!=self.last_registered_map:
@@ -129,6 +136,54 @@ class Workflow(CameraSetup):
                 raise ValueError('Wait for fresh zero velocity output before changing stages')
 
     def workflow_command(self,path,body):
+        if path=='/api/retry_search':
+            self.require_idle()
+            if self.p['phase']!='mission' or not self.selected_map:
+                raise ValueError('Load a saved map for the mission first')
+            if self.state['state'] not in ('COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'):
+                raise ValueError('Finish or stop the previous search before trying again')
+            self.require_zero_command()
+            if not self.p['allow_motion']:
+                raise ValueError('Motion disabled in this console')
+            if self.stage is None or not self.stage.process:
+                raise ValueError('Load the mission stage before trying again')
+            if not self.initial_pose_sent:
+                raise ValueError('Set the assigned initial pose before trying again')
+            if time.monotonic()-self.freshness.get('Mission',-math.inf)>=2.:
+                raise ValueError('Mission status is stale; wait for fresh localization and sensors')
+            if not self.state.get('ready'):
+                raise ValueError(self.state.get('readiness_reason') or 'Wait for valid localization and sensors')
+            if self.trial_fault or self.gap_fault or self.workflow_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if self.selected_map.get('path'):require_preserved_unknown(self.selected_map['path'])
+            previous=json.loads(json.dumps(self.record.data))
+            cutoff=self.retry_after_stamp
+            retry_generation=self.control_generation
+            self.retry_after_stamp=self.get_clock().now().nanoseconds*1e-9
+            self.retry_stop_generation=None
+            self.record.repeat_search(self.selected_map['id'])
+            try:
+                result=self.command('/api/start',{},expected_generation=retry_generation)
+            except ValueError:
+                self.retry_after_stamp=cutoff
+                self.record.restore(previous)
+                raise
+            if not result.get('success'):
+                if result.get('canceled_by_stop'):
+                    # Preserve Stop's generation/state and the new attempt's
+                    # evidence; never resurrect the old running assessment.
+                    return result
+                self.retry_after_stamp=cutoff
+                self.record.restore(previous)
+                return result
+            with self.lock:
+                if self.control_generation!=retry_generation:
+                    return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
+                self.control_generation+=1
+                self.result_data=self.target_estimate=None
+                self.route=[];self.path=[]
+                self.events.clear()
+            return dict(result,message='Searching again on the loaded map; previous attempt saved')
         reset_trial=path=='/api/new_trial'
         if reset_trial:
             self.require_idle()
@@ -149,7 +204,7 @@ class Workflow(CameraSetup):
             phase=body.get('phase')
             if phase not in ('mapping','mission','calibration'): raise ValueError('Select camera setup, mapping or mission')
             self.require_camera_idle()
-            map_path=None;selected=None;options=mission_options(body)
+            map_path=None;selected=None;options=mission_options(body);reuse_saved_map=False
             self.stage.calibration_initial_pose = None
             if phase=='calibration':
                 if not body.get('map_id'):
@@ -182,12 +237,13 @@ class Workflow(CameraSetup):
                 self.model_labels.require(options['target_class'])
                 selected=self.catalog.entry(body.get('map_id'))
                 if not selected['reviewed']: raise ValueError('Inspect and review the saved map before stage 2')
+                require_preserved_unknown(selected['path'])
                 record=self.record.snapshot()
-                if selected['id'] not in record['maps'] or not record['includes_mapping']:
-                    raise ValueError('Construct and save this trial map in stage 1 before stage 2')
+                reuse_saved_map=(selected['id'] not in record['maps'] or not record['includes_mapping']
+                    or record['finished'] is not None or record['interrupted'])
                 map_path=selected['path']
             record=self.record.snapshot()
-            if phase!='calibration' and not reset_trial and (record['finished'] is not None or record['interrupted']):
+            if phase!='calibration' and not reset_trial and not reuse_saved_map and (record['finished'] is not None or record['interrupted']):
                 raise ValueError('Begin a new trial to construct a fresh map')
             if self.stage.process:
                 with self.lock:
@@ -216,7 +272,11 @@ class Workflow(CameraSetup):
                     return dict(success=True,message='Stage transition stopped; no new stage launched')
                 if reset_trial:
                     self.record.reset()
+                elif reuse_saved_map:
+                    self.record.repeat_search(selected['id'])
                 with self.lock:
+                    self.retry_after_stamp=-math.inf
+                    self.retry_stop_generation=None
                     self.control_generation+=1
                     self.status_after=self.get_clock().now().nanoseconds*1e-9
                     self.p['phase']=phase
@@ -235,6 +295,7 @@ class Workflow(CameraSetup):
                 self.stage.calibration_directory=self.p['calibration_directory']
                 self.stage.calibration_port=self.p['calibration_port']
                 self.stage.console_port=self.p['port']
+                self.stage.map_partial=bool(selected and selected.get('quality')!='mapped')
                 if not self.stage.launch(phase,map_path,options,self.p['map_directory']):
                     return dict(success=True,message='Stage transition stopped; no stage remains active')
                 if phase=='mapping':
@@ -245,5 +306,6 @@ class Workflow(CameraSetup):
             finally: self.stage.loading=False
             return dict(success=True,message=('Camera setup loaded; complete it once and save the validated profile' if phase=='calibration'
                         else 'Mapping stack loaded; Start begins exploration' if phase=='mapping'
+                        else 'Saved map loaded for a search-only attempt; establish the initial pose before Start' if reuse_saved_map
                         else 'Saved map loaded; establish the assigned initial pose before Start'))
         return None

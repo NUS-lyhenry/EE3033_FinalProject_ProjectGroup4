@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING']);
+const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING']);
 const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d):'—';
 const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
@@ -18,12 +18,11 @@ function arrangeWorkflow(){
   document.querySelector('.page-tabs').hidden=true;
   const tools=$('advancedTools'),body=$('toolsBody');
   ['waypointControls','mappingControls','audacityPanel','advanced'].forEach(id=>body.append($(id)));
-  body.append($('mapLibrary').querySelector('.field'));
   body.append($('localizationMethod').closest('.field'));
   body.append(document.querySelector('.event-panel'));
   const grid=document.querySelector('.workspace-grid'),stages=document.querySelector('.stage-grid');
   grid.before(stages,$('mapLibrary'));
-  $('localizationMethod').value='ground_plane';
+  $('localizationMethod').value='hybrid';
   const legacy=document.createElement('details'),summary=document.createElement('summary');
   legacy.id='legacyCalibration';summary.textContent='Legacy camera calibration · optional';
   legacy.append(summary,document.querySelector('section[data-pages="calibration"]'));body.append(legacy);
@@ -59,7 +58,7 @@ function chosenMap(){return maps.find(m=>m.id===$('savedMaps').value);}
 function currentSavedMap(){return maps.find(m=>m.path===(snapshot?.saved_map||snapshot?.mission?.saved_map));}
 function running(){return snapshot?.stage?.managed?snapshot.stage.running:true;}
 function setupIdle(){return online&&!snapshot?.read_only&&!busy&&!snapshot?.stage?.transitioning&&!ACTIVE.has(snapshot?.mission?.state);}
-function ready(){return online&&!snapshot?.assessment?.interrupted&&snapshot?.assessment?.finished==null&&running()&&snapshot?.health?.Mission?.ok&&snapshot?.mission?.ready!==false&&!snapshot?.control_fault&&!busy&&!snapshot?.stage?.transitioning;}
+function ready(repeat=false){return online&&(repeat||!snapshot?.assessment?.interrupted&&snapshot?.assessment?.finished==null)&&running()&&snapshot?.health?.Mission?.ok&&snapshot?.mission?.ready!==false&&!snapshot?.control_fault&&!busy&&!snapshot?.stage?.transitioning;}
 function setPill(id,text,kind=''){const e=$(id);e.textContent=text;e.className='pill '+kind;}
 function render(){
   renderPages();
@@ -73,8 +72,8 @@ function render(){
   const calibrating=s.phase==='calibration';
   $('phase').textContent=calibrating?'Preparation · Camera setup':mapping?'Stage 1 · Mapping':'Stage 2 · Autonomous';
   const calibration=s.camera_calibration;
-  if(currentPage==='workflow')$('localizationMethod').value='ground_plane';
-  if(calibration?.ready&&s.phase!=='mission'&&!coordinateMethodChosen)$('localizationMethod').value='ground_plane';
+  if(currentPage==='workflow'&&s.phase==='mapping')$('localizationMethod').value='hybrid';
+  if(calibration?.ready&&s.phase!=='mission'&&!coordinateMethodChosen)$('localizationMethod').value='hybrid';
   setPill('calibrationBadge',calibration?.ready?'Saved calibration ready':'Not calibrated',calibration?.ready?'good':'');
   $('calibrationSummary').textContent=calibration?.message||'Calibrate once, save the validated profile, and subsequent missions will use it automatically.';
   $('calibrationProfile').textContent=calibration?.path||'';
@@ -112,6 +111,9 @@ function render(){
   $('distance').textContent=distance!=null?`${fmt(distance)} m`:'— m';
   $('returnStatus').textContent=m.return_verified?'Home position verified':m.home?`Required tolerance ${fmt(m.return_tolerance??s.mission_options?.return_tolerance??.2)} m`:'Home is recorded at mission Start';
   $('coverage').textContent=m.viewpoints_total?`${Math.round((m.observed_fraction||0)*100)}%`:'—';
+  const coverageDetail=m.search_completeness;
+  if($('searchLegend'))$('searchLegend').hidden=!m.search_regions||mapping;
+  $('coverage').title=coverageDetail?`${coverageDetail.missing_cells} unobserved · ${coverageDetail.blocked_cells} blocked · ${coverageDetail.candidate_uncovered_cells} without a viewing position${coverageDetail.map_partial?' · partial map':''}`:'';
   $('waypoints').textContent=m.viewpoints_total?`${m.viewpoints_completed||0} / ${m.viewpoints_total} viewpoints · ${m.failed_viewpoints?.length||0} failed`:'No search plan yet';
   $('robotPose').textContent=s.pose?`Robot (${fmt(s.pose[0])}, ${fmt(s.pose[1])}) · ${fmt(s.pose[2]*180/Math.PI,0)}°`:'Pose unavailable';
   const fault=s.control_fault||s.workflow_fault||s.stage?.fault;
@@ -137,9 +139,13 @@ function render(){
   const mmseReady=s.mission_options?.preferred_target_sigma!=null||m.preferred_target_sigma!=null;
   const settingsChanged=targetChanged||s.phase==='mission'&&(mmseReady&&Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2));
   const validSettings=$('preferredSigma').checkValidity()&&$('preferredSigma').value!==''&&$('returnTolerance').checkValidity()&&$('returnTolerance').value!=='';
-  $('loadMission').hidden=!managed||(currentPage==='workflow'&&!settingsChanged);
-  $('loadMission').textContent=settingsChanged?'Apply settings & reload mission':'Load selected map for mission';
-  $('loadMission').disabled=!idle||!validSettings||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
+  const searchEnded=['COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'].includes(m.state);
+  $('loadMission').hidden=!managed||(currentPage==='workflow'&&!settingsChanged&&!searchEnded);
+  $('loadMission').textContent=settingsChanged?'Apply settings & reload mission':searchEnded?'Reload map & set start pose':'Load selected map for mission';
+  $('loadMission').disabled=!idle||!validSettings||!labelReady||!chosenMap()?.reviewed;
+  const canReuseSavedMap=managed&&chosenMap()?.reviewed&&chosenMap()?.id!==currentSavedMap()?.id;
+  $('useSavedMap').hidden=!mapping||!canReuseSavedMap;
+  $('useSavedMap').disabled=!idle||!labelReady||!validSettings||!canReuseSavedMap;
   $('reviewMap').disabled=!mapping||!idle||!chosenMap()||(loaded&&chosenMap().id!==currentSavedMap()?.id);
   if(currentPage==='workflow'){$('reviewMap').disabled||=!labelReady||!validSettings;$('reviewMap').textContent='Confirm map & prepare mission';$('mapLibrary').hidden=!mapping;$('setup').hidden=mapping;$('startMission').hidden=mapping;}
   else{$('reviewMap').textContent='Mark map reviewed';$('setup').hidden=false;$('startMission').hidden=false;}
@@ -156,8 +162,15 @@ function render(){
   $('preferredSigmaHelp').textContent=mmseReady?'Soft goal, not guaranteed error. After bounded refinement, the best stable estimate can still be accepted.':'Robot software update required to apply MMSE precision settings.';
   $('targetClass').disabled=!idle||!modelLabels?.ready;
   $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Apply target & reload mission, then set the initial pose again.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
-  $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Camera-only floor localization. Mount settings are under Advanced; no bottle collection is required.':'Legacy camera + lidar localization.';
+  $('projectionHelp').textContent=['ground_plane','hybrid'].includes($('localizationMethod').value)?'Camera-only floor localization. Mount settings are under Advanced; no bottle collection is required.':'Legacy camera + lidar localization.';
   $('startMission').disabled=s.phase!=='mission'||active||!s.allow_motion||!ready()||!labelReady||settingsChanged||!validSettings||(managed&&!s.initial_pose_sent);
+  $('retrySearch').hidden=s.phase!=='mission'||!searchEnded;
+  $('retrySearch').disabled=!idle||!loaded||!managed||!s.allow_motion||!ready(true)||!labelReady||!s.initial_pose_sent||settingsChanged||!validSettings||!!fault;
+  if(s.phase==='mission'&&searchEnded)$('startMission').hidden=true;
+  $('localizationProgress').hidden=s.phase!=='mission'||!m.target_detected;
+  const sites=m.bearing_progress?.sites||[];
+  const viewProgress=sites.map((v,i)=>`${'ABC'[i]||'View'}: ${v.ready?'ready':`${v.frames||0}/4 frames`}`).join(' · ');
+  $('localizationProgress').textContent=`Precision work: ${fmt(m.localization_active_seconds??0,1)} / ${fmt(m.localization_budget_seconds??45,0)} s · Travel between views: ${fmt(m.localization_travel_seconds??0,1)} s${m.localization_stage?' · '+m.localization_stage:''}${viewProgress?' · '+viewProgress:''}`;
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
   setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
   setPill('missionBadge',mapping?'Awaiting map':m.state==='COMPLETE'?'Complete':active?'In progress':'Setup',m.state==='COMPLETE'?'good':'');
@@ -168,7 +181,7 @@ function render(){
   if(m.target?.quality==='best_available')$('resultTarget').textContent+=' · approximate estimate';
   $('resultReturn').textContent=m.return_verified?`Verified · ${fmt(distance)} m`:m.state==='RETURNING'?'Returning…':'Pending';
   $('resultStop').textContent=m.return_verified?'Verified stationary':m.state==='VERIFYING'?`Checking ${fmt(m.stationary_check?.duration??0,1)} / ${fmt(m.stationary_required_seconds??2,1)} s…`:m.state==='FAILED'&&m.stationary_check?'Not verified':'Pending';
-  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?'Complete':m.state==='NOT_FOUND'?'Target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?'Stopped':'Trial not complete';
+  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?'Complete':m.state==='FOUND_UNLOCALIZED'?'Target found · position unavailable':m.state==='SEARCH_INCOMPLETE'?'Search incomplete':m.state==='NOT_FOUND'?'Search completed · target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?'Stopped':'Trial not complete';
   $('resultReason').textContent=(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
   if(m.target?.quality==='best_available')$('resultReason').textContent+=` · Best stable estimate: uncertainty σ ${fmt(m.target.sigma??Math.sqrt(m.target.variance))} m; preferred ${fmt(m.target.preferred_sigma)} m.`;
   const p=s.perception;
@@ -176,17 +189,19 @@ function render(){
     document.querySelector('.metrics').hidden=mapping;
     document.querySelector('.camera-panel').hidden=mapping;
     document.querySelector('.workspace-grid').classList.toggle('mapping-view',mapping);
-    $('missionPanel').hidden=mapping&&!currentSavedMap();
-    $('mapLibrary').hidden=!mapping||!currentSavedMap();
-    $('mapLibrary').querySelector('h2').textContent='Review this trial map';
-    $('resultsPanel').hidden=!m.target&&!['COMPLETE','NOT_FOUND','STOPPED','FAILED'].includes(m.state);
+    $('missionPanel').hidden=mapping&&!currentSavedMap()&&!chosenMap()?.reviewed;
+    $('mapLibrary').hidden=!mapping||!maps.length;
+    $('mapLibrary').querySelector('h2').textContent=currentSavedMap()?'Review this trial map':'Use a saved map';
+    $('resultsPanel').hidden=!m.target&&!['COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'].includes(m.state);
   }
   $('detectorSummary').textContent=p?`${p.target_class} · ${p.detected_candidates??'—'} visible · ${p.localized_candidates??0} localized${p.highest_confidence!=null?' · '+Math.round(p.highest_confidence*100)+'%':''}`:'No mission detector status';
-  $('methodSummary').textContent=p?`${p.localization_method==='ground_plane'?'Floor-plane projection':'Camera + lidar'} · ${fmt(p.latency,2)} s inference latency`:'Coordinate method is selected before loading stage 2.';
+  $('methodSummary').textContent=p?`${p.localization_method==='hybrid'?'Floor + bearing intersection':p.localization_method==='ground_plane'?'Floor-plane projection':'Camera + lidar'} · ${fmt(p.latency,2)} s inference latency`:'Coordinate method is selected before loading stage 2.';
+  if(p?.camera_model){const f=p.camera_model.rotation;const pitch=Math.atan2(-f[2][2],Math.hypot(f[0][2],f[1][2]))*180/Math.PI;$('methodSummary').textContent+=` · pitch ${fmt(pitch,1)}° · ${p.camera_model.source}`;}
   if(p?.geometry_error)$('methodSummary').textContent=p.geometry_error;
   $('gateReason').textContent=s.velocity_gate?`Motion: ${s.velocity_gate.reason.replaceAll('_',' ')} · requested ${s.velocity_gate.requested?.map(v=>fmt(v)).join(', ')} · output ${s.velocity_gate.output?.map(v=>fmt(v)).join(', ')}`:'Motion diagnostics appear after a stage loads.';
   ['profileFast','profileOriginal'].forEach(id=>$(id).disabled=!idle||!loaded||!s.health?.Mission?.ok||(s.phase==='mission'&&m.state!=='WAITING'));
   $('saveVision').disabled=!idle;
+  if(!visionDirty)$('visionPitchOverride').checked=s.vision_settings?.use_pitch_override===true;
   if(s.vision_settings&&!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(s.vision_settings[name]*scale,3));
   $('cameraSource').textContent=s.preview_interactive&&s.camera_source?'Simulated camera':s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
   $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
@@ -232,8 +247,9 @@ async function refreshMaps(preferred){
   if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}
   $('savedMaps').replaceChildren(...options);if(selected)$('savedMaps').value=selected;render();
 }
-async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:currentPage==='workflow'?'ground_plane':$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value),preferred_target_sigma:Number($('preferredSigma').value)});const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
+async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value),preferred_target_sigma:Number($('preferredSigma').value)});const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
 $('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
+$('useSavedMap').onclick=()=>loadStage('mission').catch(()=>{});
 $('start').onclick=async()=>{const serial=++workflowSerial;try{
   if(currentPage==='workflow'&&snapshot?.stage?.managed&&!running()){
     await loadStage('mapping');const deadline=Date.now()+30000;
@@ -251,6 +267,7 @@ $('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Num
 function readWaypointDraft(){const fields=['waypointX','waypointY','waypointYaw'].map(id=>$(id).value);const values=fields.map(Number);waypointDraft=fields.every(v=>v!=='')&&values.every(Number.isFinite)?[values[0],values[1],values[2]*Math.PI/180]:null;render();}
 ['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).oninput=readWaypointDraft);
 $('goWaypoint').onclick=()=>{if(waypointDraft)action('map_waypoint',{x:waypointDraft[0],y:waypointDraft[1],yaw:waypointDraft[2]}).then(()=>{waypointDraft=null;render();}).catch(()=>{});};
+$('retrySearch').onclick=()=>action('retry_search').catch(()=>{});
 $('newTrial').onclick=()=>action('new_trial').then(()=>showPage('workflow')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
 $('loadCalibration').onclick=()=>action('stage',{phase:'calibration',map_id:chosenMap()?.reviewed?chosenMap().id:undefined}).then(()=>showPage('calibration')).catch(()=>{});
 $('targetClass').onchange=render;
@@ -259,7 +276,8 @@ $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.crea
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 Object.values(visionFields).forEach(([id])=>$(id).oninput=()=>{visionDirty=true;});
-$('saveVision').onclick=()=>action('vision',Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale]))).then(()=>{visionDirty=false;}).catch(()=>{});
+$('visionPitchOverride').onchange=()=>{visionDirty=true;};
+$('saveVision').onclick=()=>action('vision',{...Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale])),use_pitch_override:$('visionPitchOverride').checked}).then(()=>{visionDirty=false;}).catch(()=>{});
 for(const [id,profile] of [['profileOriginal','original'],['profileFast','fast']])$(id).onclick=async()=>{parametersBusy=true;try{trial=await action('navigation',{profile});trialDirty=false;paramTime=Date.now();trialFields.forEach(([name,field])=>$(field).value=trial.values[name]);$('navigationProfileStatus').textContent=`Applied and verified: ${profile} · ${fmt(trial.values.max_linear)} m/s · ${fmt(trial.values.max_angular)} rad/s`;}catch(_){}finally{parametersBusy=false;render();}};
 $('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=async()=>{
@@ -314,6 +332,13 @@ function updateMeasurementStatus(){
 $('measureMap').onclick=()=>{measuring=!measuring;drag=null;updateMeasurementStatus();draw();};
 $('clearMeasurement').onclick=()=>{measurement=null;drag=null;updateMeasurementStatus();draw();};
 function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),ctx=canvas.getContext('2d'),wrap=canvas.parentElement;if(wrap.clientWidth<1||wrap.clientHeight<1)return;const scale=Math.min((wrap.clientWidth-28)/mapData.width,(wrap.clientHeight-28)/mapData.height);canvas.width=mapData.width*3;canvas.height=mapData.height*3;canvas.style.width=mapData.width*scale+'px';canvas.style.height=mapData.height*scale+'px';ctx.scale(3,3);ctx.imageSmoothingEnabled=false;ctx.drawImage(mapImage,0,0);
+  const regions=snapshot.mission?.search_regions;
+  if(snapshot.phase==='mission'&&regions&&regions.width===mapData.width&&regions.height===mapData.height&&regions.resolution===mapData.resolution&&regions.origin.every((v,i)=>Math.abs(v-mapData.origin[i])<1e-6)){
+    for(const [kind,color] of [['observed','rgba(64,170,115,.45)'],['missing','rgba(245,186,65,.65)'],['blocked','rgba(225,74,74,.75)']]){
+      ctx.fillStyle=color;for(const cell of regions[kind]||[]){const c=cell%regions.width,r=Math.floor(cell/regions.width);ctx.fillRect(c-.5,mapData.height-r-1.5,2,2);}
+    }
+  }
+
   function line(points,color,dash=[]){if(!points?.length)return;ctx.beginPath();ctx.setLineDash(dash);points.forEach((p,i)=>{const [x,y]=point(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle=color;ctx.lineWidth=.8;ctx.stroke();ctx.setLineDash([]);}
   function dot(p,color,r=2){if(!p)return;const[x,y]=point(...p);ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
   line(snapshot.route,'#bca6d8',[1.5,2]);line(snapshot.path,'#52cfaa');const m=snapshot.mission;dot(m.home,'#ce92df',2.3);if(m.target)dot([m.target.x,m.target.y],'#ecba59',2.8);

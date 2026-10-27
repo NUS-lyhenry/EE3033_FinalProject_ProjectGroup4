@@ -7,8 +7,10 @@ from .core import angle_difference
 
 
 def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
-                  min_frontier_cells=5, approach_distance=0.75, toward=None):
-    planner = CoveragePlanner(data,resolution,origin,clearance=clearance)
+                  min_frontier_cells=5, approach_distance=0.75, toward=None,
+                  safe_mask=None, visited=()):
+    planner = CoveragePlanner(data,resolution,origin,clearance=max(.15,clearance))
+    if safe_mask is not None:planner.safe &= safe_mask
     r,c = planner.world_to_cell(*robot[:2])
     if not planner.in_bounds(r,c):
         raise ValueError('Robot outside the current SLAM map')
@@ -34,9 +36,10 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
     valid_groups=0
     for group in range(1,count+1):
         cells=np.argwhere(groups==group)
+        # Tiny unresolved frontiers may be noise, but cannot prove completion.
+        valid_groups+=1
         if len(cells)<min_frontier_cells:
             continue
-        valid_groups+=1
         # A frontier can be a ring whose centroid is far from its boundary.
         # Sample actual frontier cells instead of navigating toward that centroid.
         representatives=cells[np.linspace(0,len(cells)-1,min(12,len(cells)),dtype=int)]
@@ -47,7 +50,8 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                 if np.linalg.norm(edge-[row,col])*resolution>approach_distance:
                     continue
                 x,y=planner.cell_to_world(int(row),int(col))
-                if any(math.hypot(x-fx,y-fy)<0.40 for fx,fy in failed):
+                # Reject a failed approach, not the entire frontier around it.
+                if any(math.hypot(x-fx,y-fy)<max(.12,2*resolution) for fx,fy in failed):
                     continue
                 n=int(max(abs(edge[0]-row),abs(edge[1]-col))*2)+1
                 line=np.rint(np.linspace([row,col],edge,n)).astype(int)
@@ -55,6 +59,9 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                     continue
                 cx,cy=planner.cell_to_world(edge[0],edge[1])
                 yaw=math.atan2(cy-y,cx-x)
+                if any(math.hypot(x-v[0],y-v[1])<.40
+                        and (len(v)<3 or abs(angle_difference(yaw,v[2]))<.6) for v in visited):
+                    continue
                 distance=math.hypot(x-robot[0],y-robot[1])
                 if distance<0.35:
                     continue

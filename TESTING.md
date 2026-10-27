@@ -1,5 +1,146 @@
 # Validation record
 
+## Capture diagnostics and full localization budget — 2026-10-27
+
+Release `capture_20261027_62b14551d2` separates translation/arrival-heading
+watchdog windows, counts arrival centering toward localization work, and removes
+motion-count exhaustion as an early-return condition. No-safe-next-motion now
+holds and observes to the work deadline. Per-frame rejection evidence is JSON
+safe and bounded, and Mission journals it per run under the assessment session.
+All 320 Python checks passed, including the prior 26.9-second/five-goal scenario
+continuing observation and terminating at 45 seconds, separate final-heading
+timing, diagnostic producers, persisted rejection records and mission isolation.
+
+The user authorized interruption of an active physical trial. It was stopped
+through the normal Stop endpoint before replacing the old console. Robot disk
+space was exhausted; only regenerable `.o` intermediates were cleared, retaining
+source/runtime programs/maps/results. New source was verified and built in its
+own release, and the same map/Fast/bottle/hybrid/0.14 m and 28.6-degree camera
+settings (current range 0.4–0.8 m) were restored.
+
+A passive real ROS subscription received the new localization diagnostics
+(schema 1, original frame timestamp and rejection codes). The UI was verified
+Connected/WAITING; initial pose must be re-established before Start. No new
+autonomous Start or full simulation was issued. Physical A/B success remains
+for the user's upcoming test. See validation/deployment_capture_20261027.json.
+
+## Physical no-baseline follow-up — 2026-10-27
+
+The recovery release physical run did **not** triangulate: four acquire goals
+were effectively in-place, localization travel was zero, and only one valid
+frame at one site remained. The mission returned FOUND_UNLOCALIZED after 28.3 s
+of localization work. This contradicts any inference that the earlier synthetic
+A/B success already established physical A/B performance.
+
+Release `parallax_20261027_50f9b06f72` bounds repeated in-place turns, skips
+centering no-ops, prioritizes side baselines, and decouples their planning from
+unusable floor depth. Actual Nav2 costs filter baseline alternatives before
+dispatch. Four independently valid centered/settled frames may be accumulated
+within a six-second site window; arriving/settling has an eight-second station
+hold. Completed A remains available while travelling to B, subject to existing
+observation age and geometry checks. New motion traces record origin, goal,
+translation and purpose. All 302 Python regressions passed.
+
+At the user's request this fix was built and deployed before full simulation.
+The same reviewed map, Fast profile, bottle/hybrid and 0.14 m precision were
+restored. The new UI/API version and healthy native robot stage were checked;
+the current new-version trial was already SEARCHING during the check and was
+not interrupted. Physical triangulation success is **not yet established**.
+Metadata: validation/deployment_parallax_20261027.json.
+
+## Recovery and repeat-search deployment — 2026-10-27
+
+Release `recovery_20261027_6136d65c75` was built on balance6 in a separate
+release/overlay, with all 124 uploaded files verified. The API reported this
+exact version after switching the stopped console. Current state is WAITING
+with no hardware stage loaded; no real mapping/search Start was issued. Existing
+Fast profile, 28.6-degree/0.31 m camera geometry and old results were preserved.
+Four known legacy maps received corrected copies; the originals remain intact.
+The UI was opened Connected with the latest corrected map selected, bottle and
+0.12 m precision restored. The corrected map remains unreviewed.
+
+Completed checks: 47 full browser tests and four final focused UI checks; 66
+focused retry/workflow Python checks; native full visual-search (including
+four-second loss recovery and autonomous bearing-only A/B), bearing filtering,
+eight mapping retry cases, nine ROS cases, and three automatic-calibration cases.
+The real Nav2/synthetic-chassis recovery test demonstrated one 0.20 m reverse
+fallback after repeated corner blockage, normal recovery without reversing when
+a transient obstacle cleared, rear-blind map/AMCL-approved reversing, unknown/
+uncertain rear rejection, bounded frozen-chassis failure and cancellation.
+
+The native HTTP workflow check initially found a missing stamp_seconds import.
+That import and subsequent generation/threshold guards were fixed and covered by
+focused checks; its final native rerun was paused at the user's request. The
+full new YOLO/SLAM/Nav2 simulation was not started. These are explicit remaining
+validation limits, not passes. User workflow preference: deploy and connect UI
+after necessary basic checks, then run full simulation while the user can test
+the hardware. Simulation remains paused until requested.
+
+Deployment metadata: validation/deployment_recovery_20261027.json. Physical
+localization accuracy and recovery dynamics have not been established by these
+synthetic tests.
+
+## Joint search, lock and bearing localization — 2026-10-27
+
+Based on main `fbbf0da`, with local implementation changes. The original speed
+and clearance remain unchanged. Completed verification:
+
+- 238 Python tests passed on macOS; the final affected native Humble run also
+  passed its Python suite. New checks cover reachable wall-back coverage,
+  incomplete-map outcomes, geometry-free target lock, no global resumption after
+  lock, stale navigation callbacks, pitch correction, correlated factor
+  replacement and safe reframing.
+- All 43 Chromium workflow/layout tests passed, including the distinct
+  FOUND_UNLOCALIZED/SEARCH_INCOMPLETE displays and boolean TF pitch override.
+- The full isolated Humble suite passed (camera, visual mission, hardware launch,
+  console, ROS callbacks, adaptive search, stationary checks, legacy calibration,
+  automatic calibration, mapping retry, workflow, waypoint, native turning,
+  recovery, and NavFn gap checks at both map resolutions). Final camera and
+  cancellation changes were rechecked through the affected native cases.
+- The native Image/CameraInfo/TF/odometry -> bearing -> MapMMSE test deliberately
+  clips the bottom, providing no floor coordinates. Two four-frame sites recover
+  (1.000, 1.000) m with sigma 0.0596 m, using one joint likelihood rather than
+  accumulating correlated pairs. Only the detector is substituted in this test.
+- The full real-YOLO/SLAM/Nav2 simulation generated its map and then completed
+  target detection, bounded refinement, one report, return and a verified two
+  second stationary window. The clean-start mission took 77.4 s, reported
+  (0.9811, 0.8816) m with sigma 0.1067 m as best_available, and finished 0.1212 m
+  from its recorded home. That run used the floor/MMSE fallback; the bearing-only
+  route is verified separately above. Result: validation/simulation_20261027.json.
+- Earlier simulation attempts exposed an incorrect start-heading handoff and a
+  stale-TF safety stop during return under concurrent test load. They are not
+  successful missions. The clean-start rerun retained the existing thresholds.
+
+Deployment at the user's request: the robot built and imported
+`joint_20261027_ebbf200d32` from a separate release/overlay. The new console uses
+an independent assessment session, preserves the old source/maps/results and
+the existing 28.6-degree, 0.31 m, 0.3–1.5 m camera settings. The local physical
+robot UI was opened and verified Connected/WAITING with model labels ready.
+No mapping or mission Start was issued by the agent. This establishes deployment
+and UI connectivity, not physical navigation/localization accuracy. See
+validation/deployment_20261027.json.
+
+The deterministic planner-only comparison uses the same candidate pool and
+speed assumptions, ideal observations and no inference/localization time:
+
+| Layout | Mean first visibility, greedy -> lookahead (s) | Full route, greedy -> lookahead (s) |
+| --- | --- | --- |
+| Open | 107.18 -> 106.79 | 506.31 -> 539.79 |
+| Divider | 125.19 -> 129.69 | 631.11 -> 633.08 |
+| Alcove | 136.10 -> 134.08 | 770.44 -> 643.49 |
+
+All target cells were observed in these cases. Lookahead does not universally
+improve speed: retain the measured regressions rather than interpreting the
+three-step policy as globally optimal. Reproduce with scripts/benchmark_search.py.
+
+The checked-in scripts/verify_algorithm_preview.py rejects non-simulation
+consoles, waits for model labels/fresh status, and uses the real HTTP workflow.
+A complete trial needs a fresh map; --reuse-map is only for an unfinished trial
+in a world reset to its assigned origin. The simulator uses its own TF-only
+10-degree camera; the physical-device preset is the user's provisional 28.6
+degrees, not an independent calibration. Physical accuracy remains unmeasured.
+
+
 ## Algorithm preview and soft target precision — 2026-10-27
 
 The local `main` working tree now supports a hardware-free interactive preview

@@ -1,0 +1,42 @@
+{
+  "release": "recovery_20261027_6136d65c75",
+  "source_sha256": "6136d65c75af144c55c3566c21dc471d242306c6f7c6a3e7b9359ad0f05743d2",
+  "archive": "/private/tmp/recovery_20261027_6136d65c75.tar.gz",
+  "archive_sha256": "a86cd401e23d1e01c1e740b78aa2430a41ca5d000070008812279db8f1971e0b",
+  "size": 273100,
+  "files": 124,
+  "deployed": true,
+  "robot": "balance6",
+  "robot_address": "10.221.243.174",
+  "verified_api_version": "recovery_20261027_6136d65c75",
+  "ui": "http://127.0.0.1:8765/?release=recovery_20261027_6136d65c75#/workflow",
+  "robot_state": "WAITING",
+  "stage_loaded": false,
+  "autonomous_motion_started": false,
+  "navigation_profile": "fast",
+  "camera": {
+    "height": 0.31,
+    "pitch_degrees": 28.6,
+    "min_range": 0.3,
+    "max_range": 1.5
+  },
+  "session": "/home/ros2_ws/group4_results/assessment_recovery_20261027_6136d65c75",
+  "latest_corrected_map": "/home/ros2_ws/group4_maps/onsite_corrected_coyd9i6y/map.yaml",
+  "original_maps_preserved": true,
+  "corrected_maps": 4,
+  "simulation": {
+    "full_yolo_run": "not started; paused at user request",
+    "final_native_http_workflow": "fix applied; final rerun paused at user request"
+  },
+  "passed_checks": {
+    "browser_full": 47,
+    "browser_final_focused": 4,
+    "python_retry_ui_focused": 66,
+    "native_visual_search": "passed including four-second loss and autonomous A/B",
+    "native_bearing_filter": "passed; sigma 0.05961",
+    "native_nav2_recovery": "passed including corner reverse fallback, rear blind, unknown, uncertain, frozen, cancel",
+    "native_mapping_retry": 8,
+    "native_ros": 9,
+    "native_automatic_calibration": 3
+  }
+}

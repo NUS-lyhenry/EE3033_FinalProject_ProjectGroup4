@@ -13,6 +13,7 @@ from unittest.mock import patch
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from nav2_msgs.action import NavigateToPose
+from geometry_msgs.msg import Twist
 from std_srvs.srv import Trigger
 
 from integration_ros import FakeRobot, overrides, wait
@@ -30,6 +31,8 @@ class RetryRobot(FakeRobot):
         self.events=[]
         self.release_cancel=threading.Event()
         super().__init__('absent')
+        self.zero_pub=self.create_publisher(Twist,'/cmd_vel',10)
+        self.create_timer(.05,lambda:self.zero_pub.publish(Twist()))
 
     def accept(self,request):
         if self.mode=='late_timeout' and not self.order:
@@ -75,7 +78,7 @@ class MappingRetryIntegration(unittest.TestCase):
         self.robot=RetryRobot()
         self.mapper=Mapper(parameter_overrides=overrides(allow_motion=True,
             settle_seconds=.05,frontier_settle_seconds=.1,map_directory=self.root.name))
-        def frontiers(data,resolution,origin,robot,failed=(),clearance=.22):
+        def frontiers(data,resolution,origin,robot,failed=(),clearance=.22,**kwargs):
             remaining=[(name,p) for name,p in AREAS.items() if name not in self.robot.completed]
             for _,pose in remaining:
                 if all((pose[0]-x)**2+(pose[1]-y)**2>=.4**2 for x,y in failed):

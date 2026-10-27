@@ -41,6 +41,34 @@ class MapMMSE:
         self.result=None
         self.frozen=None
         self.label=None
+        self.factor = None
+
+    def update_factor(self, factor, now):
+        """Replace correlated pixel projections with one joint geometric factor.
+
+        A/B/C are jointly refitted, never appended as independent pairs sharing
+        A. Confirmation uses their distinct source frames, not repeated factors.
+        """
+        sources = factor.get('source_frames', [])
+        if (len(set(sources)) < self.frames*2 or factor.get('sites', 0) < 2
+                or self.frozen is not None):
+            return False
+        if self.factor and factor['stamp'] <= self.factor['stamp']:
+            return False
+        # All floor measurements of this locked object share the same images
+        # and mount error. The joint intersection replaces that likelihood.
+        previous = self.samples, self.result, self.streak, self.label, self.factor
+        self.samples = deque(maxlen=self.samples.maxlen)
+        self.result = None
+        self.streak = 0
+        self.factor = None
+        if not self.update(factor, now):
+            self.samples, self.result, self.streak, self.label, self.factor = previous
+            return False
+        self.factor = dict(factor)
+        self.streak = len(set(sources))
+        self.result.update({k: factor[k] for k in ('source', 'source_frames', 'sites', 'crossing_angle', 'baseline') if k in factor})
+        return True
 
     def set_map(self, grid, resolution, origin):
         grid=np.asarray(grid,dtype=np.int16)
@@ -89,6 +117,9 @@ class MapMMSE:
             self.streak=0
 
     def update(self,d,now):
+        if self.factor is not None:
+            # Raw floor projections must not re-enter a joint bearing likelihood.
+            return False
         if self.frozen is not None or self.grid is None or not len(self.points):return False
         try:
             stamp,x,y,sigma,confidence=[float(d[k]) for k in ('stamp','x','y','sigma','confidence')]
@@ -163,7 +194,7 @@ class MapMMSE:
         age=now-source['stamp']
         if self.frozen is None and not 0<=age<=30:return None
         return dict(source,age=max(0.,age),stale=self.frozen is None and age>self.max_age,
-            stable=self.frozen is not None or (self.streak>=self.frames and len(self.samples)>=self.frames and 0<=age<=self.max_age and not source['prior_conflict']),
+            stable=self.frozen is not None or (self.streak>=self.frames and (len(self.samples)>=self.frames or self.factor is not None) and 0<=age<=self.max_age and not source['prior_conflict']),
             frames=source.get('frames',source.get('confirmation_frames',self.streak)) if self.frozen is not None else self.streak,confirmed=self.frozen is not None,frame_id='map')
 
     def freeze(self,estimate):

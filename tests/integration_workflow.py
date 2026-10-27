@@ -103,11 +103,30 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertGreater(result['assessment']['elapsed_seconds'],result['mission']['elapsed_seconds'])
         persisted=Path(self.root.name)/'records'/result['assessment']['id']/'assessment.json'
         self.assertEqual(json.loads(persisted.read_text())['result']['state'],'COMPLETE')
+        # Search again keeps the loaded map/AMCL and starts a new mission rather
+        # than relaunching mapping or inheriting the old target confirmation.
+        previous_stamp=result['mission']['started_stamp'];launch_count=len(self.launched)
+        self.assertTrue(self.post('retry_search')['success'])
+        self.assertTrue(wait(lambda:self.get()['mission'].get('started_stamp',0)>previous_stamp))
+        self.assertTrue(wait(lambda:self.get()['mission']['state']=='COMPLETE'),self.get())
+        repeated=self.get('result')
+        self.assertNotEqual(repeated['assessment']['id'],result['assessment']['id'])
+        self.assertEqual(repeated['selected_map']['id'],maps[0]['id'])
+        self.assertFalse(repeated['assessment']['includes_mapping'])
+        self.assertFalse(repeated['assessment']['timing_valid'])
+        self.assertEqual(len(self.launched),launch_count)
+        self.assertEqual(json.loads(persisted.read_text())['result']['started_stamp'],previous_stamp)
         self.post('new_trial')
         self.assertTrue(wait(lambda:self.get()['mission'].get('phase')=='mapping' and self.get()['mission'].get('ready')))
-        with self.assertRaises(HTTPError):self.post('stage',settings) # prior trial's map cannot replace on-site construction
+        # A reviewed saved map can also be loaded independently, without
+        # pretending that this new trial reconstructed it or starting motion.
+        self.post('stage',settings)
+        self.assertTrue(wait(lambda:self.get()['mission'].get('phase')=='mission' and self.get()['mission'].get('ready')))
+        self.assertEqual(self.get()['mission']['state'],'WAITING')
+        self.assertEqual(self.get()['selected_map']['id'],maps[0]['id'])
+        self.assertFalse(self.get()['assessment']['includes_mapping'])
         self.assertEqual(self.console.count_publishers('/cmd_vel'),1)
-        print('PASS: native two-stage process transition, unique map/save/review, pose lockout, autonomous report/verified return, continuous timing and persisted export')
+        print('PASS: native HTTP two-stage trial, same-map Search again, archived results, reused-map-only timing and saved-map load without motion')
 
     def test_stop_during_loading_prevents_late_stage(self):
         entered=threading.Event();release=threading.Event();factory=self.console.stage.popen

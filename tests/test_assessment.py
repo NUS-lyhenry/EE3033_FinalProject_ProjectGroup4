@@ -39,7 +39,7 @@ def test_timer_spans_both_stages_transition_and_stop(tmp_path):
     {'state':'COMPLETE','target':None,'return_verified':True},
     {'state':'COMPLETE','target':{'x':1},'return_verified':False},
     {'state':'COMPLETE','target':{'x':1}},
-    {'state':'NOT_FOUND','return_verified':True},
+    {'state':'NOT_FOUND','return_verified':False},
     {'state':'FAILED'},
 ])
 def test_unverified_or_missing_target_never_finishes_timer(tmp_path,status):
@@ -142,3 +142,11 @@ def test_stop_during_transition_prevents_successor_launch(tmp_path):
     manager=StageProcess(tmp_path,popen=forbidden);manager.cancel.set()
     assert manager.launch('mapping',map_directory=tmp_path) is False
     assert calls==[]
+
+
+@pytest.mark.parametrize('state',['NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE'])
+def test_verified_terminal_outcomes_finish_timer_without_manufacturing_a_target(tmp_path,state):
+    record=TrialRecord(tmp_path,boot_id='one');record.start('mapping')
+    record.status('mission',dict(state=state,return_verified=True,target=None))
+    assert record.snapshot()['finished'] is not None
+    assert record.snapshot()['result']['target'] is None

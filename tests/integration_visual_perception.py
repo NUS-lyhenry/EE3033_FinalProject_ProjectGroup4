@@ -46,7 +46,8 @@ def main():
     detector = Detector()
     with patch.object(Perception, 'load_detector', return_value=detector):
         perception = Perception(parameter_overrides=overrides(target_class='bottle',
-            image_topic='/test/image', camera_info_topic='/test/camera', inference_period=.08))
+            image_topic='/test/image', camera_info_topic='/test/camera', inference_period=.08,
+            localization_method=os.environ.get('GROUP4_VISION_METHOD','ground_plane')))
     broadcaster = StaticTransformBroadcaster(fixture)
     transforms = []
     for parent, child, xyz, rotation in [
@@ -99,7 +100,7 @@ def main():
                     and statuses and statuses[-1].get('geometry_ready')), (statuses[-1:], detections[-1:])
         assert fixture.count_subscribers('/scan_fixed') == 0
         assert statuses[-1]['geometry_ready'] and statuses[-1]['camera_model']
-        assert observations[-1]['observations'][0]['method'] == 'ground_plane'
+        assert observations[-1]['observations'][0]['method'] == os.environ.get('GROUP4_VISION_METHOD','ground_plane')
         assert observations[-1]['observations'][0]['sigma'] <= .10
         # Preferred precision is soft: preserve a stable high-sigma observation,
         # but do not stop an approach as if the preferred precision were met.

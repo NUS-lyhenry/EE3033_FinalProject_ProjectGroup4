@@ -89,6 +89,11 @@ def main():
     root = str(Path(args.output_directory).resolve())
     if not root.startswith('/tmp/'):
         raise SystemExit('Simulation output must remain under /tmp inside the container')
+    Path(root).mkdir(parents=True, exist_ok=True)
+    # This world's independently specified camera is 10 degrees downward.
+    # Keep its known TF geometry separate from the physical robot's 28.6 preset.
+    vision = Path(root)/'simulation_vision.yaml'
+    vision.write_text(json.dumps({'project_perception': {'ros__parameters': {'camera_height': 0., 'camera_pitch': 0., 'camera_yaw': 0., 'camera_x': 0., 'camera_y': 0., 'horizontal_fov': 0., 'camera_min_range': .35, 'camera_max_range': 2., 'use_pitch_override': False}}}))
     def interrupt(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupt)
@@ -97,7 +102,7 @@ def main():
         stage_base=False, stage_lidar=False, stage_camera=False, model=args.model,
         map_directory=root+'/maps', session_directory=root+'/results',
         software_version=os.environ.get('PREVIEW_MAIN_COMMIT', 'main'),
-        calibration_directory=root+'/calibration').items()])
+        calibration_directory=root+'/calibration',vision_config=str(vision)).items()])
     robot = SimulatedRobot(args.texture)
     relay = proxy(8765, args.public_port)
     threading.Thread(target=relay.serve_forever, daemon=True).start()

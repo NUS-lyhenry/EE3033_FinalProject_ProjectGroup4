@@ -11,6 +11,10 @@ import numpy as np
 
 
 def validate_mount_settings(values):
+    values = dict(values) if isinstance(values, dict) else values
+    override = values.pop('use_pitch_override', False) if isinstance(values, dict) else False
+    if type(override) is not bool:
+        raise ValueError('use_pitch_override must be a boolean')
     bounds = dict(camera_height=(0., 1.5), camera_pitch=(-1.05, 1.05),
                   camera_yaw=(-math.pi, math.pi), camera_x=(-.5, .5), camera_y=(-.5, .5),
                   horizontal_fov=(0., 2.8), camera_min_range=(.2, 1.),
@@ -23,10 +27,25 @@ def validate_mount_settings(values):
         if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not low <= value <= high:
             raise ValueError(name+' is outside its valid range')
         result[name] = float(value)
+    if override:
+        result['use_pitch_override'] = True
     if (0 < result['camera_height'] < .05 or 0 < result['horizontal_fov'] < .2
             or result['camera_min_range'] >= result['camera_max_range']):
         raise ValueError('Use a measured height/FOV or zero for existing TF/CameraInfo')
     return result
+
+
+def override_pitch(rotation, pitch):
+    """Replace base-frame pitch while retaining mounting yaw and optical roll."""
+    forward = np.asarray(rotation)[:, 2]
+    old = math.atan2(-forward[2], math.hypot(forward[0], forward[1]))
+    yaw = math.atan2(forward[1], forward[0])
+    a = pitch-old
+    axis = np.array([-math.sin(yaw), math.cos(yaw), 0.])
+    skew = np.array([[0., -axis[2], axis[1]], [axis[2], 0., -axis[0]],
+                     [-axis[1], axis[0], 0.]])
+    change = np.eye(3)+math.sin(a)*skew+(1-math.cos(a))*(skew@skew)
+    return change@rotation
 
 
 def camera_matrix(width, height, k=None, d=None, horizontal_fov=0.):

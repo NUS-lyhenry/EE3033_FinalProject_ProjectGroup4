@@ -86,8 +86,8 @@ class AdaptiveSearch(unittest.TestCase):
                     self.assertTrue(stop.wait_for_service(timeout_sec=3))
                     response = stop.call_async(Trigger.Request())
                     self.assertTrue(wait(response.done))
-                expected = 'STOPPED' if mode == 'stop' else 'NOT_FOUND'
-                self.assertTrue(wait(lambda: mission.state in ('STOPPED','FAILED','NOT_FOUND'),
+                expected = 'STOPPED' if mode == 'stop' else 'SEARCH_INCOMPLETE'
+                self.assertTrue(wait(lambda: mission.state in ('STOPPED','FAILED','SEARCH_INCOMPLETE','NOT_FOUND'),
                                      timeout=15), mission.summary())
                 time.sleep(.3)
                 self.assertEqual(mission.state, expected, mission.summary())

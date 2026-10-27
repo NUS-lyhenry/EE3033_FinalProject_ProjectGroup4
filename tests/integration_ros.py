@@ -216,11 +216,11 @@ class Integration(unittest.TestCase):
                 self.assertTrue(stop_client.wait_for_service(timeout_sec=3))
                 stopped = stop_client.call_async(Trigger.Request())
                 self.assertTrue(wait(stopped.done))
-            self.assertTrue(wait(lambda: mission.state in ('COMPLETE','NOT_FOUND','FAILED','STOPPED'),
+            self.assertTrue(wait(lambda: mission.state in ('COMPLETE','NOT_FOUND','SEARCH_INCOMPLETE','FOUND_UNLOCALIZED','FAILED','STOPPED'),
                                  timeout=18),mission.summary())
             # Allow any late acceptance/cancellation and terminal heartbeat to settle.
             time.sleep(0.7)
-            expected = {'found':'COMPLETE','absent':'NOT_FOUND','search_abort':'NOT_FOUND',
+            expected = {'found':'COMPLETE','absent':'SEARCH_INCOMPLETE','search_abort':'SEARCH_INCOMPLETE',
                         'stale':'FAILED','delayed_accept':'STOPPED',
                         'false_home_success':'FAILED'}[scenario]
             self.assertEqual(mission.state, expected, mission.summary())
@@ -315,11 +315,17 @@ class GateIntegration(unittest.TestCase):
             time.sleep(0.2)
             self.assertEqual(received[-1],(0.0,0.0))
             controls['back'] = 3.0
-            self.assertTrue(wait(lambda: received[-1] == (-0.15,0.45)))
+            # Clear rear laser returns alone cannot approve reversing without
+            # a localized map corridor (and simultaneous reverse/turn is barred).
+            time.sleep(.2)
+            self.assertEqual(received[-1],(0.0,0.0))
+            self.assertEqual(gate.reverse_reason,'reverse_map_or_localization_missing')
+            controls['linear'] = .8
+            self.assertTrue(wait(lambda: received[-1] == (0.15,0.45)))
             controls['heartbeat'] = False
             self.assertTrue(wait(lambda: received[-1] == (0.0,0.0)))
             controls['heartbeat'] = True
-            self.assertTrue(wait(lambda: received[-1] == (-0.15,0.45)))
+            self.assertTrue(wait(lambda: received[-1] == (0.15,0.45)))
             controls['commands'] = False
             self.assertTrue(wait(lambda: received[-1] == (0.0,0.0)))
             controls['commands'],controls['stale'] = True,True
@@ -339,6 +345,8 @@ class MappingIntegration(unittest.TestCase):
         rclpy.init()
         root=tempfile.TemporaryDirectory(prefix='group4_partial_test_')
         robot=FakeRobot('mapping_timeout')
+        zero=robot.create_publisher(Twist,'/cmd_vel',10)
+        robot.create_timer(.05,lambda:zero.publish(Twist()))
         mapper=Mapper(parameter_overrides=overrides(allow_motion=True,
             settle_seconds=.1,frontier_settle_seconds=.2,map_directory=root.name))
         executor=MultiThreadedExecutor(num_threads=5)
@@ -369,6 +377,8 @@ class MappingIntegration(unittest.TestCase):
         original=Path(root.name)/'lab_map.yaml'
         original.write_text('Original lab map must remain unchanged\n')
         robot=FakeRobot('absent')
+        zero=robot.create_publisher(Twist,'/cmd_vel',10)
+        robot.create_timer(.05,lambda:zero.publish(Twist()))
         mapper=Mapper(parameter_overrides=overrides(
             allow_motion=True,settle_seconds=0.1,frontier_settle_seconds=0.2,
             map_directory=root.name))

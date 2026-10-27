@@ -1,0 +1,77 @@
+{
+  "evidence": "planner-only, ideal observations, same 0.12 m/s and 0.40 rad/s; no inference or localization timing",
+  "scenarios": {
+    "open": {
+      "greedy": {
+        "mean_first_visibility_seconds": 107.18225518540083,
+        "route_seconds": 506.31210217603206,
+        "path_metres": 34.60000000000001,
+        "turn_radians": 56.231507537079416,
+        "stops": 43,
+        "observed_cells": 2709,
+        "target_cells": 2709,
+        "largest_missing_patch": 0.0,
+        "planning_p95_seconds": 0.004075437551364303
+      },
+      "lookahead": {
+        "mean_first_visibility_seconds": 106.79122214750362,
+        "route_seconds": 539.7915700927448,
+        "path_metres": 39.199999999999996,
+        "turn_radians": 55.72996137043125,
+        "stops": 41,
+        "observed_cells": 2709,
+        "target_cells": 2709,
+        "largest_missing_patch": 0.0,
+        "planning_p95_seconds": 0.06981813540769508
+      }
+    },
+    "divider": {
+      "greedy": {
+        "mean_first_visibility_seconds": 125.19163693279637,
+        "route_seconds": 631.1094192194859,
+        "path_metres": 45.199999999999974,
+        "turn_radians": 70.0971010211277,
+        "stops": 44,
+        "observed_cells": 2641,
+        "target_cells": 2641,
+        "largest_missing_patch": 0.0,
+        "planning_p95_seconds": 0.003783649994875304
+      },
+      "lookahead": {
+        "mean_first_visibility_seconds": 129.6891613464345,
+        "route_seconds": 633.078110674418,
+        "path_metres": 45.6,
+        "turn_radians": 68.83124426976708,
+        "stops": 45,
+        "observed_cells": 2641,
+        "target_cells": 2641,
+        "largest_missing_patch": 0.0,
+        "planning_p95_seconds": 0.06505020824624808
+      }
+    },
+    "alcove": {
+      "greedy": {
+        "mean_first_visibility_seconds": 136.09875384734252,
+        "route_seconds": 770.4378534896674,
+        "path_metres": 62.39999999999998,
+        "turn_radians": 67.77514139586694,
+        "stops": 45,
+        "observed_cells": 2569,
+        "target_cells": 2569,
+        "largest_missing_patch": 0.0,
+        "planning_p95_seconds": 0.003154208756313892
+      },
+      "lookahead": {
+        "mean_first_visibility_seconds": 134.07865687594077,
+        "route_seconds": 643.4936942967724,
+        "path_metres": 47.200000000000024,
+        "turn_radians": 67.66414438537551,
+        "stops": 45,
+        "observed_cells": 2569,
+        "target_cells": 2569,
+        "largest_missing_patch": 0.0,
+        "planning_p95_seconds": 0.06179466650064569
+      }
+    }
+  }
+}

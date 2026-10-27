@@ -9,6 +9,8 @@ export ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 python3 -m pytest -q
 ROS_DOMAIN_ID=110 python3 tests/integration_visual_perception.py
+GROUP4_VISION_METHOD=hybrid ROS_DOMAIN_ID=112 python3 tests/integration_visual_perception.py
+ROS_DOMAIN_ID=113 python3 tests/integration_bearing_filter.py
 ROS_DOMAIN_ID=109 python3 tests/integration_visual_search.py
 ROS_DOMAIN_ID=99 python3 tests/integration_hardware_launch.py
 ROS_DOMAIN_ID=94 python3 tests/integration_console.py
