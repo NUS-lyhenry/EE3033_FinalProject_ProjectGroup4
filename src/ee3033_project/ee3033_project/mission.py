@@ -36,6 +36,7 @@ from .ros_utils import LATCHED, parameters, run, set_yaw
 from .stationary import StationaryWindow
 from .vision_geometry import FloorCamera
 from .target_acquisition import SingleTarget
+from .target_estimate import map_signature
 
 
 class Mission(Node):
@@ -81,6 +82,7 @@ class Mission(Node):
         self.return_verified = False
         self.target_details = None
         self.best_target = None
+        self.current_target_estimate = None
         self.route, self.seen, self.failures = [], set(), []
         self.index = 0
         self.attempted = set()
@@ -158,8 +160,7 @@ class Mission(Node):
         self.create_subscription(Twist, '/cmd_vel', self.on_final_command, 10)
         self.create_subscription(String, '/project/perception_status', self.on_perception, 10)
         self.create_subscription(String, '/project/target_detections', self.on_detections, 10)
-        self.create_subscription(PoseWithCovarianceStamped, '/project/confirmed_target',
-                                 self.on_target, 10)
+        self.create_subscription(String, '/project/target_estimate', self.on_estimate, LATCHED)
         self.create_subscription(String, '/project/target_details', self.on_details, 10)
         self.create_service(Trigger, '/project/start', self.start)
         self.create_service(Trigger, '/project/stop', self.stop)
@@ -329,6 +330,7 @@ class Mission(Node):
         self.home, self.target = self.pose(), None
         self.target_details = None
         self.best_target = None
+        self.current_target_estimate = None
         self.return_verified = False
         self.index, self.route, self.seen, self.failures = 0, [], set(), []
         self.attempted, self.failed_options = set(), set()
@@ -600,29 +602,29 @@ class Mission(Node):
         self.route.append(v)
         self.send_goal(self.make_pose(v.x, v.y, v.yaw), 'search')
 
-    def on_target(self, msg):
-        if self.state not in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING') or self.target is not None:
-            return
-        p = msg.pose.pose.position
-        age = self.get_clock().now().nanoseconds*1e-9 - stamp_seconds(msg.header.stamp)
-        variance = max(msg.pose.covariance[0], msg.pose.covariance[7])
-        if (msg.header.frame_id != self.p['map_frame']
-                or not all(math.isfinite(v) for v in (p.x, p.y, variance))
-                or not 0 <= age <= self.p['max_target_age']
-                or variance <= 0
-                or self.readiness_error()):
-            return
-        # Coordinates must be inside the saved assessment map.
-        r, c = self.planner.world_to_cell(p.x, p.y)
-        if not self.planner.in_bounds(r, c):
-            return
-        estimate = dict(x=p.x, y=p.y, variance=variance, stamp=stamp_seconds(msg.header.stamp))
-        now = self.get_clock().now().nanoseconds*1e-9
-        if (self.best_target is None or now-self.best_target['stamp'] > self.p['max_target_age']
-                or variance <= self.best_target['variance']):
-            self.best_target = estimate
-        if variance <= self.p['max_target_variance'] or math.isclose(variance, self.p['max_target_variance'], rel_tol=1e-9):
-            self.report_target(estimate, 'preferred_precision')
+    def on_estimate(self, msg):
+        try:
+            data=json.loads(msg.data)
+            self.current_target_estimate=data
+            self.best_target=None
+            if (self.state not in ('SEARCHING','OBSERVING','ACQUIRING','LOCALIZING') or self.target is not None
+                    or data.get('method')!='map-constrained MMSE' or data.get('stable') is not True
+                    or data.get('prior_conflict') or data.get('frame_id')!=self.p['map_frame']
+                    or data.get('label')!=self.p['target_class'] or data.get('mission_stamp')!=self.started_stamp):return
+            now=self.get_clock().now().nanoseconds*1e-9
+            if not 0<=now-float(data['stamp'])<=self.p['max_target_age'] or self.readiness_error():return
+            if not all(math.isfinite(float(data[k])) for k in ('x','y','sigma','variance')) or data['variance']<=0:return
+            if self.planner is None or data.get('map_signature')!=map_signature(self.planner.grid,self.planner.resolution,self.planner.origin):return
+            covariance=np.asarray(data['covariance'],dtype=float)
+            if covariance.shape!=(2,2) or not np.isfinite(covariance).all() or np.linalg.eigvalsh(covariance).min()<0:return
+            variance=float(np.linalg.eigvalsh(covariance).max())
+            if not math.isclose(variance,float(data['variance']),rel_tol=1e-6,abs_tol=1e-8):return
+            self.target_details=data
+            estimate=dict(data)
+            self.best_target=estimate
+            if variance<=self.p['max_target_variance'] or math.isclose(variance,self.p['max_target_variance'],rel_tol=1e-9):
+                self.report_target(estimate,'preferred_precision')
+        except (ValueError,TypeError,KeyError):pass
 
     def report_best_target(self):
         """Use a fresh, multi-frame stable estimate after bounded refinement."""
@@ -639,6 +641,9 @@ class Mission(Node):
             return
         self.target = {k: estimate[k] for k in ('x', 'y', 'variance')}
         self.target.update(**{'class': self.p['target_class']}, frame=self.p['map_frame'],
+                           covariance=estimate['covariance'],posterior_mean=estimate['posterior_mean'],
+                           projected=estimate['projected'],estimate_id=estimate['estimate_id'],
+                           estimator=estimate['method'],map_signature=estimate['map_signature'],
                            sigma=math.sqrt(estimate['variance']), quality=quality,
                            preferred_sigma=math.sqrt(self.p['max_target_variance']),
                            observation_stamp=estimate['stamp'])
@@ -669,7 +674,7 @@ class Mission(Node):
             d = self.target_details
             age = self.get_clock().now().nanoseconds*1e-9-float(d['stamp'])
             if (0 <= age <= self.p['max_target_age']
-                    and math.hypot(d['x']-self.target['x'],d['y']-self.target['y']) < 0.05):
+                    and d.get('estimate_id')==self.target['estimate_id']):
                 self.target['confidence'] = d['confidence']
                 self.target['confirmation_frames'] = d['frames']
 
@@ -737,12 +742,13 @@ class Mission(Node):
                 'readiness_reason':readiness or ('Ready' if self.nav.server_is_ready() else 'Nav2 not ready'),
                 'return_verified':self.return_verified,'return_distance':distance,
                 'return_tolerance':self.p['return_tolerance'],
+                'preferred_target_sigma':math.sqrt(self.p['max_target_variance']),
                 'stationary_speed':self.linear_speed if math.isfinite(self.linear_speed) else None,
                 'stationary_linear_speed':self.linear_speed if math.isfinite(self.linear_speed) else None,
                 'stationary_angular_speed':self.angular_speed if math.isfinite(self.angular_speed) else None,
                 'stationary_check':self.stationary_check,
                 'stationary_required_seconds':self.p['verify_seconds'],
-                'target_class': self.p['target_class'],
+                'target_class': self.p['target_class'], 'started_stamp':self.started_stamp,
                 'target': self.target, 'home': self.home,
                 'elapsed_seconds': (self.finished_at or time.monotonic())-self.started if self.started else 0,
                 'viewpoints_completed': self.index, 'viewpoints_total': len(self.route),

@@ -89,7 +89,8 @@ def test_symlinked_map_and_external_image_are_rejected(tmp_path):
 
 
 @pytest.mark.parametrize('values',[{'return_tolerance':True},{'return_tolerance':float('nan')},
-    {'return_tolerance':0},{'target_class':'cup; touch /tmp/injected'},
+    {'return_tolerance':0},{'preferred_target_sigma':True},{'preferred_target_sigma':float('nan')},
+    {'preferred_target_sigma':0.},{'preferred_target_sigma':1.01},{'preferred_target_sigma':'0.1'},{'target_class':'cup; touch /tmp/injected'},
     {'target_class':'cup:=bottle'},{'localization_method':'guess'}])
 def test_mission_setup_validates_real_settings_not_shell_fragments(values):
     with pytest.raises(ValueError):mission_options(values)
@@ -97,7 +98,8 @@ def test_mission_setup_validates_real_settings_not_shell_fragments(values):
 
 def test_valid_floor_target_setup_uses_explicit_projection():
     assert mission_options({'localization_method':'ground_plane','return_tolerance':.1})=={
-        'target_class':'cup','localization_method':'ground_plane','return_tolerance':.1}
+        'target_class':'cup','localization_method':'ground_plane','return_tolerance':.1,'preferred_target_sigma':.1}
+    assert mission_options({'preferred_target_sigma':.25})['preferred_target_sigma']==.25
 
 
 def test_stage_manager_stops_only_its_owned_process_group(tmp_path):

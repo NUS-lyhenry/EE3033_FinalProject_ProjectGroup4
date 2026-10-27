@@ -225,7 +225,7 @@ class Workflow(CameraSetup):
                     self.saved_map=None
                     self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None
-                    self.target_estimate.reset()
+                    self.target_estimate=None
                     self.gate_status=None
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
                     self.selected_map=selected;self.mission_options=options

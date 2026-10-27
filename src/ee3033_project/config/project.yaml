@@ -68,10 +68,11 @@ project_target_filter:
   ros__parameters:
     confirmation_frames: 4
     confidence: 0.60
-    association_radius: 0.30
     max_frame_gap: 1.2
-    filter_window: 9
-    max_position_spread: 0.12
+    posterior_window: 8.0
+    posterior_samples: 30
+    common_error_fraction: 0.8
+    unknown_prior_weight: 0.25
     max_observation_age: 2.0
     map_frame: map
 

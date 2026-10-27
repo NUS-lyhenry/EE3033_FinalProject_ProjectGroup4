@@ -212,13 +212,17 @@ def mission_options(values):
     target = values.get('target_class','cup')
     method = values.get('localization_method','ground_plane')
     tolerance = values.get('return_tolerance',.20)
+    sigma = values.get('preferred_target_sigma',.10)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
         raise ValueError('Use the detector class label, for example cup or bottle')
     if method not in ('lidar','ground_plane'):
         raise ValueError('Select lidar or ground_plane localization')
     if isinstance(tolerance,bool) or not isinstance(tolerance,(int,float)) or not math.isfinite(tolerance) or not .02<=tolerance<=1.:
         raise ValueError('Return tolerance must be 0.02–1.00 m')
-    return dict(target_class=target,localization_method=method,return_tolerance=float(tolerance))
+    if isinstance(sigma,bool) or not isinstance(sigma,(int,float)) or not math.isfinite(sigma) or not .01<=sigma<=1.:
+        raise ValueError('Preferred precision must be 0.01–1.00 m (one sigma)')
+    return dict(target_class=target,localization_method=method,return_tolerance=float(tolerance),
+                preferred_target_sigma=float(sigma))
 
 
 class StageProcess:

@@ -232,7 +232,7 @@ class Integration(unittest.TestCase):
             payload = json.loads((mission.run_dir/'result.json').read_text())
             self.assertEqual(payload['state'],expected)
             if scenario == 'found':
-                self.assertEqual(payload['target']['x'],0.5)
+                self.assertAlmostEqual(payload['target']['x'],0.5,places=3)
                 self.assertGreaterEqual(robot.canceled,1)
                 self.assertEqual(robot.home_goals,1)
                 self.assertTrue(any(m.get('event') == 'target_reported' for m in robot.results))

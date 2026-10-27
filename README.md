@@ -58,14 +58,36 @@ uses matching `CameraInfo` and the image-timestamp transform from
 when the installed driver supplies it. Keep the real camera mount/optical axes
 correct; a mathematically valid default CameraInfo is not proof of accuracy.
 
-The map also shows an unconfirmed live target estimate before mission reporting.
-Recent finite detections are weighted by inverse variance and age over an 8 s
-window. The dashed circle shows one-sigma uncertainty including sensor error
-and observed scatter; correlated camera frames do not artificially eliminate
-the uncertainty floor. Lost estimates fade and expire after 30 s. These display
-estimates never start navigation or bypass mission confirmation. **Measure
-distance** supports two clicks or a drag on the map, without sending pose or
-motion commands.
+The map and final target report share one **map-constrained MMSE** estimator,
+`/project/target_estimate`. It uses valid, settled camera observations over an
+8 s / 30 sample window and computes the posterior mean and 2D covariance on the
+loaded occupancy grid. Occupied cells (>=65) have zero prior weight; unknown
+cells retain weight 0.25. The uninflated component containing the localized
+robot defines possible target space, so near-wall targets are not excluded by
+the robot's navigation radius. This prior is conditional on the **loaded map
+extent**, which must cover the evaluation arena; it does not establish that an
+incomplete map covers the full physical arena.
+
+For observations z_i with covariance C_i, the likelihood combines inverse
+covariance weighting with a conservative common-error model: 20% of C_i is
+independent, and an isotropic common variance envelope retains 80% of the
+largest input eigenvalue. Observed residual scatter is also retained. The
+80% split is a configurable model assumption, not a calibrated camera-error
+measurement. Thus repeated video frames cannot manufacture arbitrarily high
+precision. Wrong camera geometry or pose bias still requires correction.
+The grid integrates prior times likelihood using log-space normalization and
+adds cell quantization variance. If a nonconvex region places the mean in an
+obstacle, the reported point is the nearest supported cell (the constrained
+minimum squared-error decision); its displacement from the raw posterior mean
+is included in covariance. Both values and the projection flag remain in the
+report. Severe map/observation conflict is displayed but cannot be accepted.
+
+The dashed circle shows the largest principal one-sigma uncertainty, **not** a
+guaranteed radial error bound. A position appears after one valid observation;
+acceptance requires four fresh consistent observations. At acceptance, the
+same estimate ID, coordinates and covariance are frozen for display and
+reporting. Unaccepted lost estimates fade and expire after 30 s. **Measure
+distance** supports two clicks or a drag without sending pose or motion commands.
 
 If the installed mounting TF is unsuitable, enter measured height, downward
 pitch, yaw and horizontal offsets under Advanced. Height zero selects existing
@@ -228,6 +250,7 @@ The robot returns with a NOT_FOUND result if no target was confirmed.
 | Interface | Type | Purpose |
 |---|---|---|
 | `/project/target_detections` | String JSON | Boxes, timestamps, class/confidence, map bearing/origin, coarse position/sigma or projection failure |
+| `/project/target_estimate` | String JSON, latched | Shared map-prior posterior, covariance, estimate ID, stability and accepted freeze |
 | `/project/target_observations` | String JSON | Report-quality per-frame positions, including empty frames |
 | `/project/confirmed_target` | PoseWithCovarianceStamped | Confirmed map-frame position |
 | `/project/perception_status` | String JSON | Inference, geometry/readiness and shared camera model |
@@ -290,9 +313,15 @@ image rights remain with their original owners; the sample archive and source
 image are identified in that provenance file. No simulated evidence should be
 used as physical evaluation measurements.
 
-Target precision is a soft objective. The default preferred sigma is 0.10 m;
+Target precision is a soft objective. **Preferred precision (σ, m)** is beside
+the detector class and return tolerance in mission setup (0.01–1.00 m, default
+0.10 m). It is the square root of the posterior covariance's largest eigenvalue.
+Changing it requires **Apply settings & reload mission** and setting the initial
+pose again; it is locked during motion. The same setting reaches both the
+perception close-view preference and mission acceptance policy;
+
 valid settled observations retain their measured uncertainty even above that
-value. Multi-frame association and spatial consistency still confirm the target.
+value. Multi-frame consistency, freshness and map agreement still confirm the target.
 If precision remains below the objective after at most three observation moves
 or 15 seconds of refinement, a fresh stable estimate can be reported with
 `quality: best_available`, its actual `sigma` and the preferred sigma. The UI

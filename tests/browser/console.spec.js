@@ -39,7 +39,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
   const state={simulated:true,read_only:false,phase,allow_motion:true,token:'test-only',control_generation:0,
     mission:{phase,state:active?(phase==='mapping'?'MAPPING':'SEARCHING'):'WAITING',reason:'SIMULATED UI TEST · no robot motion',home:null,target:null,ready:true,return_verified:false},
     stage:{managed:true,running:true,phase,transitioning:false},assessment:{elapsed_seconds:65,started:10,finished:null,running:true,timing_valid:true,includes_mapping:true,maps:[]},
-    mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2},
+    mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2,preferred_target_sigma:.1},
     map_revision:1,pose:[1,1,0],route:[],path:[],health:Object.fromEntries(['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(k=>[k,{ok:true,age:.1}])),
     events:[],camera_source:null,battery:{voltage:11.87,fresh:true,age:.1},control_fault:null,initial_pose_sent:false};
   let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60};const calls=[];
@@ -72,7 +72,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
         state.mission={phase:body.phase,state:'WAITING',reason:'SIMULATED stage ready',home:null,target:null,ready:body.phase==='mapping',return_verified:false};
         state.initial_pose_sent=false;
         if(body.phase==='calibration')state.selected_map=maps.find(m=>m.id===body.map_id);
-        if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance};state.health.AMCL.ok=false;}
+        if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance,preferred_target_sigma:body.preferred_target_sigma};state.health.AMCL.ok=false;}
       }
     }else if(path==='/api/calibration_target'){state.calibration_live.target={xy:[body.x,body.y]};state.calibration_live.plan={goals:[],reverse_extent_m:.8};}
     else if(path==='/api/initial_pose'){state.initial_pose_sent=true;state.health.AMCL.ok=true;state.mission.ready=true;}
@@ -153,7 +153,7 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await view(page,'navigation');
   await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mission');
-  const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15});
+  const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15,preferred_target_sigma:.1});
   await expect(page.locator('#mappingControls')).toBeHidden();await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#poseX').fill('1');await page.locator('#poseY').fill('1');await page.locator('#poseYaw').fill('90');
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -420,7 +420,7 @@ test('default workflow can apply a changed target without starting the mission',
   await expect(page.locator('#loadMission')).toBeHidden();
   await page.locator('#targetClass').selectOption('bottle');
   await expect(page.locator('#startMission')).toBeDisabled();
-  const apply=page.getByRole('button',{name:'Apply target & reload mission',exact:true});
+  const apply=page.getByRole('button',{name:'Apply settings & reload mission',exact:true});
   await expect(apply).toBeVisible();await expect(apply).toBeEnabled();
   await expect(page.locator('#modelLabelsStatus')).toContainText('set the initial pose again');
   f.state.mission.state='SEARCHING';await expect(apply).toBeDisabled();
@@ -429,7 +429,7 @@ test('default workflow can apply a changed target without starting the mission',
   await expect(page.locator('#loadMission')).toBeHidden();
   expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body).toEqual({
     phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'bottle',
-    localization_method:'ground_plane',return_tolerance:.2});
+    localization_method:'ground_plane',return_tolerance:.2,preferred_target_sigma:.1});
   expect(new URL(page.url()).hash).toBe('#/workflow');
   await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -474,4 +474,32 @@ test('best available target keeps uncertainty visible after returning successful
   await expect(page.locator('#resultReason')).toContainText('preferred 0.10 m');
   await expect(page.locator('#resultOutcome')).toHaveText('Complete');
   expect(f.errors).toEqual([]);
+});
+
+test('preferred MMSE precision is applied through a reload and locked during search',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
+  await expect(page.getByLabel('Preferred precision (σ, m)')).toHaveValue('0.1');
+  await page.getByLabel('Preferred precision (σ, m)').fill('0.25');
+  await expect(page.locator('#startMission')).toBeDisabled();
+  const apply=page.getByRole('button',{name:'Apply settings & reload mission',exact:true});
+  await expect(apply).toBeEnabled();
+  await apply.click();await expect(apply).toBeHidden();
+  expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body.preferred_target_sigma).toBe(.25);
+  await expect(page.locator('#preferredSigma')).toHaveValue('0.25');
+  await page.locator('#setPose').click();await page.locator('#startMission').click();
+  await expect(page.locator('#preferredSigma')).toBeDisabled();
+  expect(f.errors).toEqual([]);
+});
+
+test('accepted map display uses the reported posterior even while a new message is pending',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.target_estimate={x:7,y:8,sigma:.8,label:'bottle',samples:7,age:0,stale:false};
+  f.state.mission.target={x:2.1,y:1.8,class:'bottle',sigma:.15,variance:.0225,quality:'best_available'};
+  await expect(page.locator('#target')).toHaveText('2.10, 1.80 m');
+  await expect(page.locator('#targetEstimateStatus')).toContainText('Estimated bottle: (2.10, 1.80) m · σ 0.15 m');
+  await expect(page.locator('#targetEstimateStatus')).toContainText('accepted');
+  expect(f.calls).toEqual([]);
 });
