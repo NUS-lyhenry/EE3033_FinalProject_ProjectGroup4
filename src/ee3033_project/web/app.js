@@ -128,7 +128,10 @@ function render(){
   $('mapTitle').textContent=(currentPage==='mapping'||currentPage==='workflow'&&$('advancedTools').open)&&mapping?'Map · drag to set waypoint and facing':(currentPage==='mission'||currentPage==='workflow')&&!mapping?'Map · drag to set initial pose':'On-site map';
   document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=!mapping||!loaded||!idle||!s.allow_motion||!!fault||!s.health?.Lidar?.ok);
   const labelReady=modelLabels?.ready===true&&modelLabels.labels.includes($('targetClass').value);
-  $('loadMission').hidden=!managed||currentPage==='workflow';$('loadMission').disabled=!idle||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
+  const targetChanged=s.phase==='mission'&&$('targetClass').value!==s.mission_options?.target_class;
+  $('loadMission').hidden=!managed||(currentPage==='workflow'&&!targetChanged);
+  $('loadMission').textContent=targetChanged?'Apply target & reload mission':'Load selected map for mission';
+  $('loadMission').disabled=!idle||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
   $('reviewMap').disabled=!mapping||!idle||!chosenMap()||(loaded&&chosenMap().id!==currentSavedMap()?.id);
   if(currentPage==='workflow'){$('reviewMap').disabled||=!labelReady;$('reviewMap').textContent='Confirm map & prepare mission';$('mapLibrary').hidden=!mapping;$('setup').hidden=mapping;$('startMission').hidden=mapping;}
   else{$('reviewMap').textContent='Mark map reviewed';$('setup').hidden=false;$('startMission').hidden=false;}
@@ -142,8 +145,7 @@ function render(){
   $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
   ['targetClass','localizationMethod','returnTolerance'].forEach(id=>$(id).disabled=!idle);
   $('targetClass').disabled=!idle||!modelLabels?.ready;
-  const targetChanged=!mapping&&$('targetClass').value!==s.mission_options?.target_class;
-  $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Reload the mission to apply the selected target class.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
+  $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Apply target & reload mission, then set the initial pose again.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
   $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Camera-only floor localization. Mount settings are under Advanced; no bottle collection is required.':'Legacy camera + lidar localization.';
   $('startMission').disabled=s.phase!=='mission'||active||!s.allow_motion||!ready()||!labelReady||targetChanged||(managed&&!s.initial_pose_sent);
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;

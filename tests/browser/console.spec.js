@@ -379,11 +379,36 @@ test('single-page workflow hides optional tools and prepares a visual mission af
   expect(f.errors).toEqual([]);
 });
 
+test('default workflow can apply a changed target without starting the mission',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
+  await expect(page.locator('#loadMission')).toBeHidden();
+  await page.locator('#targetClass').selectOption('bottle');
+  await expect(page.locator('#startMission')).toBeDisabled();
+  const apply=page.getByRole('button',{name:'Apply target & reload mission',exact:true});
+  await expect(apply).toBeVisible();await expect(apply).toBeEnabled();
+  await expect(page.locator('#modelLabelsStatus')).toContainText('set the initial pose again');
+  f.state.mission.state='SEARCHING';await expect(apply).toBeDisabled();
+  f.state.mission.state='WAITING';await expect(apply).toBeEnabled();
+  await apply.click();
+  await expect(page.locator('#loadMission')).toBeHidden();
+  expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body).toEqual({
+    phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'bottle',
+    localization_method:'ground_plane',return_tolerance:.2});
+  expect(new URL(page.url()).hash).toBe('#/workflow');
+  await expect(page.locator('#startMission')).toBeDisabled();
+  await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
+  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);expect(f.errors).toEqual([]);
+});
+
 test('advanced camera settings and fast profile use explicit values and verified responses',async({page})=>{
   const f=await fixture(page);await view(page,'workflow');
   await page.locator('#advancedTools > summary').click();
   await page.locator('#visionHeight').fill('0.22');await page.locator('#visionPitch').fill('10');
   await page.locator('#saveVision').click();
+  await expect(page.locator('#feedback')).toHaveText('Camera geometry saved');
   const settings=f.calls.find(c=>c.path==='/api/vision').body;
   expect(settings.camera_height).toBe(.22);expect(settings.camera_pitch).toBeCloseTo(Math.PI/18);
   await page.locator('#profileFast').click();
