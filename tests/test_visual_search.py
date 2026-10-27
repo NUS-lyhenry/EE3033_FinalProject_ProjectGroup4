@@ -149,6 +149,14 @@ def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
     assert math.dist(goal[:2], pose[:2]) >= .12 or abs(goal[2]-pose[2]) >= .2
 
 
+def test_centered_bearing_only_target_does_not_spend_a_step_on_a_noop():
+    target = SingleTarget()
+    target.candidate = detection(10.)
+    planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
+    assert target.observation_goal(planner, (1., 1., .04)) is None
+    assert not target.visited
+
+
 def test_camera_settings_reject_nonfinite_values_without_inventing_mount_dimensions():
     settings = dict(camera_height=0., camera_pitch=0., camera_yaw=0., camera_x=0.,
                     camera_y=0., horizontal_fov=0., camera_min_range=.35, camera_max_range=2.)

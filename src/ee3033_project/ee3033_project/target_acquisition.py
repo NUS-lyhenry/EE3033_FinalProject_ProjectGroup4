@@ -65,10 +65,11 @@ class SingleTarget:
             return None
         if not all(k in d and math.isfinite(d[k]) for k in ('x', 'y')):
             key = ('turn', round(d['bearing'], 1))
-            if key in self.visited:
+            yaw = d['bearing']-(planner.camera_model.yaw if planner.camera_model else 0.)
+            if key in self.visited or abs(angle_difference(yaw, pose[2])) < .15:
                 return None
             self.visited.add(key)
-            return (pose[0], pose[1], d['bearing']-(planner.camera_model.yaw if planner.camera_model else 0.))
+            return (pose[0], pose[1], yaw)
         tx, ty = d['x'], d['y']
         distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
         goals = []

@@ -34,6 +34,7 @@ project_mission:
     max_target_variance: 0.01  # Soft target precision goal (0.10 m sigma), not a report veto.
     sensor_timeout: 1.0
     perception_timeout: 3.0
+    localize_wait_seconds: 2.0  # Allow exposure-time motion window + distinct frames.
     results_directory: ~/ee3033_results
 
 project_perception:
@@ -57,6 +58,11 @@ project_perception:
     cluster_gap: 0.12
     max_cluster_width: 0.50
     cpu_threads: 1
+    observation_window: 0.6
+    observation_linear_mean: 0.05  # Balance oscillations may exceed this instantaneously.
+    observation_angular_mean: 0.12
+    observation_position_span: 0.04
+    observation_heading_span: 0.10
 
 project_target_filter:
   ros__parameters:

@@ -43,6 +43,7 @@ from . import gap
 from .console_workflow import Workflow
 from .model_labels import ModelLabels
 from .waypoint import validate_waypoint
+from .target_estimate import LiveTargetEstimate
 
 
 class Console(Workflow, Node):
@@ -72,6 +73,7 @@ class Console(Workflow, Node):
                       'target':None,'home':None}
         self.map_data = None
         self.map_revision = 0
+        self.target_estimate = LiveTargetEstimate()
         self.route = self.path = []
         self.events = deque(maxlen=20)
         self.freshness = {}
@@ -101,6 +103,7 @@ class Console(Workflow, Node):
         self.create_subscription(String, '/project/velocity_gate_status', self.on_gate_status, 10)
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
         self.create_subscription(String,'/project/perception_status',self.on_perception_status,10)
+        self.create_subscription(String,'/project/target_detections',self.on_target_detections,10)
         self.create_subscription(LaserScan,'/scan_fixed',lambda m:self.mark('Lidar'),qos_profile_sensor_data)
         self.create_subscription(Float32,'/power_voltage',self.on_voltage,qos_profile_sensor_data)
         self.create_subscription(PoseWithCovarianceStamped,'/amcl_pose',self.on_amcl,10)
@@ -232,6 +235,19 @@ class Console(Workflow, Node):
             self.amcl_covariance = [msg.pose.covariance[i] for i in (0,7,35)]
             self.freshness['AMCL'] = time.monotonic()
 
+    def on_target_detections(self, msg):
+        try:
+            data = json.loads(msg.data)
+            now = self.get_clock().now().nanoseconds*1e-9
+            with self.lock:
+                if self.p['phase'] != 'mission':
+                    self.target_estimate.reset()
+                    return
+                label = self.state.get('target_class') or self.mission_options['target_class']
+                self.target_estimate.update(data['detections'], now, label)
+        except (ValueError, TypeError, KeyError):
+            pass
+
     def on_voltage(self,msg):
         if math.isfinite(msg.data) and 0 <= msg.data <= 60:
             with self.lock:
@@ -240,6 +256,7 @@ class Console(Workflow, Node):
 
     def on_map(self,msg):
         with self.lock:
+            self.target_estimate.reset()
             self.map_revision += 1
             origin = msg.info.origin
             self.map_data = {'width':msg.info.width,'height':msg.info.height,
@@ -298,6 +315,7 @@ class Console(Workflow, Node):
                     'allow_motion':self.p['allow_motion'],'pose':pose,
                     'calibration_file':self.p['calibration_file'] or None,
                     'velocity_gate': self.gate_status,
+                    'target_estimate': self.target_estimate.snapshot(self.get_clock().now().nanoseconds*1e-9),
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
@@ -637,6 +655,8 @@ class Console(Workflow, Node):
             if self.stage and self.state.get('home') is not None:
                 raise ValueError('Initial pose is locked after the autonomous mission begins')
             self.initial_pub.publish(msg)
+            with self.lock:
+                self.target_estimate.reset()
             self.initial_pose_sent=True
             return {'success':True,'message':'Assigned initial pose sent to AMCL'}
         if path=='/api/teleop':

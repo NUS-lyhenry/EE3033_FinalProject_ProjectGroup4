@@ -61,6 +61,12 @@ class TargetTracker:
     def reset(self):
         self.samples.clear()
 
+    def defer(self, stamp):
+        """A visible target during bounded motion is neither a hit nor a miss."""
+        if self.samples and (not math.isfinite(stamp) or stamp < self.samples[-1].stamp
+                             or stamp-self.samples[-1].stamp > self.max_gap):
+            self.reset()
+
     def update(self, observation):
         if observation is None:
             self.reset()

@@ -53,6 +53,9 @@ class TargetFilter(Node):
                 candidates.sort(key=lambda c: math.hypot(c.x-previous.x, c.y-previous.y))
             else:
                 candidates.sort(key=lambda c: c.confidence, reverse=True)
+            if not candidates and data.get('deferred') is True:
+                self.tracker.defer(stamp)
+                return
             estimate = self.tracker.update(candidates[0] if candidates else None)
             if estimate is None:
                 return

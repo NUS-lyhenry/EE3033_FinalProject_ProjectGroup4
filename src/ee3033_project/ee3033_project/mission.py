@@ -66,6 +66,7 @@ class Mission(Node):
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
             'min_observe_seconds': .8, 'acquisition_seconds': 15.,
             'acquisition_steps': 3, 'navigation_profile': 'original',
+            'localize_wait_seconds': 2.,
             'home_behavior_tree': '',
         })
         if self.p['navigation_profile'] == 'fast':
@@ -84,6 +85,9 @@ class Mission(Node):
         self.index = 0
         self.attempted = set()
         self.failed_options = set()
+        self.deferred_options = set()
+        self.visual_retry_counts = {}
+        self.visual_failures = []
         self.current_option = None
         self.observation_stamps = set()
         self.observe_after_stamp = 0.0
@@ -328,6 +332,7 @@ class Mission(Node):
         self.return_verified = False
         self.index, self.route, self.seen, self.failures = 0, [], set(), []
         self.attempted, self.failed_options = set(), set()
+        self.deferred_options, self.visual_retry_counts, self.visual_failures = set(), {}, []
         self.current_option = None
         self.observation_stamps.clear()
         self.observation_candidate_seen = False
@@ -507,7 +512,14 @@ class Mission(Node):
             self.acquisition_retry_after = time.monotonic()+3.
         self.acquisition.reset()
         if self.current_option is not None:
-            self.failed_options.add(self.current_option)
+            option = self.current_option
+            count = self.visual_retry_counts.get(option, 0)+1
+            self.visual_retry_counts[option] = count
+            self.visual_failures.append(dict(viewpoint=option, reason=reason, attempt=count))
+            if count == 1:
+                self.deferred_options.add(option)
+            else:
+                self.failed_options.add(option)
         self.failures.append(self.index)
         self.index += 1
         self.get_logger().warning(reason)
@@ -569,6 +581,12 @@ class Mission(Node):
 
     def dispatch_viewpoint(self, choice):
         if choice is None:
+            if self.deferred_options:
+                # Revisit unresolved visual views once, after other views have had a turn.
+                self.attempted.difference_update(self.deferred_options)
+                self.deferred_options.clear()
+                self.next_viewpoint()
+                return
             self.search_stop_reason = 'No remaining candidate viewpoints; target absence is not established'
             # This is NOT proof that the target is absent; report coverage.
             self.get_logger().warning(
@@ -729,6 +747,8 @@ class Mission(Node):
                 'elapsed_seconds': (self.finished_at or time.monotonic())-self.started if self.started else 0,
                 'viewpoints_completed': self.index, 'viewpoints_total': len(self.route),
                 'failed_viewpoints': self.failures,
+                'visual_acquisition_failures': self.visual_failures,
+                'deferred_viewpoints': sorted(self.deferred_options),
                 'observed_fraction': len(self.seen)/max(1, len(self.planner.target_cells))
                     if self.planner is not None else 0.0,
                 'coverable_fraction': len(self.planner.coverable)/max(1,len(self.planner.target_cells))
@@ -781,7 +801,7 @@ class Mission(Node):
                     elif self.state == 'ACQUIRING':
                         if self.goal_pending and now-self.goal_started > self.p['accept_timeout']:
                             self.cancel('RESUME', 'Target approach acceptance timed out')
-                    elif now-self.acquisition_wait >= 1.2:
+                    elif now-self.acquisition_wait >= self.p['localize_wait_seconds']:
                         candidate = self.acquisition.candidate
                         fresh = candidate and 0 <= self.get_clock().now().nanoseconds*1e-9-candidate['stamp'] <= 1.5
                         try:
@@ -790,8 +810,12 @@ class Mission(Node):
                         except (TimeoutError, RuntimeError):
                             goal = None
                         if goal is None:
-                            if not self.report_best_target():
-                                self.resume_search('Target lost or no safe observation remains')
+                            # A centered bearing-only target needs more observation time,
+                            # not an immediate zero-length goal followed by abandonment.
+                            lost = not candidate or self.get_clock().now().nanoseconds*1e-9-candidate['stamp'] > 3.
+                            if lost or self.acquisition.expired(now):
+                                if not self.report_best_target():
+                                    self.resume_search('Target lost' if lost else 'Visual refinement step budget exhausted')
                         else:
                             self.acquisition.steps += 1
                             self.send_goal(self.make_pose(*goal), 'acquire')
