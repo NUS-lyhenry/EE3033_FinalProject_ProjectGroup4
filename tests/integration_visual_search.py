@@ -10,6 +10,7 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from ee3033_project.ros_utils import LATCHED
 from ee3033_project.mission import Mission
 from ee3033_project.target_filter import TargetFilter
 from ee3033_project.velocity_gate import VelocityGate
@@ -23,8 +24,14 @@ class VisualRobot(FakeRobot):
         self.states = []
         self.max_steps = 0
         self.sensor_frames = 0
+        self.estimates = {}
         super().__init__('absent')
+        self.create_subscription(String,'/project/target_estimate',self.on_estimate,LATCHED)
         self.raw_pub = self.create_publisher(String, '/project/target_detections', 10)
+
+    def on_estimate(self,msg):
+        data=json.loads(msg.data)
+        if data.get('estimate_id'):self.estimates[data['estimate_id']]=data
 
     def accept(self, request):
         if self.mode == 'stop_pending' and self.mission.goal_kind == 'acquire':
@@ -51,7 +58,7 @@ class VisualRobot(FakeRobot):
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.03)]
             if self.mode == 'precision_boundary':
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.1)]
-            if self.mode in ('soft_precision', 'stop_soft') and m.acquisition.started is not None:
+            if self.mode in ('soft_precision', 'stop_soft','tunable_precision') and m.acquisition.started is not None:
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.25)]
             if self.mode == 'deferred_balance':
                 deferred = self.sensor_frames % 2 == 0
@@ -75,6 +82,7 @@ class VisualSearch(unittest.TestCase):
                 parameter_overrides=overrides(allow_motion=True, target_class='bottle',
                     viewpoint_spacing=1., max_goals=2, observe_seconds=.3,
                     acquisition_seconds=3.5, acquisition_steps=3,
+                    max_target_variance=.25**2 if mode=='tunable_precision' else .1**2,
                     verify_seconds=.25, verify_timeout=2., results_directory=root))
             robot.mission = mission
             filt = TargetFilter()
@@ -100,7 +108,7 @@ class VisualSearch(unittest.TestCase):
                     stop = robot.create_client(Trigger, '/project/stop')
                     self.assertTrue(stop.wait_for_service(timeout_sec=3))
                     response = stop.call_async(Trigger.Request()); self.assertTrue(wait(response.done))
-                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary', 'deferred_balance', 'centered_late') else 'NOT_FOUND'
+                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary', 'deferred_balance', 'centered_late','tunable_precision') else 'NOT_FOUND'
                 self.assertTrue(wait(lambda: mission.state in ('COMPLETE', 'NOT_FOUND', 'FAILED', 'STOPPED'), 25), mission.summary())
                 time.sleep(.7)
                 self.assertEqual(mission.state, expected, mission.summary())
@@ -113,11 +121,16 @@ class VisualSearch(unittest.TestCase):
                 if expected == 'COMPLETE':
                     self.assertTrue(mission.return_verified)
                     self.assertEqual(sum(r.get('event') == 'target_reported' for r in robot.results), 1)
+                    target=mission.target;posterior=robot.estimates[target['estimate_id']]
+                    for key in ('x','y','covariance','posterior_mean','projected','map_signature'):
+                        self.assertEqual(target[key],posterior[key])
+                    self.assertEqual(target['estimator'],'map-constrained MMSE')
+                    self.assertTrue(posterior['confirmed'])
                     if mode == 'soft_precision':
                         self.assertEqual(mission.target['quality'], 'best_available')
-                        self.assertAlmostEqual(mission.target['sigma'], .25)
-                        self.assertAlmostEqual(mission.target['variance'], .0625)
-                    elif mode == 'precision_boundary':
+                        self.assertGreater(mission.target['sigma'], .1)
+                        self.assertAlmostEqual(mission.target['variance'],mission.target['sigma']**2)
+                    elif mode in ('precision_boundary','tunable_precision'):
                         self.assertEqual(mission.target['quality'], 'preferred_precision')
                 elif expected == 'STOPPED':
                     self.assertIsNone(mission.target)
@@ -141,6 +154,8 @@ class VisualSearch(unittest.TestCase):
     def test_unlocalizable_candidate_exhausts_budget(self): self.case('budget')
     def test_stop_during_localization(self): self.case('stop_localizing')
     def test_stop_with_late_approach_acceptance(self): self.case('stop_pending')
+    def test_configured_quarter_metre_precision_accepts_shared_posterior(self): self.case('tunable_precision')
+
     def test_high_uncertainty_stable_target_reports_after_refinement_budget(self): self.case('soft_precision')
     def test_stop_prevents_reporting_the_retained_soft_estimate(self): self.case('stop_soft')
     def test_preferred_precision_boundary_handles_float_rounding(self): self.case('precision_boundary')

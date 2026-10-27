@@ -4,7 +4,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -43,6 +43,7 @@ def generate_launch_description():
         DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         DeclareLaunchArgument('calibration_file', default_value=''),
         DeclareLaunchArgument('return_tolerance', default_value='0.20'),
+        DeclareLaunchArgument('preferred_target_sigma', default_value='0.10'),
         OpaqueFunction(function=check_map),
         include(os.path.join(share, 'launch', 'hardware.launch.py'), {
             k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}),
@@ -54,15 +55,17 @@ def generate_launch_description():
             'navigation_profile': LaunchConfiguration('navigation_profile')}),
         Node(package='ee3033_project', executable='perception', output='screen', parameters=[
             config, LaunchConfiguration('vision_config'), {'target_class': target,
+                     'max_report_sigma': ParameterValue(LaunchConfiguration('preferred_target_sigma'),value_type=float),
                      'calibration_file': ParameterValue(LaunchConfiguration('calibration_file'), value_type=str),
                      'model': ParameterValue(LaunchConfiguration('model'), value_type=str),
                      'localization_method': ParameterValue(LaunchConfiguration('localization_method'),
                                                           value_type=str)}]),
-        Node(package='ee3033_project', executable='target_filter', output='screen', parameters=[config]),
+        Node(package='ee3033_project', executable='target_filter', output='screen', parameters=[config, {'target_class':target}]),
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
             config, {'allow_motion': motion, 'navigation_profile': LaunchConfiguration('navigation_profile')}]),
         Node(package='ee3033_project', executable='mission', output='screen', parameters=[
             config, {'target_class': target, 'allow_motion': motion,
+                     'max_target_variance':ParameterValue(PythonExpression(['float(', LaunchConfiguration('preferred_target_sigma'), ') ** 2']),value_type=float),
                      'navigation_profile': LaunchConfiguration('navigation_profile'),
                      'return_tolerance':ParameterValue(LaunchConfiguration('return_tolerance'),value_type=float)}]),
         Node(package='ee3033_project',executable='console',output='screen',

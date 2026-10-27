@@ -32,12 +32,15 @@ class ConsoleTests(unittest.TestCase):
         try:
             console.on_status(String(data=json.dumps(dict(state='WAITING',reason='Fixture',target_class='bottle',target=None,home=None))))
             now=console.get_clock().now().nanoseconds*1e-9
-            for stamp,x,sigma in [(now-.1,0.,.2),(now,1.,.8)]:
-                console.on_target_detections(String(data=json.dumps({'detections':[dict(stamp=stamp,label='bottle',confidence=.9,x=x,y=1.,sigma=sigma)]})))
+            estimate=dict(stamp=now,x=.42,y=1.,sigma=.8,confidence=.9,label='bottle',
+                          method='map-constrained MMSE',frame_id='map',estimate_id='shared-fixture',
+                          covariance=[[.64,0.],[0.,.64]],confirmed=False)
+            console.on_target_estimate(String(data=json.dumps(estimate)))
             state=json.load(urlopen(f'http://127.0.0.1:{console.p["port"]}/api/state'))
             self.assertIsNone(state['mission']['target'])
-            self.assertIsNotNone(state['target_estimate'])
-            self.assertLess(state['target_estimate']['x'],.1)
+            self.assertEqual(state['target_estimate']['x'],estimate['x'])
+            self.assertEqual(state['target_estimate']['covariance'],estimate['covariance'])
+            self.assertEqual(state['target_estimate']['estimate_id'],estimate['estimate_id'])
             self.assertFalse(state['target_estimate']['confirmed'])
             print('PASS: uncertain map estimate updates without starting or confirming a mission')
         finally:
