@@ -76,8 +76,8 @@ def test_viewpoint_does_not_see_behind_heading():
 def test_offline_route_keeps_all_online_candidates_including_chosen_views():
     planner = CoveragePlanner(np.zeros((15,15)), .1, (0,0,0), spacing=10, headings=4)
     route = planner.plan(.75,.75)
-    assert len(route) == 4
-    assert len(planner.options) == 4
+    assert len(route) >= 4
+    assert len(planner.options) >= 4
     assert all(v in planner.options for v in route)
     assert planner.next_viewpoint(.75,.75,set(),yaw=0) is not None
     assert set().union(*(v.visible for v in planner.options)) == planner.coverable

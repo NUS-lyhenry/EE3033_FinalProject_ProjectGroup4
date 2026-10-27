@@ -25,12 +25,18 @@ def generate_launch_description():
         ('nav2_bt_navigator', 'bt_navigator'),
     ]
     def start_servers(context):
+        fast = LaunchConfiguration('navigation_profile').perform(context) == 'fast'
         overrides = {
             'controller_server': ({'goal_checker.yaw_goal_tolerance': 3.14159,
                                    'FollowPath.rotate_to_goal_heading': False}
                                   if mapping.perform(context)=='true' else {}),
             'bt_navigator': {'default_nav_to_pose_bt_xml': recovery_tree},
         }
+        if fast:
+            overrides['controller_server'].update({
+                'FollowPath.max_vel_x': .16, 'FollowPath.max_speed_xy': .16,
+                'FollowPath.max_vel_theta': .60, 'FollowPath.rotate_to_heading_angular_vel': .55})
+            overrides['behavior_server'] = {'max_rotational_vel': .60}
         return [Node(package=package, executable=name, name=name,
                      output='screen', parameters=[config, {'use_sim_time': False},
                                                   overrides.get(name,{})],
@@ -40,6 +46,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('nav_config', default_value=default),
         DeclareLaunchArgument('mapping_mode', default_value='false'),
+        DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         OpaqueFunction(function=start_servers),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='project_navigation_lifecycle', output='screen', parameters=[{

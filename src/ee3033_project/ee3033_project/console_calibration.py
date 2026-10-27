@@ -20,8 +20,9 @@ class CameraSetup:
             try: return path.stat().st_mtime_ns
             except OSError: return -1
         candidates = ([Path(self.p['calibration_file']).expanduser()]
-                      if self.explicit_calibration and self.p['phase'] != 'calibration'
-                      else sorted(root.glob('camera_*.json'), key=modified, reverse=True))
+                       if self.explicit_calibration and self.p['phase'] != 'calibration'
+                       else sorted(root.glob('camera_*.json'), key=modified, reverse=True)
+                       if self.p['phase'] == 'calibration' else [])
         for path in candidates:
             try:
                 stat = path.stat()
@@ -33,7 +34,9 @@ class CameraSetup:
                 self.p['calibration_file'] = str(path.resolve())
                 self.calibration_status = dict(ready=True, path=self.p['calibration_file'],
                     created_utc=profile['created_utc'], camera=profile['camera']['frame_id'],
-                    message='Saved calibration will be used automatically when the mission loads.')
+                    message=('Explicitly selected legacy profile will be used for this mission.'
+                             if self.explicit_calibration else
+                             'Legacy profile saved. Select it with calibration_file to opt in; default missions use camera geometry.'))
                 if self.stage:
                     self.stage.calibration_file = self.p['calibration_file']
                 return

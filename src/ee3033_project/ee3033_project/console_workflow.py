@@ -13,6 +13,8 @@ from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_o
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
+from .vision_geometry import validate_mount_settings
+import yaml
 
 
 class Workflow(CameraSetup):
@@ -33,6 +35,16 @@ class Workflow(CameraSetup):
             allow_motion=self.p['allow_motion'], model=self.p['model'],
             calibration_file=self.p['calibration_file'],
             hardware={name:self.p['stage_'+name] for name in ('base','lidar','camera')}) if self.p['manage_stages'] else None
+        self.vision_settings = dict(camera_height=0., camera_pitch=0., camera_yaw=0.,
+            camera_x=0., camera_y=0., horizontal_fov=0., camera_min_range=.35, camera_max_range=2.)
+        saved = Path(self.p['vision_config']).expanduser() if self.p['vision_config'] else Path(self.p['session_directory']).expanduser()/'vision.yaml'
+        if saved.is_file():
+            data = yaml.safe_load(saved.read_text())['project_perception']['ros__parameters']
+            self.vision_settings = validate_mount_settings({k: data[k] for k in self.vision_settings})
+            self.p['vision_config'] = str(saved.resolve())
+        if self.stage:
+            self.stage.navigation_profile = self.p['navigation_profile']
+            self.stage.vision_config = self.p['vision_config']
         self.init_camera_setup()
         self.create_subscription(Twist,'/cmd_vel',self.on_final_command,10)
         self.create_subscription(Odometry,'/odom',self.on_workflow_odom,qos_profile_sensor_data)
@@ -92,6 +104,7 @@ class Workflow(CameraSetup):
                     stage=self.stage.snapshot() if self.stage else dict(managed=False,transitioning=False),
                     selected_map=self.selected_map,mission_options=self.mission_options,
                     initial_pose_sent=self.initial_pose_sent,perception=self.perception_data,
+                    vision_settings=self.vision_settings, navigation_profile=self.p['navigation_profile'],
                     mission_result=self.result_data,workflow_fault=self.workflow_fault)
 
     def workflow_get(self,path):
@@ -212,6 +225,7 @@ class Workflow(CameraSetup):
                     self.saved_map=None
                     self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None
+                    self.gate_status=None
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
                     self.selected_map=selected;self.mission_options=options
                     self.trial_fault=self.gap_fault=self.workflow_fault=None

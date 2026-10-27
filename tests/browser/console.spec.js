@@ -55,6 +55,11 @@ async function fixture(page,{phase='mapping',active=false}={}){
     }else if(path==='/api/trial'){
       if(method==='POST')trial=body;
       json={success:true,values:trial,synchronized:true,protection:{stop_distance:.22,rotation_clearance:{cautious:.16,balanced:.15,bold:.14}[audacity]}};
+    }else if(path==='/api/navigation'){
+      trial={max_linear:body.profile==='fast'?.16:.12,max_angular:body.profile==='fast'?.6:.4,goal_timeout:60};
+      json={success:true,values:trial,synchronized:true,profile:body.profile};
+    }else if(path==='/api/vision'){
+      state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
     }else if(path==='/api/teleop')json={success:true};
     else return route.fulfill({status:404,json:{error:'Unknown test endpoint'}});
     return route.fulfill({json:JSON.parse(JSON.stringify(json))});
@@ -266,7 +271,7 @@ test('mapping waypoint drag sets position and final facing, then locks controls 
   const f=await fixture(page);
   f.map.cells[20*60+30]=-1;f.state.map_revision++;
   await expect(page.locator('#waypointX')).toBeEnabled();
-  const box=await page.locator('#map').boundingBox();
+  await page.locator('#map').scrollIntoViewIfNeeded();const box=await page.locator('#map').boundingBox();
   await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();
   await page.mouse.move(box.x+box.width*.5,box.y+box.height*.3);await page.mouse.up();
   await expect(page.locator('#waypointYaw')).toHaveValue('90');
@@ -355,4 +360,48 @@ test('camera map tool sends bottle coordinates on the currently loaded map',asyn
   expect(call.body.map_id).toBe('current/map.yaml');expect(call.body.x).toBeCloseTo(2.4,1);expect(call.body.y).toBeCloseTo(2,1);
   await expect(page.locator('#calBottleStatus')).toContainText('Bottle base marker');
   expect(f.calls.some(c=>c.path==='/api/initial_pose')).toBe(false);expect(f.errors).toEqual([]);
+});
+
+test('single-page workflow hides optional tools and prepares a visual mission after map confirmation',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await expect(page.locator('#advancedTools')).not.toHaveAttribute('open','');
+  await expect(page.locator('#loadMapping')).toBeHidden();await expect(page.locator('#localizationMethod')).toBeHidden();
+  await expect(page.locator('#profileFast')).toBeHidden();await expect(page.locator('#mappingControls')).toBeHidden();
+  await expect(page.locator('#targetClass')).toBeHidden();
+  await page.locator('#saveMap').click();await expect(page.locator('#targetClass')).toBeVisible();await page.locator('#reviewMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe('ground_plane');
+  await expect(page.locator('#setup')).toBeVisible();await page.locator('#setPose').click();
+  await page.locator('#startMission').click();await expect(page.locator('#state')).toHaveText('SEARCHING');
+  f.state.mission.state='ACQUIRING';await expect(page.locator('#startMission')).toBeDisabled();
+  f.state.mission.state='LOCALIZING';await expect(page.locator('#setPose')).toBeDisabled();
+  await page.locator('#stop').click();await expect(page.locator('#state')).toHaveText('STOPPED');
+  expect(f.errors).toEqual([]);
+});
+
+test('advanced camera settings and fast profile use explicit values and verified responses',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#advancedTools > summary').click();
+  await page.locator('#visionHeight').fill('0.22');await page.locator('#visionPitch').fill('10');
+  await page.locator('#saveVision').click();
+  const settings=f.calls.find(c=>c.path==='/api/vision').body;
+  expect(settings.camera_height).toBe(.22);expect(settings.camera_pitch).toBeCloseTo(Math.PI/18);
+  await page.locator('#profileFast').click();
+  await expect(page.locator('#navigationProfileStatus')).toContainText('Applied and verified: fast');
+  expect(f.calls.find(c=>c.path==='/api/navigation').body).toEqual({profile:'fast'});
+  expect(f.errors).toEqual([]);
+});
+
+test('single-page mobile workflow keeps Stop visible and has no horizontal overflow',async({page})=>{
+  await page.setViewportSize({width:390,height:844});const f=await fixture(page);await view(page,'workflow');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await expect(page.locator('#stop')).toBeInViewport();
+  await page.screenshot({path:'test-results/workflow-mobile.png',fullPage:true});
+  expect(f.errors).toEqual([]);
+});
+
+test('single-page desktop workflow has a compact primary path',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.screenshot({path:'test-results/workflow-desktop.png',fullPage:true});
+  await expect(page.locator('.sidebar')).toBeHidden();expect(f.errors).toEqual([]);
 });

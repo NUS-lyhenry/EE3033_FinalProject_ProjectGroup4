@@ -16,7 +16,7 @@ def generate_launch_description():
               'session_directory':'~/ee3033_results/assessment',
               'model':'/home/ros2_ws/weights/yolo26n.pt','software_version':'development',
               'calibration_file':'','calibration_directory':'~/ee3033_calibrations',
-              'calibration_port':'8780'}
+              'calibration_port':'8780','navigation_profile':'original','vision_config':''}
     params={'manage_stages':True,'phase':'mapping'}
     for name in defaults:
         key='stage_'+name if name in ('base','lidar','camera') else name

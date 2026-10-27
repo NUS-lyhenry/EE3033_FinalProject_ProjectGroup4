@@ -51,6 +51,8 @@ jobs:
           ROS_DOMAIN_ID=94 python3 tests/integration_console.py
           ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
           ROS_DOMAIN_ID=107 python3 tests/integration_adaptive_search.py
+          ROS_DOMAIN_ID=109 python3 tests/integration_visual_search.py
+          ROS_DOMAIN_ID=110 python3 tests/integration_visual_perception.py
           ROS_DOMAIN_ID=100 python3 tests/integration_stationary.py
           ROS_DOMAIN_ID=106 python3 tests/integration_calibration.py
           ROS_DOMAIN_ID=108 ROS_LOCALHOST_ONLY=1 python3 tests/integration_automatic_calibration.py

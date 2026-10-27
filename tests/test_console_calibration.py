@@ -9,8 +9,8 @@ from test_calibration import profile, sample
 
 
 class Setup(CameraSetup):
-    def __init__(self, directory):
-        self.p = dict(calibration_directory=str(directory),calibration_file='',phase='mapping')
+    def __init__(self, directory, selected=''):
+        self.p = dict(calibration_directory=str(directory),calibration_file=selected,phase='mapping')
         self.stage = SimpleNamespace(calibration_file='')
         self.init_camera_setup()
 
@@ -23,27 +23,28 @@ def saved_profile(directory, simulated=False):
     return save_profile(data,directory)
 
 
-def test_validated_camera_setup_is_reused_after_console_restart(tmp_path):
+def test_saved_camera_profile_is_only_reused_when_explicitly_selected(tmp_path):
     first=Setup(tmp_path)
     assert not first.calibration_status['ready']
     path=saved_profile(tmp_path)
     first.refresh_camera_profile()
-    assert first.calibration_status['ready']
-    assert first.stage.calibration_file==str(Path(path).resolve())
-    reopened=Setup(tmp_path)
-    assert reopened.p['calibration_file']==first.p['calibration_file']
+    assert not first.calibration_status['ready']
+    assert first.stage.calibration_file == ''
+    reopened=Setup(tmp_path, path)
+    assert reopened.calibration_status['ready']
+    assert reopened.p['calibration_file']==str(Path(path).resolve())
 
 
 def test_invalid_and_simulated_profiles_never_replace_valid_calibration(tmp_path):
     expected=saved_profile(tmp_path)
     saved_profile(tmp_path,simulated=True)
     (tmp_path/'camera_broken.json').write_text('{invalid')
-    setup=Setup(tmp_path)
+    setup=Setup(tmp_path, expected)
     assert setup.calibration_status['path']==expected
 
 
 def test_camera_preparation_does_not_start_assessment_timer(tmp_path):
-    record=TrialRecord(tmp_path)
+    record=TrialRecord(tmp_path, boot_id='isolated-test-boot')
     record.status('calibration',dict(state='CALIBRATING',reason='Positioning bottle'))
     assert record.snapshot()['started'] is None
 

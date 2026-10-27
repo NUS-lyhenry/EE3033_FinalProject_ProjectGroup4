@@ -1,4 +1,9 @@
-# Camera calibration from a known map point
+# Legacy camera calibration from a known map point
+
+This optional preparation tool is retained for existing explicit profiles. The
+default mission now uses camera geometry directly; no bottle collection or
+validated profile is required. Open this tool from Advanced, or use the legacy
+`/#/calibration` link. A profile is used only when explicitly selected.
 
 Use **Camera setup** in the main console (`/#/calibration`). The operator marks
 where the bottle base will be on a saved map, places it there and enters its
@@ -74,8 +79,10 @@ independent surveyed accuracy**. Placement errors, map scale/localization errors
 varying balancing pitch, bottle silhouettes and floor slope can bias results.
 Verify physical accuracy before claiming a measured localization error.
 
-After calibration, choose the mission's **ground-plane camera** coordinate method
-for upright floor objects below lidar height. Detection plus the saved geometry
+To use a legacy result, explicitly pass its saved path as
+`calibration_file:=/absolute/path/camera_....json` when launching the assessment
+console or mission. Select the **ground-plane camera** method for upright floor
+objects below lidar height. Detection plus the explicitly selected geometry
 projects the bottom of the object to the floor and transforms it into the map.
 The calibration marker is never used as a mission target. Keep the lens settings,
 mounting and floor conditions consistent, and stay within the calibrated range.

@@ -32,6 +32,49 @@ class ConsoleTests(unittest.TestCase):
         overrides=kwargs.pop('parameter_overrides',[])
         return Console(parameter_overrides=[Parameter('session_directory',value=root.name),*overrides],**kwargs)
 
+    def test_visual_settings_and_mission_profile_lockout(self):
+        rclpy.init()
+        console=self.make_console(parameter_overrides=[Parameter('port',value=0),
+            Parameter('phase',value='mission'),Parameter('allow_motion',value=True)])
+        mission=Mission()
+        gate=VelocityGate(parameter_overrides=[Parameter('output_topic',value='/test/profile_output')])
+        controller=Node('controller_server')
+        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=75.)
+        for key,value in parameter_plan(initial,'mission')['controller_server'].items():
+            controller.declare_parameter(key,value)
+        nodes=(console,mission,gate,controller)
+        executor=MultiThreadedExecutor(num_threads=4)
+        for node in nodes:executor.add_node(node)
+        thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
+        base=f'http://127.0.0.1:{console.p["port"]}'
+        def post(path,data):
+            return json.load(urlopen(Request(base+'/api/'+path,json.dumps(data).encode(),
+                {'Content-Type':'application/json','X-Project-Token':console.token},method='POST'),timeout=15))
+        try:
+            deadline=time.monotonic()+5
+            while 'Mission' not in console.freshness and time.monotonic()<deadline:time.sleep(.05)
+            result=post('navigation',{'profile':'fast'})
+            self.assertTrue(result['synchronized'])
+            self.assertEqual(result['values']['goal_timeout'],75.)
+            self.assertEqual(mission.get_parameter('search_linear_speed').value,.16)
+            settings=dict(camera_height=.22,camera_pitch=.17,camera_yaw=0.,camera_x=.04,
+                          camera_y=0.,horizontal_fov=0.,camera_min_range=.35,camera_max_range=2.)
+            self.assertTrue(post('vision',settings)['success'])
+            self.assertEqual(console.snapshot()['vision_settings'],settings)
+            self.assertTrue(os.path.isfile(console.p['vision_config']))
+            for timer in mission.timers:timer.cancel()
+            mission.state='LOCALIZING'
+            console.on_status(String(data=json.dumps(dict(state='LOCALIZING',reason='Synthetic acquisition'))))
+            for path,body in [('vision',settings),('navigation',{'profile':'original'})]:
+                with self.assertRaises(HTTPError):post(path,body)
+            self.assertTrue(post('stop',{})['success'])
+            self.assertEqual(mission.state,'STOPPED')
+            print('PASS: saved visual settings, mission speed estimates/deadline, acquisition lockout and Stop')
+        finally:
+            executor.shutdown(timeout_sec=3);thread.join(timeout=3)
+            for node in nodes:node.destroy_node()
+            rclpy.shutdown()
+
     def test_live_trial_sliders_and_voltage(self):
         rclpy.init()
         console=self.make_console(parameter_overrides=[Parameter('port',value=0),

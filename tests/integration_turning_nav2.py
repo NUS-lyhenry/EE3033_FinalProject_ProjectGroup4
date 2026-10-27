@@ -123,6 +123,7 @@ def main():
             rclpy.init()
             chassis=Chassis()
             mapper=Node('project_mapper');mapper.declare_parameter('clearance',.14)
+            mapper.declare_parameter('goal_timeout',60.)
             console=Console(parameter_overrides=[Parameter('port',value=0),Parameter('phase',value='mapping'),
                 Parameter('session_directory',value=tmp)])
             gate=VelocityGate(parameter_overrides=[Parameter('allow_motion',value=True),
@@ -171,7 +172,30 @@ def main():
                         assert chassis.xyz==[0.,0.,2.]
                     print(f'PASS native turning: level={level} frozen={frozen} obstacle={close} status={result.status} pose={chassis.xyz}',flush=True)
                     handle=None
-                print('PASS: heading progress, feedback-independent ramp, no-progress abort and Bold obstacle stop; no chassis output',flush=True)
+                # Explicit fast trial updates the installed DWB/shim and gate.
+                chassis.close=chassis.frozen=False;chassis.deadband=.08
+                chassis.xyz=[0.,0.,2.];chassis.command=(0.,0.);chassis.commands=[]
+                req=Request(base+'/api/navigation',json.dumps({'profile':'fast'}).encode(),
+                    {'Content-Type':'application/json','X-Project-Token':console.token},method='POST')
+                policy=json.load(urlopen(req,timeout=15));assert policy['synchronized']
+                assert policy['values']['max_linear']==.16 and policy['values']['max_angular']==.60
+                time.sleep(.3);chassis.running=True
+                handle=wait(client.send_goal_async(goal));assert handle.accepted
+                result=wait(handle.get_result_async(),25)
+                chassis.running=False;chassis.drive.publish(Bool(data=False))
+                assert result.status==4 and max(abs(w) for v,w in chassis.commands)>.45
+                handle=None
+                # Home must finish without rotating to the path's final yaw.
+                chassis.xyz=[0.,0.,0.];chassis.command=(0.,0.);chassis.commands=[]
+                goal.goal_checker_id='home_goal_checker'
+                for p in goal.path.poses:set_yaw(p.pose.orientation,2.8)
+                time.sleep(.3);chassis.running=True
+                handle=wait(client.send_goal_async(goal));assert handle.accepted
+                result=wait(handle.get_result_async(),20)
+                chassis.running=False;chassis.drive.publish(Bool(data=False))
+                assert result.status==4 and abs(chassis.xyz[2])<.4, chassis.xyz
+                handle=None
+                print('PASS: fast native turning, XY-only home, heading progress, stall abort and obstacle stop; no chassis output',flush=True)
             finally:
                 chassis.running=False;chassis.drive.publish(Bool(data=False))
                 if handle:handle.cancel_goal_async()

@@ -1,5 +1,51 @@
 # Validation record
 
+## Visual single-target workflow and navigation trial — 2026-10-27
+
+This change retains the automatic frontier mapper and adds shared camera-only
+floor geometry, obstacle-aware search costs, bounded target acquisition,
+XY-only home arrival and a single-page operator workflow. Legacy calibration is
+optional and only explicitly selected profiles affect a mission.
+
+Completed local verification:
+
+- Python 3.12 on macOS: 184 algorithm tests passed. Python compilation and
+  diff whitespace checks passed.
+- Chromium/Playwright: all 34 browser scenarios passed, including the single
+  workflow page, explicit mounting values, fast-profile responses, map dragging,
+  phone layout, active-state lockouts and Stop.
+- ARM64 Ubuntu 22.04 / ROS 2 Humble / Nav2 1.1.20: overlay build and the full
+  isolated suite passed. This includes hardware-launch configuration, HTTP/ROS
+  transactions, original mission/search/stationary/mapping/waypoint regressions,
+  legacy calibration compatibility, native turning/recovery and NavFn passage
+  checks at 0.05 m and 0.01 m resolution.
+- Seven visual mission scenarios passed: immediate reliable report, approach
+  then report, stopping an approach once a good close view appears, lost target,
+  exhausted acquisition budget, Stop during localization, and late approach
+  acceptance. They use actual Mission/filter/gate callbacks and synthetic motion.
+- The image pipeline passed with actual ROS Image/CameraInfo/odometry/AMCL/TF,
+  no lidar subscription and no fitted profile. Neural inference alone is
+  substituted, including a 0.30-second delay. Far/clipped targets and mismatched
+  camera frames cannot produce report-quality coordinates.
+- Native fast turning built commands above 0.45 rad/s under the 0.60 cap. Home
+  arrival completed without rotating to a deliberately different final yaw.
+  These are synthetic controller results, not physical speed measurements.
+- Final HTTP/ROS checks passed for saving measured camera settings, applying a
+  mission speed profile without changing its 75-second deadline, setup lockout
+  during localization and Stop. Legacy projection checks were rerun successfully.
+
+The reproducible local suite is `tests/run_humble_checks.sh`; its isolated Docker
+runtime is `tests/Dockerfile.humble`. Native tests use separate ROS domains and
+localhost-only DDS. The local Docker test had networking disabled.
+
+Physical validation has not been performed. Original speed (0.12 m/s,
+0.40 rad/s) remains default. The explicit Fast trial profile (0.16 m/s,
+0.60 rad/s, shim 0.55 rad/s) and changed rotation thresholds require physical
+turn/stopping/localization comparison. No target-location accuracy, physical
+coverage, turn-time improvement, complete mission or deployment is claimed.
+Independent camera measurements must validate the mount/intrinsics and the
+initial 0.35–2.0 m usable range. Report sigma is a model, not an accuracy result.
+
 ## Map-point calibration replacement — 2026-10-27
 
 The old image-centred / measured-distance process has been replaced by a fixed

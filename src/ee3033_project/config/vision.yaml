@@ -1,0 +1,19 @@
+# One-time setup independent of the map and target location.
+# Zero height uses optical -> base_footprint TF, including dynamic pitch.
+# Positive height selects measured mounting geometry. Metres and radians.
+# Nonzero FOV explicitly overrides CameraInfo with approximate intrinsics.
+project_perception:
+  ros__parameters:
+    camera_height: 0.0
+    camera_pitch: 0.0
+    camera_yaw: 0.0
+    camera_x: 0.0
+    camera_y: 0.0
+    horizontal_fov: 0.0
+    camera_min_range: 0.35
+    camera_max_range: 2.0
+    pixel_margin: 8.0
+    pixel_sigma: 2.0
+    height_sigma: 0.015
+    pitch_sigma: 0.034906585
+    max_report_sigma: 0.10

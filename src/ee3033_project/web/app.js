@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING','CALIBRATING']);
+const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING']);
 const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d):'—';
 const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
@@ -9,19 +9,42 @@ let modelLabels=null,labelKey='',labelsBusy=false;
 let waypointDraft=null;
 let coordinateMethodChosen=false,lastSavedMapId=null;
 const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Select an audacity level and configure navigation while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
-let currentPage='overview';
+PAGES.workflow=['Map, find & return','Build the map, confirm it, set the start, then run the autonomous mission.'];
+let currentPage='workflow',workflowSerial=0,visionDirty=false;
+const visionFields={camera_height:['visionHeight',1],camera_pitch:['visionPitch',180/Math.PI],camera_yaw:['visionYaw',180/Math.PI],camera_x:['visionX',1],camera_y:['visionY',1],horizontal_fov:['visionFov',180/Math.PI],camera_min_range:['visionMin',1],camera_max_range:['visionMax',1]};
+function arrangeWorkflow(){
+  document.querySelector('.sidebar').hidden=true;
+  document.querySelector('.page-tabs').hidden=true;
+  const tools=$('advancedTools'),body=$('toolsBody');
+  ['waypointControls','mappingControls','audacityPanel','advanced'].forEach(id=>body.append($(id)));
+  body.append($('mapLibrary').querySelector('.field'));
+  body.append($('localizationMethod').closest('.field'));
+  body.append(document.querySelector('.event-panel'));
+  const grid=document.querySelector('.workspace-grid'),stages=document.querySelector('.stage-grid');
+  grid.before(stages,$('mapLibrary'));
+  $('localizationMethod').value='ground_plane';
+  const legacy=document.createElement('details'),summary=document.createElement('summary');
+  legacy.id='legacyCalibration';summary.textContent='Legacy camera calibration · optional';
+  legacy.append(summary,document.querySelector('section[data-pages="calibration"]'));body.append(legacy);
+  tools.addEventListener('toggle',()=>{if(!tools.open)releaseDrive();});
+}
+arrangeWorkflow();
 PAGES.calibration=['Camera setup','Calibrate once, then reuse the saved profile automatically for future missions.'];
 function renderPages(){
-  const route=location.hash.replace(/^#\/?/,'');currentPage=Object.hasOwn(PAGES,route)?route:'overview';
-  document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=!e.dataset.pages.split(' ').includes(currentPage));
+  const route=location.hash.replace(/^#\/?/,''),previous=currentPage;currentPage=Object.hasOwn(PAGES,route)?route:'workflow';
+  if(previous!==currentPage){$('advancedTools').open=currentPage!=='workflow';if(currentPage==='calibration')$('legacyCalibration').open=true;}
+  document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=currentPage==='workflow'?false:!e.dataset.pages.split(' ').includes(currentPage));
+  if(currentPage==='workflow'){$('mappingPanel').hidden=snapshot?.phase==='mission';$('legacyCalibration').hidden=true;}
+  else $('legacyCalibration').hidden=false;
+  $('backWorkflow').hidden=currentPage==='workflow';
   document.querySelectorAll('[data-page-link]').forEach(e=>{if(e.dataset.pageLink===currentPage)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   $('pageTitle').textContent=PAGES[currentPage][0];$('pageDescription').textContent=PAGES[currentPage][1];
   document.querySelector('.workspace-grid').classList.toggle('mapping-view',currentPage==='mapping');
   document.title=PAGES[currentPage][0]+' · Group 4 Assessment console';
   document.querySelector('.stepper').hidden=currentPage==='calibration';
 }
-function showPage(page){location.hash='/'+page;renderPages();draw();}
-window.addEventListener('hashchange',()=>{releaseDrive();renderPages();window.scrollTo(0,0);draw();});
+function showPage(page){location.hash='/'+page;render();}
+window.addEventListener('hashchange',()=>{releaseDrive();render();window.scrollTo(0,0);});
 const trialFields=[['max_linear','trialLinear','m/s'],['max_angular','trialAngular','rad/s'],['goal_timeout','trialTimeout','s']];
 function feedback(message,error=false){$('feedback').textContent=message;$('feedback').classList.toggle('error',error);}
 async function get(path){const r=await fetch('/api/'+path);const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
@@ -48,6 +71,7 @@ function render(){
   const calibrating=s.phase==='calibration';
   $('phase').textContent=calibrating?'Preparation · Camera setup':mapping?'Stage 1 · Mapping':'Stage 2 · Autonomous';
   const calibration=s.camera_calibration;
+  if(currentPage==='workflow')$('localizationMethod').value='ground_plane';
   if(calibration?.ready&&s.phase!=='mission'&&!coordinateMethodChosen)$('localizationMethod').value='ground_plane';
   setPill('calibrationBadge',calibration?.ready?'Saved calibration ready':'Not calibrated',calibration?.ready?'good':'');
   $('calibrationSummary').textContent=calibration?.message||'Calibrate once, save the validated profile, and subsequent missions will use it automatically.';
@@ -87,9 +111,10 @@ function render(){
   $('faultBanner').hidden=!fault;$('faultBanner').textContent=fault||'';
   $('reason').textContent=s.stage?.transitioning?'Changing stage; waiting for shutdown and fresh services…':m.readiness_reason&&m.state==='WAITING'?m.readiness_reason:m.reason||'Load a stage to begin.';
   $('health').replaceChildren(...(calibrating?['Lidar','Odometry']:mapping?['Map','Lidar','Odometry','Mission']:['Map','Lidar','Odometry','AMCL','YOLO','Mission']).map(name=>{const h=s.health?.[name],e=document.createElement('span');e.className='check '+(h?.ok?'ok':'bad');e.textContent=`${h?.ok?'●':'○'} ${name}`;e.title=h?`Last received ${h.age} s ago`:'No fresh status';return e;}));
-  $('loadMapping').hidden=!managed;$('loadMapping').disabled=!idle;
+  $('loadMapping').hidden=!managed||currentPage==='workflow';$('loadMapping').disabled=!idle;
   $('start').hidden=!mapping;$('start').textContent='Start automatic mapping';
   $('start').disabled=!mapping||active||!s.allow_motion||!ready();
+  if(currentPage==='workflow'&&managed&&!loaded)$('start').disabled=!idle||!s.allow_motion;
   $('saveMap').disabled=!mapping||!loaded||!idle||!s.health?.Map?.ok;
   $('mappingControls').hidden=!mapping;
   $('waypointControls').hidden=!mapping;
@@ -98,11 +123,13 @@ function render(){
   $('goWaypoint').disabled=!waypointAllowed||!waypointDraft;
   const selected=waypointDraft||(m.mapping_mode==='waypoint'?m.waypoint:null);
   $('waypointStatus').textContent=selected?`${waypointDraft?'Selected waypoint':m.waypoint_verified?'Verified waypoint':'Requested waypoint'} (${fmt(selected[0])}, ${fmt(selected[1])}) m · facing ${fmt(selected[2]*180/Math.PI,0)}°`:'Select a position and final facing.';
-  $('mapTitle').textContent=currentPage==='mapping'&&mapping?'Map · drag to set waypoint and facing':currentPage==='mission'&&!mapping?'Map · drag to set initial pose':'On-site map';
+  $('mapTitle').textContent=(currentPage==='mapping'||currentPage==='workflow'&&$('advancedTools').open)&&mapping?'Map · drag to set waypoint and facing':(currentPage==='mission'||currentPage==='workflow')&&!mapping?'Map · drag to set initial pose':'On-site map';
   document.querySelectorAll('[data-drive]').forEach(b=>b.disabled=!mapping||!loaded||!idle||!s.allow_motion||!!fault||!s.health?.Lidar?.ok);
   const labelReady=modelLabels?.ready===true&&modelLabels.labels.includes($('targetClass').value);
-  $('loadMission').hidden=!managed;$('loadMission').disabled=!idle||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
+  $('loadMission').hidden=!managed||currentPage==='workflow';$('loadMission').disabled=!idle||!labelReady||!chosenMap()?.reviewed||!(s.assessment?.maps||[]).includes(chosenMap()?.id)||s.assessment?.finished!=null;
   $('reviewMap').disabled=!mapping||!idle||!chosenMap()||(loaded&&chosenMap().id!==currentSavedMap()?.id);
+  if(currentPage==='workflow'){$('reviewMap').disabled||=!labelReady;$('reviewMap').textContent='Confirm map & prepare mission';$('mapLibrary').hidden=!mapping;$('setup').hidden=mapping;$('startMission').hidden=mapping;}
+  else{$('reviewMap').textContent='Mark map reviewed';$('setup').hidden=false;$('startMission').hidden=false;}
   $('savedMaps').disabled=!idle;$('refreshMaps').disabled=!online||!!busy;
   const entry=chosenMap();setPill('mapQuality',entry?(entry.reviewed?'Reviewed · ':'')+entry.quality:'Unverified',entry?.reviewed?'good':'warn');
   $('savedMap').textContent=entry?.path||s.saved_map||m.saved_map||'Every save uses a new directory.';
@@ -115,7 +142,7 @@ function render(){
   $('targetClass').disabled=!idle||!modelLabels?.ready;
   const targetChanged=!mapping&&$('targetClass').value!==s.mission_options?.target_class;
   $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Reload the mission to apply the selected target class.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
-  $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Floor-plane projection uses the visible object bottom and calibrated camera geometry. Check it at measured floor positions before the mission.':'Lidar localization requires the target to intersect the scan plane. Validate the camera and chosen method at measured positions.';
+  $('projectionHelp').textContent=$('localizationMethod').value==='ground_plane'?'Camera-only floor localization. Mount settings are under Advanced; no bottle collection is required.':'Legacy camera + lidar localization.';
   $('startMission').disabled=s.phase!=='mission'||active||!s.allow_motion||!ready()||!labelReady||targetChanged||(managed&&!s.initial_pose_sent);
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
   setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
@@ -129,12 +156,26 @@ function render(){
   $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?'Complete':m.state==='NOT_FOUND'?'Target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?'Stopped':'Trial not complete';
   $('resultReason').textContent=(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
   const p=s.perception;
+  if(currentPage==='workflow'){
+    document.querySelector('.metrics').hidden=mapping;
+    document.querySelector('.camera-panel').hidden=mapping;
+    document.querySelector('.workspace-grid').classList.toggle('mapping-view',mapping);
+    $('missionPanel').hidden=mapping&&!currentSavedMap();
+    $('mapLibrary').hidden=!mapping||!currentSavedMap();
+    $('mapLibrary').querySelector('h2').textContent='Review this trial map';
+    $('resultsPanel').hidden=!m.target&&!['COMPLETE','NOT_FOUND','STOPPED','FAILED'].includes(m.state);
+  }
   $('detectorSummary').textContent=p?`${p.target_class} · ${p.detected_candidates??'—'} visible · ${p.localized_candidates??0} localized${p.highest_confidence!=null?' · '+Math.round(p.highest_confidence*100)+'%':''}`:'No mission detector status';
   $('methodSummary').textContent=p?`${p.localization_method==='ground_plane'?'Floor-plane projection':'Camera + lidar'} · ${fmt(p.latency,2)} s inference latency`:'Coordinate method is selected before loading stage 2.';
+  if(p?.geometry_error)$('methodSummary').textContent=p.geometry_error;
+  $('gateReason').textContent=s.velocity_gate?`Motion: ${s.velocity_gate.reason.replaceAll('_',' ')} · requested ${s.velocity_gate.requested?.map(v=>fmt(v)).join(', ')} · output ${s.velocity_gate.output?.map(v=>fmt(v)).join(', ')}`:'Motion diagnostics appear after a stage loads.';
+  ['profileFast','profileOriginal'].forEach(id=>$(id).disabled=!idle||!loaded||!s.health?.Mission?.ok||(s.phase==='mission'&&m.state!=='WAITING'));
+  $('saveVision').disabled=!idle;
+  if(s.vision_settings&&!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(s.vision_settings[name]*scale,3));
   $('cameraSource').textContent=s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
   $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
   $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
-  $('stageHelp').textContent=managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
+  $('stageHelp').textContent=currentPage==='workflow'?'Automatic mapping returns and saves a new map. Inspect it, then confirm to prepare the mission.':managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
   $('mappingProgress').hidden=!mapping;
   $('mappingProgress').textContent=`${m.viewpoints_completed||0} goals reached · ${m.deferred_frontiers||0} deferred · ${m.frontier_retry_round?'Final retry pass':'Explore other areas before one final retry pass'}`;
   renderParameters();draw();
@@ -156,7 +197,7 @@ function renderParameters(){
   $('gapToggle').setAttribute('aria-pressed',String(gap?.enabled===true));
   $('gapToggle').textContent=gap?.enabled===true?'Narrow-gap blocking: ON · Disable':gap?.enabled===false?'Narrow-gap blocking: OFF · Enable':'Synchronize gap policy: Enable';
   if(gap&&fresh){const n=gap.nodes,g=n?.['global_costmap/global_costmap'],l=n?.['local_costmap/local_costmap'],stage=n?.[mapping?'project_mapper':'project_mission'];$('gapStatus').textContent=gap.fault||`Verified radius: global ${fmt(g?.robot_radius)} m / local ${fmt(l?.robot_radius)} m. Mapping/search clearance ${fmt(stage?.clearance)} m.`;}
-  $('trialPanel').hidden=!mapping;
+  $('trialPanel').hidden=snapshot?.phase==='calibration';
   trialFields.forEach(([key,id,unit])=>{$(id).disabled=!idle||!fresh||!trial||parametersBusy;$(id+'Value').textContent=fmt(Number($(id).value),key==='goal_timeout'?0:2)+' '+unit;$(id+'Live').textContent='Live: '+(trial?fmt(trial.values[key],key==='goal_timeout'?0:2)+' '+unit:'unavailable');});
   $('applyTrial').disabled=!idle||!fresh||!trial||!trialDirty||parametersBusy;
   $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes — press Apply.':trial?.fault||'Temporary until restart. Adjust only while stopped.';
@@ -175,25 +216,34 @@ async function refreshMaps(preferred){
   if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}
   $('savedMaps').replaceChildren(...options);if(selected)$('savedMaps').value=selected;render();
 }
-async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value)});await action('stage',body);showPage(phase);}
+async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:currentPage==='workflow'?'ground_plane':$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value)});const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
 $('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
-$('start').onclick=()=>action('start').catch(()=>{});$('startMission').onclick=()=>action('start').catch(()=>{});
-$('stop').onclick=async()=>{releaseDrive();try{const d=await send('stop');feedback(d.message||'Stop requested');}catch(e){feedback(e.message,true);}};
+$('start').onclick=async()=>{const serial=++workflowSerial;try{
+  if(currentPage==='workflow'&&snapshot?.stage?.managed&&!running()){
+    await loadStage('mapping');const deadline=Date.now()+30000;
+    while(!ready()){if(serial!==workflowSerial||!online)throw Error('Mapping start canceled');if(Date.now()>deadline)throw Error('Mapping is still preparing; inspect readiness and press Start again');await new Promise(r=>setTimeout(r,150));}
+  }
+  if(serial===workflowSerial)await action('start');
+}catch(e){feedback(e.message,true);}};$('startMission').onclick=()=>action('start').catch(()=>{});
+$('stop').onclick=async()=>{workflowSerial++;releaseDrive();try{const d=await send('stop');feedback(d.message||'Stop requested');}catch(e){feedback(e.message,true);}};
 $('saveMap').onclick=async()=>{try{const d=await action('save_map');await refreshMaps(d.map?.id||maps.find(m=>m.path===d.path)?.id);}catch(_){}};
 $('refreshMaps').onclick=()=>refreshMaps().catch(e=>feedback(e.message,true));$('savedMaps').onchange=render;
-$('reviewMap').onclick=async()=>{try{await action('review_map',{map_id:$('savedMaps').value});await refreshMaps();}catch(_){}};
+$('reviewMap').onclick=async()=>{const serial=workflowSerial;try{await action('review_map',{map_id:$('savedMaps').value});await refreshMaps();if(currentPage==='workflow'&&serial===workflowSerial)await loadStage('mission');}catch(_){}};
 $('calSetBottle').onclick=()=>action('calibration_target',{x:Number($('calBottleX').value),y:Number($('calBottleY').value),map_id:snapshot.selected_map?.id}).catch(()=>{});
 $('calSetPose').onclick=()=>action('initial_pose',{x:Number($('calPoseX').value),y:Number($('calPoseY').value),yaw:Number($('calPoseYaw').value)*Math.PI/180}).catch(()=>{});
 $('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Number($('poseY').value),yaw:Number($('poseYaw').value)*Math.PI/180}).catch(()=>{});
 function readWaypointDraft(){const fields=['waypointX','waypointY','waypointYaw'].map(id=>$(id).value);const values=fields.map(Number);waypointDraft=fields.every(v=>v!=='')&&values.every(Number.isFinite)?[values[0],values[1],values[2]*Math.PI/180]:null;render();}
 ['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).oninput=readWaypointDraft);
 $('goWaypoint').onclick=()=>{if(waypointDraft)action('map_waypoint',{x:waypointDraft[0],y:waypointDraft[1],yaw:waypointDraft[2]}).then(()=>{waypointDraft=null;render();}).catch(()=>{});};
-$('newTrial').onclick=()=>action('new_trial').then(()=>showPage('mapping')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
+$('newTrial').onclick=()=>action('new_trial').then(()=>showPage('workflow')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
 $('loadCalibration').onclick=()=>action('stage',{phase:'calibration',map_id:chosenMap()?.reviewed?chosenMap().id:undefined}).then(()=>showPage('calibration')).catch(()=>{});
 $('targetClass').onchange=render;
 $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
+Object.values(visionFields).forEach(([id])=>$(id).oninput=()=>{visionDirty=true;});
+$('saveVision').onclick=()=>action('vision',Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale]))).then(()=>{visionDirty=false;}).catch(()=>{});
+for(const [id,profile] of [['profileOriginal','original'],['profileFast','fast']])$(id).onclick=async()=>{parametersBusy=true;try{trial=await action('navigation',{profile});trialDirty=false;paramTime=Date.now();trialFields.forEach(([name,field])=>$(field).value=trial.values[name]);$('navigationProfileStatus').textContent=`Applied and verified: ${profile} · ${fmt(trial.values.max_linear)} m/s · ${fmt(trial.values.max_angular)} rad/s`;}catch(_){}finally{parametersBusy=false;render();}};
 $('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=async()=>{
   parametersBusy=true;
@@ -202,7 +252,7 @@ document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=asyn
   finally{parametersBusy=false;render();}
 });
 async function pollParameters(){
-  if(online&&snapshot?.health?.Mission?.ok&&running()&&!busy&&!parametersBusy&&!snapshot.stage?.transitioning){const generation=snapshot.control_generation;try{const g=await get('gap');let t=null;if(snapshot.phase==='mapping')t=await get('trial');if(generation===snapshot.control_generation){gap=g;trial=t;paramTime=Date.now();if(t)trialFields.forEach(([k,id])=>{if(!trialDirty)$(id).value=t.values[k];});}}catch(e){paramTime=0;$('gapStatus').textContent=e.message;}renderParameters();}
+  if(online&&snapshot?.health?.Mission?.ok&&running()&&!busy&&!parametersBusy&&!snapshot.stage?.transitioning&&snapshot.phase!=='calibration'){const generation=snapshot.control_generation;try{const g=await get('gap'),t=await get('trial');if(generation===snapshot.control_generation){gap=g;trial=t;paramTime=Date.now();if(t)trialFields.forEach(([k,id])=>{if(!trialDirty)$(id).value=t.values[k];});$('navigationProfileStatus').textContent=`Live limits: ${fmt(t.values.max_linear)} m/s · ${fmt(t.values.max_angular)} rad/s. Fast is a trial profile pending physical validation.`;}}catch(e){paramTime=0;$('gapStatus').textContent=e.message;}renderParameters();}
   setTimeout(pollParameters,4000);
 }
 async function poll(){
@@ -246,7 +296,7 @@ function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),c
 }
 function renderMap(m){mapData=m;mapImage=null;$('mapEmpty').hidden=!!m;if(!m){$('map').getContext('2d').clearRect(0,0,$('map').width,$('map').height);return;}$('mapScale').textContent=`${fmt(m.width*m.resolution,1)} × ${fmt(m.height*m.resolution,1)} m · ${fmt(m.resolution)} m/cell`;mapImage=document.createElement('canvas');mapImage.width=m.width;mapImage.height=m.height;const ctx=mapImage.getContext('2d'),pixels=ctx.createImageData(m.width,m.height);for(let r=0;r<m.height;r++)for(let c=0;c<m.width;c++){const v=m.cells[r*m.width+c],i=((m.height-1-r)*m.width+c)*4;pixels.data.set([...(v<0?[48,65,75]:v>=50?[14,29,36]:[196,210,211]),255],i);}ctx.putImageData(pixels,0,0);draw();}
 function canvasPosition(e){const r=$('map').getBoundingClientRect();return[(e.clientX-r.left)/r.width*mapData.width,(e.clientY-r.top)/r.height*mapData.height];}
-$('map').onpointerdown=e=>{const mode=currentPage==='mapping'&&!$('waypointX').disabled?'waypoint':currentPage==='calibration'&&!$('calSetBottle').disabled?($('calMapTool').value==='bottle'?'calBottle':'calPose'):currentPage==='mission'&&!$('setPose').disabled?'pose':null;if(!mapData||!mode)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p,mode};draw();};
+$('map').onpointerdown=e=>{const mode=(currentPage==='mapping'||currentPage==='workflow'&&$('advancedTools').open)&&!$('waypointX').disabled?'waypoint':currentPage==='calibration'&&!$('calSetBottle').disabled?($('calMapTool').value==='bottle'?'calBottle':'calPose'):(currentPage==='mission'||currentPage==='workflow')&&!$('setPose').disabled?'pose':null;if(!mapData||!mode)return;e.preventDefault();$('map').setPointerCapture(e.pointerId);const p=canvasPosition(e);drag={start:p,end:p,mode};draw();};
 $('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
 $('map').onpointerup=()=>{if(!drag)return;const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else if(mode==='calBottle'){$('calBottleX').value=a[0].toFixed(3);$('calBottleY').value=a[1].toFixed(3);action('calibration_target',{x:a[0],y:a[1],map_id:snapshot.selected_map?.id}).catch(()=>{});}else if(mode==='calPose'){$('calPoseX').value=a[0].toFixed(2);$('calPoseY').value=a[1].toFixed(2);$('calPoseYaw').value=yaw.toFixed(0);feedback('Robot pose selected. Press Set robot pose on calibration map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
 $('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);

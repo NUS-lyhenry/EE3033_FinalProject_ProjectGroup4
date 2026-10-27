@@ -9,3 +9,11 @@
 .workspace-grid.mapping-view{grid-template-columns:1fr}@media(max-width:650px){header{height:auto;min-height:82px;gap:8px}.breadcrumb{font-size:9px;max-width:98px}.phase{font-size:10px}.header-status{display:grid;grid-template-columns:auto auto;gap:4px}.header-status #battery{display:inline-flex;grid-column:1;grid-row:2}.header-status #connection{grid-column:1;grid-row:1}.header-status #stop{grid-column:2;grid-row:1 / span 2;align-self:stretch}}
 
 .calibration-frame{display:block;width:100%;height:2150px;border:0;background:#f2f5f3}@media(max-width:850px){.calibration-frame{height:3700px}}
+
+/* The assessment workflow lives on one page. Old deep links remain available. */
+.app-shell{margin-left:0}main{max-width:1400px;margin:auto}
+#backWorkflow{display:inline-block;margin-bottom:16px;color:var(--teal)}
+#advancedTools>.panel-body>.panel{margin-top:18px}
+#advancedTools input{display:block;width:100%;min-width:0;border:1px solid var(--line);border-radius:5px;padding:8px;margin:5px 0 12px;font:inherit}
+#advancedTools label{font-size:12px}#advancedTools .field{margin:15px 0}
+@media(max-width:650px){#advancedTools .form-grid{grid-template-columns:1fr 1fr}.page-heading{flex-wrap:wrap}.breadcrumb{max-width:120px}}

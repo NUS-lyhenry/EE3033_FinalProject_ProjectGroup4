@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import math
 import time
+import heapq
 import numpy as np
 from scipy.ndimage import distance_transform_edt, label
 from .core import angle_difference
@@ -18,7 +19,8 @@ class Viewpoint:
 class CoveragePlanner:
     def __init__(self, data, resolution, origin, clearance=0.20, spacing=0.65,
                  view_range=2.0, fov=1.35, headings=4, max_candidates=250,
-                 max_goals=120, coverage_fraction=0.98, candidate_limit=1000):
+                 max_goals=120, coverage_fraction=0.98, candidate_limit=1000,
+                 camera_model=None):
         self.grid = np.asarray(data, dtype=int)
         self.resolution = float(resolution)
         self.origin = origin
@@ -46,6 +48,41 @@ class CoveragePlanner:
         self.options = ()
         self.unobservable = set()
         self.candidate_threshold_exceeded = False
+        self.camera_model = camera_model
+        self.path_cache = None
+        self.gap_pass = False
+
+    def travel_field(self, x, y, deadline=None, cancel=None):
+        """Shortest collision-clear grid paths; no Euclidean shortcuts through walls."""
+        start = self.world_to_cell(x, y)
+        if self.path_cache is not None and self.path_cache[0] == start:
+            return self.path_cache[1:]
+        distances = np.full(self.grid.shape, np.inf)
+        parents = {}
+        if not self.in_bounds(*start) or not self.safe[start]:
+            return distances, parents
+        distances[start] = 0.
+        queue = [(0., start)]
+        count = 0
+        while queue:
+            distance, cell = heapq.heappop(queue)
+            if distance != distances[cell]:
+                continue
+            count += 1
+            if count % 256 == 0:
+                if cancel is not None and cancel.is_set():
+                    raise RuntimeError('Search planning canceled')
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError('Search path planning time limit exceeded')
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                other = (cell[0]+dr, cell[1]+dc)
+                candidate = distance+self.resolution
+                if self.in_bounds(*other) and self.safe[other] and candidate < distances[other]:
+                    distances[other] = candidate
+                    parents[other] = cell
+                    heapq.heappush(queue, (candidate, other))
+        self.path_cache = (start, distances, parents)
+        return distances, parents
 
     def world_to_cell(self, x, y):
         ox, oy, yaw = self.origin
@@ -61,21 +98,40 @@ class CoveragePlanner:
     def in_bounds(self, row, col):
         return 0 <= row < self.grid.shape[0] and 0 <= col < self.grid.shape[1]
 
-    def visible(self, row, col, yaw):
+    def visible(self, row, col, yaw, camera_model=None):
         """Ray-cast camera field of view, stopping at occupied/unknown cells."""
         cells = set()
+        x, y = self.cell_to_world(row, col)
         local_yaw = yaw - self.origin[2]
+        origin_row, origin_col = row+.5, col+.5
+        camera = camera_model if camera_model is not None else self.camera_model
+        if camera is not None:
+            dx, dy = camera.translation[:2]
+            cx = x+math.cos(yaw)*dx-math.sin(yaw)*dy
+            cy = y+math.sin(yaw)*dx+math.cos(yaw)*dy
+            ox, oy, origin_yaw = self.origin
+            origin_row = (-math.sin(origin_yaw)*(cx-ox)+math.cos(origin_yaw)*(cy-oy))/self.resolution
+            origin_col = (math.cos(origin_yaw)*(cx-ox)+math.sin(origin_yaw)*(cy-oy))/self.resolution
+            local_yaw += camera.yaw
         # Angular sampling resolves a target sampling cell at maximum range.
         angular_step = min(0.04, 0.15 / self.range)
         for a in np.arange(local_yaw-self.fov/2, local_yaw+self.fov/2+angular_step,
                            angular_step):
             for d in np.arange(0.0, self.range, self.resolution*0.7):
-                r = int(math.floor(row+0.5+math.sin(a)*d/self.resolution))
-                c = int(math.floor(col+0.5+math.cos(a)*d/self.resolution))
+                r = int(math.floor(origin_row+math.sin(a)*d/self.resolution))
+                c = int(math.floor(origin_col+math.cos(a)*d/self.resolution))
                 if not self.in_bounds(r, c) or not self.free[r, c]:
                     break
                 if (r, c) in self.target_cells:
                     cells.add((r, c))
+        if camera is not None and cells:
+            ordered = sorted(cells)
+            world = np.array([self.cell_to_world(*cell) for cell in ordered])
+            dx, dy = world[:, 0]-x, world[:, 1]-y
+            relative = np.column_stack([math.cos(yaw)*dx+math.sin(yaw)*dy,
+                                        -math.sin(yaw)*dx+math.cos(yaw)*dy])
+            valid = camera.contains_floor(relative)
+            cells = {cell for cell, good in zip(ordered, valid) if good}
         return frozenset(cells)
 
     def prepare(self, start_x, start_y, deadline=None, cancel=None):
@@ -125,6 +181,26 @@ class CoveragePlanner:
                     self.coverable.update(visible)
         # plan() consumes its own working copy, never the runtime candidate pool.
         self.options = tuple(options)
+        # One targeted gap pass: fill holes left by the coarse position/heading
+        # lattice without silently dropping original viewpoints.
+        remaining = self.target_cells-self.coverable
+        added = 0
+        for r, c in candidates:
+            if not remaining or added >= self.max_candidates:
+                break
+            check_budget()
+            x, y = self.cell_to_world(r, c)
+            nearest = min(remaining, key=lambda cell: (cell[0]-r)**2+(cell[1]-c)**2)
+            tx, ty = self.cell_to_world(*nearest)
+            yaw = math.atan2(ty-y, tx-x)-(self.camera_model.yaw if self.camera_model else 0.)
+            visible = self.visible(r, c, yaw)
+            if visible & remaining:
+                options.append(Viewpoint(x, y, yaw, visible))
+                self.coverable.update(visible)
+                remaining -= visible
+                added += 1
+        self.options = tuple(options)
+        self.gap_pass = added > 0
         self.unobservable = self.target_cells - self.coverable
         if not self.coverable:
             raise ValueError('No camera viewpoints can be generated')
@@ -157,9 +233,17 @@ class CoveragePlanner:
         Estimate only: Nav2 may take longer around obstacles. The current yaw
         is optional for compatibility with existing callers/tests.
         """
+        ranked = self.rank_viewpoints(x, y, observed, excluded, yaw, linear_speed,
+                                     angular_speed, observation_seconds)
+        return ranked[0][1] if ranked else None
+
+    def rank_viewpoints(self, x, y, observed, excluded=(), yaw=None,
+                        linear_speed=.12, angular_speed=.4, observation_seconds=3.,
+                        path_lengths=None, deadline=None, cancel=None):
         observed = set(observed)
         excluded = set(excluded)
-        best, best_score = None, -1.0
+        distances, _ = self.travel_field(x, y, deadline, cancel)
+        ranked = []
         for index, v in enumerate(self.options):
             if index in excluded:
                 continue
@@ -167,7 +251,12 @@ class CoveragePlanner:
             if gain == 0:
                 continue
             dx, dy = v.x-x, v.y-y
-            distance = math.hypot(dx, dy)
+            cell = self.world_to_cell(v.x, v.y)
+            distance = float(distances[cell]) if self.in_bounds(*cell) else math.inf
+            if path_lengths is not None and index in path_lengths:
+                distance = path_lengths[index]
+            if not math.isfinite(distance):
+                continue
             # Travel and final orientation matter; avoid rewarding extra stops.
             travel = distance / max(0.01, linear_speed)
             heading = math.atan2(dy, dx) if distance > 0.05 else (yaw if yaw is not None else v.yaw)
@@ -177,9 +266,8 @@ class CoveragePlanner:
             turn = rotation / max(0.05, angular_speed)
             cost = max(0.0, observation_seconds) + travel + turn + 1.0
             score = gain / cost
-            if score > best_score:
-                best, best_score = index, score
-        return best
+            ranked.append((score, index))
+        return sorted(ranked, key=lambda entry: (-entry[0], entry[1]))
 
 
 def returned_home(current, home, tolerance):

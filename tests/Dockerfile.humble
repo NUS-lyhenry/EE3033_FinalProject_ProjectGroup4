@@ -1,0 +1,10 @@
+FROM ros:humble-ros-base-jammy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-navigation2 ros-humble-nav2-bringup ros-humble-cv-bridge \
+    python3-scipy python3-opencv python3-yaml python3-pytest \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+COPY . .
+ENV ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+CMD ["bash", "tests/run_humble_checks.sh"]

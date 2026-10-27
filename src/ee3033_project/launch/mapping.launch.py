@@ -19,6 +19,7 @@ def generate_launch_description():
         DeclareLaunchArgument('console', default_value='true'),
         DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
         DeclareLaunchArgument('port', default_value='8765'),
+        DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share,'config','navigation.yaml')),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(share, 'launch', 'hardware.launch.py')), launch_arguments={
@@ -29,12 +30,14 @@ def generate_launch_description():
              output='screen'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(share,'launch','navigation.launch.py')),launch_arguments={
-                'nav_config':LaunchConfiguration('nav_config'),'mapping_mode':'true'}.items()),
+                'nav_config':LaunchConfiguration('nav_config'),'mapping_mode':'true',
+                'navigation_profile':LaunchConfiguration('navigation_profile')}.items()),
         Node(package='ee3033_project',executable='mapper',output='screen',parameters=[{
             'allow_motion':ParameterValue(LaunchConfiguration('allow_motion'),value_type=bool),
             'map_directory':LaunchConfiguration('map_directory')}]),
         Node(package='ee3033_project', executable='velocity_gate', parameters=[
             os.path.join(share, 'config', 'project.yaml'), {'mapping_mode': True,
+            'navigation_profile': LaunchConfiguration('navigation_profile'),
             'allow_motion': ParameterValue(LaunchConfiguration('allow_motion'), value_type=bool)}],
              output='screen'),
         Node(package='ee3033_project',executable='console',output='screen',
