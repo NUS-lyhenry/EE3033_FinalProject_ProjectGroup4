@@ -80,7 +80,10 @@ adds cell quantization variance. If a nonconvex region places the mean in an
 obstacle, the reported point is the nearest supported cell (the constrained
 minimum squared-error decision); its displacement from the raw posterior mean
 is included in covariance. Both values and the projection flag remain in the
-report. Severe map/observation conflict is displayed but cannot be accepted.
+report. A nearest-support Mahalanobis distance above 5 sigma flags severe
+map/observation conflict: it is displayed but cannot be accepted. A very broad
+likelihood remains eligible; low integrated overlap mass alone is not a conflict
+and does not impose a hidden sigma ceiling.
 
 The dashed circle shows the largest principal one-sigma uncertainty, **not** a
 guaranteed radial error bound. A position appears after one valid observation;

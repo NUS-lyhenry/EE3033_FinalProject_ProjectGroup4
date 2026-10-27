@@ -129,6 +129,10 @@ class MapMMSE:
         likelihood=independent+np.eye(2)*common+(residual.T@residual)/len(residual)
         delta=self.points-mean
         quadratic=np.einsum('ni,ij,nj->n',delta,np.linalg.inv(likelihood),delta)
+        # Broad likelihoods are uninformative, not evidence of a map conflict.
+        # Cell quantization also prevents rejecting a precise point between centres.
+        support_covariance=likelihood+np.eye(2)*self.resolution**2/12
+        support_distance=float(np.min(np.einsum('ni,ij,nj->n',delta,np.linalg.inv(support_covariance),delta)))
         log_weights=np.log(self.prior)-quadratic/2
         normalizer=logsumexp(log_weights)
         weights=np.exp(log_weights-normalizer)
@@ -147,7 +151,7 @@ class MapMMSE:
         return dict(x=float(point[0]),y=float(point[1]),sigma=math.sqrt(variance),variance=variance,
             covariance=covariance.tolist(),posterior_mean=posterior_mean.tolist(),projected=projected,
             likelihood_mean=mean.tolist(),likelihood_covariance=likelihood.tolist(),
-            prior_mass=float(math.exp(min(0.,log_mass))),prior_conflict=bool(log_mass<math.log(1e-5)),
+            prior_mass=float(math.exp(min(0.,log_mass))),prior_conflict=bool(support_distance>25.),support_mahalanobis_squared=support_distance,
             prior_scope='loaded map extent; unknown cells retained; uninflated connected space',
             map_signature=self.signature,label=self.label,method='map-constrained MMSE',
             stamp=float(self.samples[-1][0]),estimate_id=self.signature[:12]+':'+format(self.samples[-1][0],'.9f'),

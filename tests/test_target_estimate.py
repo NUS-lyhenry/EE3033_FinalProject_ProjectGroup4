@@ -131,3 +131,11 @@ def test_window_expiration_requires_four_new_frames_without_intermediate_misses(
     assert not t.snapshot(20.)['stable']
     for stamp in (20.1,20.2,20.3):assert t.update(detection(stamp=stamp),stamp)
     assert t.snapshot(20.3)['stable']
+
+
+def test_broad_likelihood_is_weak_information_not_a_hidden_sigma_limit():
+    t=tracker();r=update(t,sigma=1000.)
+    assert r['prior_mass']<1e-5
+    assert not r['prior_conflict'] and r['stable']
+    assert [r['x'],r['y']]==pytest.approx([.5,.5],abs=1e-6)
+    assert r['sigma']==pytest.approx(math.sqrt(1/12),abs=1e-4)
