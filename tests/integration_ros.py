@@ -21,6 +21,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
@@ -91,6 +92,24 @@ class FakeRobot(Node):
         m.data = [100 if r in (0,23) or c in (0,23) else 0
                   for r in range(24) for c in range(24)]
         self.map_pub.publish(m)
+        # This fixture substitutes Nav2 actions, so provide its matching safety
+        # snapshot too. Production Mission now waits for actual costmap data.
+        self.fixture_map=m
+        self.costmap_service=self.create_service(GetCostmap,'/global_costmap/get_costmap',self.costmap)
+
+    def costmap(self,request,response):
+        import numpy as np
+        from scipy.ndimage import distance_transform_edt
+        del request
+        source=self.fixture_map;cost=response.map
+        cost.header.frame_id='map';cost.header.stamp=self.get_clock().now().to_msg()
+        cost.metadata.resolution=source.info.resolution
+        cost.metadata.size_x=source.info.width;cost.metadata.size_y=source.info.height
+        cost.metadata.origin=source.info.origin
+        occupied=np.asarray(source.data).reshape(source.info.height,source.info.width)!=0
+        blocked=distance_transform_edt(~occupied)*source.info.resolution<=.15
+        cost.data=np.where(blocked,254,0).astype(np.uint8).ravel().tolist()
+        return response
 
     def accept(self, request):
         del request
