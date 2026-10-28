@@ -46,7 +46,6 @@ def retreat_goal(planner, pose, detection, visited=(), positions=(), allowed=Non
     else:
         bounds=(max(.08,minimum-.6),min(maximum,minimum+.15))
     if bounds[0]>=bounds[1]:return None,'No bounded near-field range hypotheses'
-    distances,_=planner.travel_field(*pose[:2],deadline=deadline,cancel=cancel)
     failure='No connected, clear, visible near-field retreat'
     for distance in (.30,.24,.18):
         if (deadline is not None and time.monotonic()>=deadline) or (cancel is not None and cancel.is_set()):
@@ -55,11 +54,13 @@ def retreat_goal(planner, pose, detection, visited=(), positions=(), allowed=Non
         yaw=bearing-camera_yaw
         cell=planner.world_to_cell(x,y)
         if (not planner.in_bounds(*cell) or not planner.safe[cell]
-                or not math.isfinite(distances[cell]) or cell in visited
+                or cell in visited
                 or any(math.dist((x,y),p)<.12 for p in positions)):
             continue
-        # A retreat must have a directly clear corridor, rather than a grid
-        # route which reaches the rear endpoint by driving around an obstacle.
+        # The whole directly clear corridor proves local connectivity. Do not
+        # first solve the entire map's Dijkstra field: repeatedly exceeding its
+        # deadline can starve a valid short retreat without improving safety.
+        # A route around an obstacle is intentionally insufficient here.
         count=max(2,math.ceil(distance/max(.01,planner.resolution/2))+1)
         clear=True
         for step in range(count):

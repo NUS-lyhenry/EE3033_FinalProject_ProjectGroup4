@@ -68,6 +68,22 @@ def test_unknown_rear_corridor_and_nav2_rejection_prevent_retreat():
     assert goal is None
 
 
+def test_clear_retreat_does_not_recompute_the_whole_map_path_field(monkeypatch):
+    p=planner()
+    def forbidden(*args,**kwargs):
+        raise AssertionError('A proven direct corridor needs no full Dijkstra field')
+    monkeypatch.setattr(p,'travel_field',forbidden)
+    goal,_=retreat_goal(p,(2.,2.,0.),near_detection(),allowed=lambda x,y:True)
+    assert goal and math.dist(goal[:2],(2.,2.))==pytest.approx(.30)
+
+
+def test_reachable_endpoint_around_an_obstacle_still_cannot_be_a_straight_retreat():
+    p=planner();p.safe[40,38:40]=False
+    distances,_=p.travel_field(2.,2.)
+    assert math.isfinite(distances[p.world_to_cell(1.7,2.)])
+    assert retreat_goal(p,(2.,2.,0.),near_detection(),allowed=lambda x,y:True)[0] is None
+
+
 def test_reframing_never_uses_invalid_floor_coordinates_as_the_target(monkeypatch):
     calls=[]
     def visible(*args,**kwargs):
