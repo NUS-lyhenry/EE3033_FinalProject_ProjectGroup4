@@ -1,0 +1,399 @@
+{
+  "date": "2026-10-28",
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "source_sha256": {
+    "mapper.py": "634b430e98588e40e8733e6881b93d4eded3f8ac3f113f8e7e0ce9ec43a047cb",
+    "mapping_escape.py": "ab1d8ad1d1b6412e3c22404780a83bf381a81a7afa89a729cb294e1b1c193e30",
+    "perception.py": "092b01cce4a1c7b4c44fab97b3519f020832ac5a09e4b6d4a4b670e54cea2ae3",
+    "capture_frame.py": "6b18316ff3b54441ee356ba5ed1fdb87a0a79a285b146de8ff2de4d8d472f058"
+  },
+  "python_checks": 449,
+  "browser_checks": 52,
+  "native_regressions": {
+    "mapping_retry": {
+      "passed": true,
+      "tests": 8
+    },
+    "integration_ros": {
+      "passed": true,
+      "tests": 9
+    },
+    "navigation_recovery": {
+      "passed": true,
+      "includes": [
+        "unknown rear",
+        "uncertain localization",
+        "persistent blockage",
+        "transient blockage",
+        "constrained corner",
+        "frozen chassis",
+        "cancel during recovery"
+      ]
+    }
+  },
+  "legacy_corner": {
+    "passed_corner_escape_and_return": true,
+    "seconds_sampled": 271,
+    "state": "MAPPED_PARTIAL",
+    "coverage_complete": false,
+    "return_verified": true,
+    "final_pose": [
+      0.062154482064928046,
+      0.09963556661176504,
+      -2.145801579072911
+    ],
+    "return_distance_from_sample_m": 0.11743264356560713,
+    "completed_frontiers": 4,
+    "stall_events": [
+      {
+        "reason": "No translation progress (blocked, turning in place, or oscillating)",
+        "goal": [
+          0.5948028607429015,
+          0.561693873768693,
+          -0.7853981633974483
+        ]
+      },
+      {
+        "reason": "No translation progress (blocked, turning in place, or oscillating)",
+        "goal": [
+          -0.7051971586286081,
+          -0.38836285334778986,
+          0.7853981633974483
+        ]
+      },
+      {
+        "reason": "No translation progress (blocked, turning in place, or oscillating)",
+        "goal": [
+          0.8393016106320998,
+          0.5115844999801156,
+          -2.356194490192345
+        ]
+      },
+      {
+        "reason": "No translation progress (blocked, turning in place, or oscillating)",
+        "goal": [
+          0.7393016091419837,
+          0.6115845014702317,
+          -1.5707963267948966
+        ]
+      },
+      {
+        "reason": "No translation progress (blocked, turning in place, or oscillating)",
+        "goal": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "transitions": [
+      {
+        "t": 0,
+        "state": "MAPPING",
+        "reason": "Selecting reachable frontiers",
+        "pose": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "t": 10,
+        "state": "MAPPING",
+        "reason": "Frontier reached; selecting the next unexplored area",
+        "pose": [
+          0.30634652250184674,
+          -0.523419177157431,
+          -1.1833184893758124
+        ]
+      },
+      {
+        "t": 39,
+        "state": "MAPPING",
+        "reason": "Navigation stalled; moving to a known-free recovery position",
+        "pose": [
+          0.4408233883793939,
+          0.4519558707455319,
+          0.6551958523867645
+        ]
+      },
+      {
+        "t": 46,
+        "state": "MAPPING",
+        "reason": "Recovery position reached; resuming exploration",
+        "pose": [
+          0.240790734157499,
+          0.800508982311743,
+          2.3609024011236683
+        ]
+      },
+      {
+        "t": 77,
+        "state": "MAPPING",
+        "reason": "Navigation stalled; moving to a known-free recovery position",
+        "pose": [
+          -0.33715681497308275,
+          -0.3441826760009976,
+          -2.461375115825523
+        ]
+      },
+      {
+        "t": 85,
+        "state": "MAPPING",
+        "reason": "Recovery position reached; resuming exploration",
+        "pose": [
+          -0.12585099110772419,
+          -0.6930762918993308,
+          -0.9636394322282786
+        ]
+      },
+      {
+        "t": 100,
+        "state": "MAPPING",
+        "reason": "Frontier reached; selecting the next unexplored area",
+        "pose": [
+          -0.8077552308086668,
+          -0.35585416491568655,
+          1.9808434797904912
+        ]
+      },
+      {
+        "t": 120,
+        "state": "MAPPING",
+        "reason": "Navigation stalled; moving to a known-free recovery position",
+        "pose": [
+          -0.8077552308086668,
+          -0.35585416491568655,
+          -0.646620702483242
+        ]
+      },
+      {
+        "t": 128,
+        "state": "MAPPING",
+        "reason": "Recovery position reached; resuming exploration",
+        "pose": [
+          -0.9902266493954712,
+          -0.7468802373124909,
+          -2.2215047887566888
+        ]
+      },
+      {
+        "t": 165,
+        "state": "MAPPING",
+        "reason": "Navigation stalled; moving to a known-free recovery position",
+        "pose": [
+          0.42849517794426173,
+          0.5291763425145647,
+          0.6240946697218278
+        ]
+      },
+      {
+        "t": 172,
+        "state": "MAPPING",
+        "reason": "Recovery position reached; resuming exploration",
+        "pose": [
+          0.2382788683331599,
+          0.805656960847204,
+          2.424483698356322
+        ]
+      },
+      {
+        "t": 189,
+        "state": "MAPPING",
+        "reason": "Frontier reached; selecting the next unexplored area",
+        "pose": [
+          0.890428859648977,
+          0.5130546739853458,
+          -0.9337148796316657
+        ]
+      },
+      {
+        "t": 211,
+        "state": "MAPPING",
+        "reason": "Other reachable areas explored; retrying deferred frontiers once",
+        "pose": [
+          0.9469609562426197,
+          -1.0268149713742056,
+          -1.7577154255894618
+        ]
+      },
+      {
+        "t": 219,
+        "state": "RETURNING",
+        "reason": "Frontier search finished; returning to mapping start",
+        "pose": [
+          0.9469609562426197,
+          -1.0268149713742056,
+          -1.777144713499676
+        ]
+      },
+      {
+        "t": 249,
+        "state": "RETURNING",
+        "reason": "Navigation stalled; moving to a known-free recovery position",
+        "pose": [
+          1.0181447577697127,
+          0.03272708934693075,
+          2.322249580169834
+        ]
+      },
+      {
+        "t": 256,
+        "state": "RETURNING",
+        "reason": "Recovery position reached; retrying return to mapping start",
+        "pose": [
+          0.8733641890817345,
+          0.5929812213345333,
+          2.2319744657695546
+        ]
+      },
+      {
+        "t": 267,
+        "state": "VERIFYING_HOME",
+        "reason": "Verifying mapping home and stationary hold",
+        "pose": [
+          0.062154482064928046,
+          0.09963556661176504,
+          -2.145801579072911
+        ]
+      },
+      {
+        "t": 269,
+        "state": "SAVING",
+        "reason": "Saving a separate on-site map",
+        "pose": [
+          0.062154482064928046,
+          0.09963556661176504,
+          -2.145801579072911
+        ]
+      },
+      {
+        "t": 270,
+        "state": "MAPPED_PARTIAL",
+        "reason": "Saved new map: /tmp/ee3033_scenario_controls_validation_20261028/maps/onsite_6tviivef/map.yaml; Home and stationary hold verified",
+        "pose": [
+          0.062154482064928046,
+          0.09963556661176504,
+          -2.145801579072911
+        ]
+      }
+    ]
+  },
+  "near_tf_repeat": {
+    "passed": true,
+    "seconds": 25.661989285000345,
+    "actual_displacement_m": 0.21242173614154383,
+    "sigma_m": 0.07253608851122702,
+    "reframe_attempts": 1
+  },
+  "real_yolo_physical_camera": {
+    "passed": true,
+    "mission_only_retest_on_previously_mapped_world": true,
+    "state": "COMPLETE",
+    "return_verified": true,
+    "return_distance_m": 0.1171523070815735,
+    "target": {
+      "x": 0.9752023559334662,
+      "y": 0.8907862185143169,
+      "variance": 0.009952048053903985,
+      "class": "cup",
+      "frame": "map",
+      "covariance": [
+        [
+          0.009945053868118324,
+          4.777265822514254e-19
+        ],
+        [
+          3.4389537658524594e-19,
+          0.009952048053903985
+        ]
+      ],
+      "posterior_mean": [
+        0.9752023559334662,
+        0.8907862185143169
+      ],
+      "projected": false,
+      "estimate_id": "c5356d8160c7:1793162581.484090805",
+      "estimator": "map-constrained MMSE",
+      "map_signature": "c5356d8160c7d70ec064058412c135434194f199b443ed5a3b32f31e41b07000",
+      "sigma": 0.09975995215467971,
+      "quality": "preferred_precision",
+      "preferred_sigma": 0.1,
+      "observation_stamp": 1793162581.4840908,
+      "geometry_conflict": false,
+      "confidence": 0.6595478653907776,
+      "confirmation_frames": 5
+    },
+    "camera": {
+      "camera_height": 0.31,
+      "camera_pitch": 0.4991641660703783,
+      "camera_yaw": 0.0,
+      "camera_x": 0.05,
+      "camera_y": 0.0,
+      "horizontal_fov": 0.0,
+      "camera_min_range": 0.35,
+      "camera_max_range": 2.0,
+      "revision": 1,
+      "height_m": 0.31,
+      "forward_m": 0.05,
+      "pitch_deg": 28.6
+    },
+    "mapping_before_retest": "MAPPED, home and stationary hold verified by verify_algorithm_preview.py"
+  },
+  "retained_real_yolo_default_camera_failure": {
+    "state": "FOUND_UNLOCALIZED",
+    "return_verified": true,
+    "reason": "Visual localization budget exhausted",
+    "camera": {
+      "camera_height": 0.22,
+      "camera_pitch": 0.17453292519943295,
+      "camera_yaw": 0.0,
+      "camera_x": 0.05,
+      "camera_y": 0.0,
+      "horizontal_fov": 0.0,
+      "camera_min_range": 0.35,
+      "camera_max_range": 2.0,
+      "revision": 0,
+      "height_m": 0.22,
+      "forward_m": 0.05,
+      "pitch_deg": 10.0
+    },
+    "target": null
+  },
+  "complex_scene_controls": {
+    "passed": true,
+    "name": "Random multi-room 3x3 42",
+    "wall_segments": 26,
+    "camera_before": {
+      "fx": 450.0,
+      "height": 0.31,
+      "rotation": [
+        0.0,
+        0.2469990127227429,
+        0.0,
+        0.9690157314068695
+      ],
+      "image_sha256": "32dae2383127f3d53cee9d4459e987f1f7c68ad9515af70be9366bf31b44ce2a"
+    },
+    "camera_after": {
+      "fx": 417.0321193091858,
+      "image_sha256": "c0f0a3d0c5b48a6f054cbeae75df16063492b1a224f758d482a21883a616d215",
+      "height": 0.31,
+      "rotation": [
+        -0.009877326063538468,
+        0.24680143985772096,
+        0.03875029391533503,
+        0.9682406221779095
+      ]
+    },
+    "random_and_manual_target_validated": true,
+    "new_complex_world_driving_success_claimed": false
+  },
+  "limitations": [
+    "Legacy-corner exploration retained MAPPED_PARTIAL even though automatic escape and home verification passed.",
+    "Default 0.22 m / 10 degree real-YOLO run exhausted localization budget; the 0.31 m / 28.6 degree mission-only retest passed.",
+    "Random multi-room controls and physical geometry were validated, but autonomous success in every generated world is not claimed.",
+    "All chassis/sensors are simulated; physical deployment and hardware validation remain outstanding."
+  ]
+}

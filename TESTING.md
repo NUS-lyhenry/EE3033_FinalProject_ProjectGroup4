@@ -1,5 +1,47 @@
 # Validation record
 
+## Final corner recovery, capture-time TF and simulator checks — 2026-10-28
+
+The original legacy seed-95 scene is saved as
+`validation/corner_seed95_legacy_scenario.json` because the upgraded multi-room
+generator deliberately produces a different layout for the same seed. The
+reported corner reproduced repeated zero-translation commands. Parameter-only,
+smoothing and alternate-controller experiments are retained in
+`validation/corner_investigation_20261028.json`; they were not adopted.
+
+Automatic mapping now cancels a stalled action before selecting a short
+map/costmap-checked recovery goal. Near obstacles it seeks open space; in open
+space it can stage a complete safe-grid route toward the stalled goal. A maximum
+of six attempts covers mapping and return. Stop, unknown/out-of-map cells, the
+configured clearance and fresh-costmap requirements remain in force. The native
+legacy-corner run escaped multiple corners and returned within about 0.12 m,
+with a verified stationary hold. It honestly saved **MAPPED_PARTIAL** because
+coverage remained unresolved; it is not evidence of complete exploration.
+
+Capture-time TF was reproduced failing by fractions of a millisecond before the
+matching transform arrived. One bounded nonblocking inference-period retry now
+retains that same image and timestamp. Two near-range native runs passed after
+the change; the final repeat moved about 0.21 m and reported sigma about 0.073 m.
+Bearing-only A/B, occlusion and cropped-target native regressions passed.
+All **449 Python checks** and **52 browser checks** passed locally, along with
+8 mapping-retry ROS tests, 9 common ROS tests and the native recovery cases
+(unknown/uncertain rear, transient/persistent blockage, corner, frozen chassis
+and cancellation).
+
+A fresh real-YOLO/SLAM/Nav2 workflow produced a MAPPED map and verified home.
+Its default 0.22 m / 10 degree camera mission then returned FOUND_UNLOCALIZED;
+that failure is retained. Updating the physical camera to 0.31 m / 28.6 degrees
+and repeating the mission on that map produced COMPLETE, sigma 0.0998 m against
+the requested 0.10 m, and a verified return. This second attempt is explicitly
+mission-only and does not replace the failed first attempt.
+
+The live 3x3 random-world smoke test passed generation, random/manual target
+placement and physical camera changes checked against actual TF, CameraInfo and
+rendered pixels. Geometry tests cover 103 seeds. Autonomous completion in every
+complex random world is not claimed. Final metrics and source hashes are in
+`validation/final_recovery_20261028.json`. No physical robot was contacted or
+deployed during this verification.
+
 ## Near-field/occlusion follow-up — 2026-10-28
 
 After PR #7 merged as 7441622, isolated subagent commits 1643036 (camera LOS)

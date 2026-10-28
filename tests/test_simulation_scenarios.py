@@ -106,3 +106,21 @@ def test_complex_rooms_cover_103_seeds_without_invalid_or_disconnected_worlds():
                    for room in topology['rooms'])
         assert s._segment_blocked(scene['start'][:2],scene['target'][:2],scene['walls'])
     assert dimensions=={(2,3),(3,3)} and len(loop_counts)>1
+
+
+def test_seed_95_door_crossings_have_clearance_from_both_sides():
+    # Geometry only: this does not exercise Nav2, the velocity gate or physics.
+    scene, topology = s._multi_room_layout(95)
+    s.validate_scenario(scene)
+    for door in topology['doors']:
+        a, b = (np.asarray(topology['rooms'][i]) for i in door['rooms'])
+        normal = b-a
+        normal /= np.linalg.norm(normal)
+        tangent = np.array([-normal[1], normal[0]])
+        center = np.asarray(door['center'])
+        for direction in (-1, 1):
+            for offset in (-.10, 0., .10):
+                start = center-direction*.30*normal + offset*tangent
+                end = center+direction*.30*normal - offset*tangent
+                path = np.linspace(start, end, 101)
+                assert np.min(s._clearance(path, scene['walls'])) >= s.ROBOT_CLEARANCE

@@ -479,3 +479,26 @@ of treating a made-up one-metre point as the target. Intermediate near-field
 reframing may remain below measurement range, explicitly labelled separately;
 LOS, FOV and maximum range still apply. The 2-D map treats obstacles as opaque
 and cannot prove visibility over low furniture or detect new unmapped occluders.
+
+
+### Mapping corner recovery and capture-time TF
+
+When automatic mapping makes no translation progress, it cancels the old
+navigation action before selecting a short recovery goal in known-free space.
+Close to an obstacle it seeks greater clearance; in an open area it can split
+a complete safe-grid route into a short intermediate leg. Every direct
+connector includes the configured clearance and a half-cell-diagonal reserve,
+and must also fit the fresh Nav2 costmap. At most six recovery moves are allowed
+per mapping run, including return-to-start recovery. Nav2 and the existing
+velocity gate still control all movement. Unknown space, stale maps and Stop
+prevent recovery; unsuccessful return recovery saves a partial map.
+
+Image processing holds one frame for at most one inference period when its
+capture-time map transform has not arrived. It then retries that same frame,
+retaining the original timestamp and normal stale-frame/TF rejection checks.
+No latest-pose substitute is used for localization.
+
+Random scenes now contain six to nine connected rooms, doorways and loops.
+The generator checks physical clearance and reachability before application.
+Saved scene JSON is the reproducibility record: a seed alone does not preserve
+the layout across generator revisions.

@@ -28,6 +28,7 @@ from .core import angle_difference
 from .navigation_progress import NavigationProgress
 from .navigation_costmap import NavigationCostmap
 from .stationary import StationaryWindow
+from .mapping_escape import mapping_escape_goal
 
 
 class Mapper(Node):
@@ -56,6 +57,11 @@ class Mapper(Node):
         self.odom_pose=None
         self.nav_progress=NavigationProgress()
         self.navigation_recoveries=[]
+        self.escape_pending=False
+        self.escape_active=False
+        self.escape_attempts=0
+        self.escape_target=None
+        self.return_escape_pending=False
         self.return_verified=False
         self.return_reason=None
         self.started=self.goal_time=self.last_decision=self.empty_since=0.0
@@ -220,6 +226,11 @@ class Mapper(Node):
         self.return_verified=False
         self.return_reason=None
         self.navigation_recoveries=[]
+        self.escape_pending=False
+        self.escape_active=False
+        self.escape_attempts=0
+        self.escape_target=None
+        self.return_escape_pending=False
         self.stop_window.reset()
         self.stationary_check=None
         self.job=None
@@ -236,6 +247,9 @@ class Mapper(Node):
         self.last_stop_stamp=self.get_clock().now().nanoseconds*1e-9
         self.save_after_cancel=False
         self.resume_after_cancel=False
+        self.escape_pending=False
+        self.escape_target=None
+        self.return_escape_pending=False
         self.drive_pub.publish(Bool(data=False))
         if self.nav_handle or self.pending:
             self.state='CANCELING'
@@ -307,16 +321,42 @@ class Mapper(Node):
 
     def done(self,success):
         if self.state=='CANCELING':
-            if self.resume_after_cancel:
+            if self.return_escape_pending:
+                self.return_escape_pending=False
+                self.state='RETURNING'
+                if not self.start_mapping_escape(self.home):
+                    self.return_reason='Return stalled and no safe recovery position is available'
+                    self.save_partial()
+            elif self.resume_after_cancel:
                 self.resume_after_cancel=False
                 self.state='MAPPING'
-                self.finish_frontier(False)
+                if self.escape_active:
+                    self.escape_active=False
+                    self.goal=None
+                    self.last_decision=time.monotonic()
+                    self.reason='Clearance recovery stalled; exploring other areas'
+                else:
+                    self.finish_frontier(False)
+                if self.escape_pending:
+                    self.escape_pending=False
+                    target,self.escape_target=self.escape_target,None
+                    self.start_mapping_escape(target)
             elif self.save_after_cancel:
                 self.save_partial()
             else:
                 self.state='STOPPED'
                 self.finished_at=time.monotonic()
         elif self.state=='RETURNING':
+            if self.escape_active:
+                self.escape_active=False
+                self.goal=None
+                if success:
+                    self.reason='Recovery position reached; retrying return to mapping start'
+                    self.send(self.home)
+                else:
+                    self.return_reason='Return clearance recovery failed'
+                    self.save_partial()
+                return
             pose=self.pose()
             if not success or pose is None or math.hypot(pose[0]-self.home[0],pose[1]-self.home[1])>0.25:
                 self.partial=True
@@ -334,12 +374,37 @@ class Mapper(Node):
             if success:self.begin_verify()
             else:self.fail('Waypoint turn failed; mapping remains live and the robot is stopped')
         elif self.state=='MAPPING':
-            if success and self.mode=='waypoint' and self.final_leg:
+            if self.escape_active:
+                self.escape_active=False
+                self.goal=None
+                self.last_decision=time.monotonic()
+                self.reason=('Recovery position reached; resuming exploration' if success
+                             else 'Clearance recovery failed; exploring other areas')
+            elif success and self.mode=='waypoint' and self.final_leg:
                 pose=self.pose()
                 if pose is None or math.hypot(pose[0]-self.waypoint[0],pose[1]-self.waypoint[1])>self.p['waypoint_position_tolerance']:
                     self.fail('Navigation reported success outside the waypoint position tolerance')
                 else:self.turn_to_waypoint()
             else:self.finish_frontier(success)
+
+    def start_mapping_escape(self, stalled_goal=None):
+        """At most six map-checked, collision-controlled repositioning attempts."""
+        if self.mode!='automatic' or self.escape_attempts>=6 or self.map is None:
+            return False
+        pose=self.pose()
+        if pose is None or not self.navigation_map.fresh():
+            return False
+        data,resolution,origin=self.map_geometry()
+        mask=self.navigation_map.mask(data.shape,resolution,origin)
+        goal=mapping_escape_goal(data,resolution,origin,pose,mask,self.p['clearance'],stalled_goal)
+        if goal is None:
+            self.reason='No known-free clearance recovery; exploring other areas'
+            return False
+        self.escape_attempts+=1
+        self.escape_active=True
+        self.reason='Navigation stalled; moving to a known-free recovery position'
+        self.send(goal)
+        return True
 
     def turn_to_waypoint(self):
         pose=self.pose()
@@ -422,6 +487,8 @@ class Mapper(Node):
             elif (self.nav_handle or self.pending) and (stalled or now-self.goal_time>self.p['goal_timeout']):
                 self.navigation_recoveries.append(dict(reason=stalled or 'Navigation timed out',goal=self.goal))
                 mapping_timeout=self.state=='MAPPING'
+                escape_stalled=self.escape_active
+                stalled_goal=self.goal
                 turning_timeout=self.state=='TURNING'
                 self.stop(None,Trigger.Response())
                 if turning_timeout:
@@ -431,14 +498,20 @@ class Mapper(Node):
                     # terminal result, including a late goal acceptance.
                     if self.state=='CANCELING':
                         self.resume_after_cancel=True
+                        self.escape_pending=bool(stalled and not escape_stalled and self.mode=='automatic')
+                        self.escape_target=stalled_goal if self.escape_pending else None
                         self.reason='Frontier timed out; canceling before exploring another area'
                     else:
                         self.state='MAPPING'
                         self.finish_frontier(False)
                 elif self.state=='CANCELING':
-                    self.partial=True
-                    self.save_after_cancel=True
-                    self.reason='Navigation timed out; canceling before saving a partial map'
+                    if stalled and not escape_stalled and self.escape_attempts<6:
+                        self.return_escape_pending=True
+                        self.reason='Return stalled; canceling before a safe recovery attempt'
+                    else:
+                        self.partial=True
+                        self.save_after_cancel=True
+                        self.reason='Navigation timed out; canceling before saving a partial map'
                 else:
                     self.save_partial()
             elif self.state=='MAPPING' and not self.nav_handle and not self.pending:

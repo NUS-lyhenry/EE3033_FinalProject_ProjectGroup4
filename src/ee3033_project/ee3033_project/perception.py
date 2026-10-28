@@ -28,6 +28,7 @@ from .ros_utils import parameters, transform_arrays
 from .model_labels import validate_target
 from .calibration import load_profile, mounting_rotation, floor_point, in_envelope
 from .vision_geometry import FloorCamera, camera_matrix, override_pitch
+from .capture_frame import CaptureFrameGate
 
 
 class Perception(Node):
@@ -63,6 +64,7 @@ class Perception(Node):
         self.listener = TransformListener(self.buffer, self)
         self.lock = threading.Lock()
         self.latest_image = None
+        self.capture_frame_gate = CaptureFrameGate()
         self.camera = None
         self.scans = deque(maxlen=40)
         self.last_processed = None
@@ -283,6 +285,22 @@ class Perception(Node):
     def process(self):
         with self.lock:
             image, camera, scans = self.latest_image, self.camera, list(self.scans)
+        if (self.capture_frame_gate.pending is None and image is not None
+                and stamp_seconds(image.header.stamp) == self.last_processed):
+            return
+        def capture_transform_ready(frame):
+            if self.p['localization_method'] == 'lidar':
+                return True
+            stamp = stamp_seconds(frame.header.stamp)
+            age = self.get_clock().now().nanoseconds*1e-9-stamp
+            if not 0 <= age <= self.p['max_image_age']:
+                return True  # Preserve the existing stale-frame diagnostics.
+            try:
+                return self.buffer.can_transform(self.p['map_frame'], self.p['base_frame'],
+                                                 Time.from_msg(frame.header.stamp))
+            except (TransformException, ValueError):
+                return True  # The normal detection path records the error.
+        image = self.capture_frame_gate.select(image, capture_transform_ready)
         if image is None:
             return
         stamp = stamp_seconds(image.header.stamp)
