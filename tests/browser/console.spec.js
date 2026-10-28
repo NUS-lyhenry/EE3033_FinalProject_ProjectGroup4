@@ -657,3 +657,13 @@ test('simulation target coordinate entry validates input and shows server reject
   await expect(page.locator('#feedback')).toContainText('too close to a wall');
   await expect(page.locator('#simulationPlaceTarget')).toBeEnabled();
 });
+
+test('simulation editor fits a mobile screen and retains Stop',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  const f=await fixture(page);enableScenario(f);await view(page,'workflow');
+  await expect(page.locator('#simulationPanel')).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.locator('#simulationPlaceTarget').scrollIntoViewIfNeeded();
+  await expect(page.locator('#stop')).toBeInViewport();
+  expect(f.errors).toEqual([]);
+});
