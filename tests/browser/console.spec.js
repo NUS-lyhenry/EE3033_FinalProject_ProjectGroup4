@@ -98,6 +98,9 @@ async function fixture(page,{phase='mapping',active=false}={}){
       json={success:true,values:trial,synchronized:true,profile:body.profile};
     }else if(path==='/api/vision'){
       state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
+    }else if(path==='/api/simulation_camera'){
+      state.simulation_camera={...body,revision:(state.simulation_camera.revision||0)+1};
+      json={success:true,camera:state.simulation_camera,message:'Physical simulated camera updated'};
     }else if(path==='/api/simulation_scenario'){
       const scene=state.simulation_scenario;
       scene.revision++;
@@ -612,6 +615,7 @@ test('TF pitch override is saved as a boolean with radians',async({page})=>{
 
 function enableScenario(f){
   Object.assign(f.state,{preview_backend:'main-ros',simulation_can_apply:true,
+    simulation_camera:{camera_height:.22,camera_pitch:10*Math.PI/180,camera_yaw:0,camera_x:.05,camera_y:0,horizontal_fov:0,camera_min_range:.35,camera_max_range:2,revision:0},
     simulation_scenario:{revision:1,seed:42,bounds:[0,0,6,4],start:[1,1,0],target:[4,2,0],
       walls:[[[0,0],[6,0]],[[6,0],[6,4]],[[6,4],[0,4]],[[0,4],[0,0]],[[3,1],[3,3]]]}});
 }
@@ -619,6 +623,8 @@ function enableScenario(f){
 test('simulation scene supports seeded random maps and click target placement',async({page})=>{
   const f=await fixture(page);enableScenario(f);await view(page,'workflow');
   await expect(page.locator('#simulationPanel')).toBeVisible();
+  await expect(page.locator('#simulationGeometryHelp')).toContainText('0.22 m high, 10.0° downward');
+  await expect(page.locator('#simulationGeometryHelp')).toContainText('move the simulated camera itself');
   await page.locator('#simulationSeed').fill('123');
   await page.getByRole('button',{name:'Generate random map',exact:true}).click();
   await expect.poll(()=>f.calls.find(c=>c.path==='/api/simulation_scenario')?.body).toEqual({action:'random_map',seed:123});
@@ -665,5 +671,26 @@ test('simulation editor fits a mobile screen and retains Stop',async({page})=>{
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.locator('#simulationPlaceTarget').scrollIntoViewIfNeeded();
   await expect(page.locator('#stop')).toBeInViewport();
+  expect(f.errors).toEqual([]);
+});
+
+test('simulated camera form changes physical mount and lens through its isolated API',async({page})=>{
+  const f=await fixture(page);enableScenario(f);await view(page,'workflow');
+  await page.locator('#advancedTools > summary').click();
+  await expect(page.locator('#visionHeight')).toHaveValue('0.220');
+  await expect(page.locator('#visionPitch')).toHaveValue('10.000');
+  await expect(page.locator('#visionPitchOverride')).toBeHidden();
+  await page.locator('#visionHeight').fill('0.31');
+  await page.locator('#visionPitch').fill('28.6');
+  await page.locator('#visionFov').fill('60');
+  await page.getByRole('button',{name:'Apply simulated camera',exact:true}).click();
+  await expect.poll(()=>f.calls.some(c=>c.path==='/api/simulation_camera')).toBe(true);
+  const body=f.calls.find(c=>c.path==='/api/simulation_camera').body;
+  expect(body.camera_height).toBe(.31);expect(body.camera_pitch).toBeCloseTo(28.6*Math.PI/180,8);
+  expect(body.horizontal_fov).toBeCloseTo(Math.PI/3,8);expect(body).not.toHaveProperty('use_pitch_override');
+  expect(f.calls.filter(c=>c.path==='/api/vision')).toEqual([]);
+  await expect(page.locator('#simulationGeometryHelp')).toContainText('0.31 m high, 28.6° downward');
+  f.state.mission.state='SEARCHING';f.state.simulation_can_apply=false;
+  await expect(page.locator('#saveVision')).toBeDisabled();
   expect(f.errors).toEqual([]);
 });

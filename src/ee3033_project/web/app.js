@@ -56,6 +56,7 @@ async function send(path,body={}){
 }
 async function action(path,body={}){releaseDrive();busy++;render();try{const d=await send(path,body);if(d.message)feedback(d.message);return d;}catch(e){feedback(e.message,true);throw e;}finally{busy--;render();}}
 function simulationEditable(){return setupIdle()&&snapshot?.simulated===true&&snapshot?.preview_backend==='main-ros'&&snapshot?.simulation_can_apply===true;}
+function physicalCameraMode(){return snapshot?.simulated===true&&snapshot?.preview_backend==='main-ros'&&!!snapshot?.simulation_camera;}
 function sceneTransform(scene){
   const [xmin,ymin,xmax,ymax]=scene.bounds,c=$('simulationScene'),padding=24;
   const scale=Math.min((c.width-2*padding)/(xmax-xmin),(c.height-2*padding)/(ymax-ymin));
@@ -84,9 +85,6 @@ function renderSimulation(){
     $('simulationTargetX').value=fmt(scene.target[0],3);$('simulationTargetY').value=fmt(scene.target[1],3);
   }
   $('simulationSeedStatus').textContent=scene.seed==null?'Default scene':`Seed ${scene.seed}`;
-  const physical=s.simulation_camera;
-  $('simulationGeometryHelp').hidden=!physical;
-  if(physical)$('simulationGeometryHelp').textContent=`Simulated camera: ${fmt(physical.height_m,2)} m high, ${fmt(physical.pitch_deg,1)}° downward. Camera mounting settings below change the estimator after saving and reloading the mission; they do not move this camera. Height 0 reads TF; pitch requires Override TF pitch only or a measured height.`;
   $('simulationSceneStatus').textContent=!editable?(s.simulation_scenario_reason||'Stop the current run before editing the scene.'):
     simulationDraft?'Target selected. Press Place target to apply it.':'Click the scene or enter coordinates, then press Place target.';
   $('simulationScene').style.cursor=editable?'crosshair':'default';drawSimulation();
@@ -266,9 +264,19 @@ function render(){
   if(p?.geometry_error)$('methodSummary').textContent=p.geometry_error;
   $('gateReason').textContent=s.velocity_gate?`Motion: ${s.velocity_gate.reason.replaceAll('_',' ')} · requested ${s.velocity_gate.requested?.map(v=>fmt(v)).join(', ')} · output ${s.velocity_gate.output?.map(v=>fmt(v)).join(', ')}`:'Motion diagnostics appear after a stage loads.';
   ['profileFast','profileOriginal'].forEach(id=>$(id).disabled=!idle||!loaded||!s.health?.Mission?.ok||(s.phase==='mission'&&m.state!=='WAITING'));
-  $('saveVision').disabled=!idle;
-  if(!visionDirty)$('visionPitchOverride').checked=s.vision_settings?.use_pitch_override===true;
-  if(s.vision_settings&&!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(s.vision_settings[name]*scale,3));
+  const physical=physicalCameraMode(),mount=physical?s.simulation_camera:s.vision_settings;
+  $('saveVision').disabled=physical?!simulationEditable():!idle;
+  $('saveVision').textContent=physical?'Apply simulated camera':'Save camera geometry';
+  $('cameraMountTitle').textContent=physical?'Simulated camera · physical setup':'Camera mounting · one-time setup';
+  $('cameraMountHelp').textContent=physical?'Adjust the actual simulated camera. Saving updates the rendered image, camera TF and CameraInfo together. FOV 0 restores the default lens.':'Zero height uses the installed camera TF. Zero FOV uses CameraInfo. Fill measured values only; no bottle collection is required. Angles below are degrees.';
+  $('cameraMountSavedHint').textContent=physical?'Apply while stopped. Localization uses the matching camera TF and intrinsics; old target evidence is cleared. Minimum and maximum usable range remain measurement-validity limits.':'Saved settings apply the next time the mission loads.';
+  $('visionPitchOverride').closest('label').hidden=physical;
+  $('visionPitchOverride').disabled=physical;
+  $('visionHeight').min=physical?'0.05':'0';
+  $('simulationGeometryHelp').hidden=!physical;
+  if(physical)$('simulationGeometryHelp').textContent=`Current simulated camera: ${fmt(mount.camera_height,2)} m high, ${fmt(mount.camera_pitch*180/Math.PI,1)}° downward. These controls move the simulated camera itself.`;
+  if(!visionDirty)$('visionPitchOverride').checked=!physical&&s.vision_settings?.use_pitch_override===true;
+  if(mount&&!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(mount[name]*scale,3));
   $('cameraSource').textContent=s.preview_interactive&&s.camera_source?'Simulated camera':s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
   $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
   $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
@@ -343,7 +351,15 @@ trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 Object.values(visionFields).forEach(([id])=>$(id).oninput=()=>{visionDirty=true;});
 $('visionPitchOverride').onchange=()=>{visionDirty=true;};
-$('saveVision').onclick=()=>action('vision',{...Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale])),use_pitch_override:$('visionPitchOverride').checked}).then(()=>{visionDirty=false;}).catch(()=>{});
+$('saveVision').onclick=()=>{
+  const physical=physicalCameraMode();
+  if(physical&&!simulationEditable())return;
+  const values=Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale]));
+  if(!physical)values.use_pitch_override=$('visionPitchOverride').checked;
+  action(physical?'simulation_camera':'vision',values).then(response=>{
+    visionDirty=false;if(physical&&response.camera)snapshot.simulation_camera=response.camera;render();
+  }).catch(()=>{});
+};
 for(const [id,profile] of [['profileOriginal','original'],['profileFast','fast']])$(id).onclick=async()=>{parametersBusy=true;try{trial=await action('navigation',{profile});trialDirty=false;paramTime=Date.now();trialFields.forEach(([name,field])=>$(field).value=trial.values[name]);$('navigationProfileStatus').textContent=`Applied and verified: ${profile} · ${fmt(trial.values.max_linear)} m/s · ${fmt(trial.values.max_angular)} rad/s`;}catch(_){}finally{parametersBusy=false;render();}};
 $('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=async()=>{

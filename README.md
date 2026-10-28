@@ -358,6 +358,26 @@ container has no device mappings or host networking; its ROS domain is isolated
 from the robot. Keep it running to retain demo maps/results, and use
 `docker stop -t 25 ee3033-algorithm-preview` when finished.
 
+The simulation-only **Build a test scene** panel adds **Generate random map**,
+**Random target**, and click/coordinate **Place target** controls. A uint32 random
+seed reproduces a world; the target-placement seed is recorded separately.
+Walls are closed, robot/target positions have clearance, and setup validates a
+connected free-space route. This physical scene is never supplied as the SLAM
+map or target estimate. A new world resets the simulated chassis/odometry and
+loads fresh mapping in WAITING; it never starts motion automatically. Moving a
+target retains the world/map and clears previous mission target evidence.
+Controls reject active motion and Stop prevents a delayed stage from starting.
+Scenario revisions are saved under the simulation output's `scenarios/` folder.
+
+The camera renders **30 × 30 cm ceramic tiles**, 2.5 mm grout, lightly textured
+walls and simple depth-correct shading. In simulation, **Advanced → Simulated
+camera · physical setup** changes the camera itself: height, pitch, yaw, mount
+translation and lens FOV update the image, TF and CameraInfo together while
+stopped. FOV 0 restores the original 450 px focal length; localization reads the
+matching TF/intrinsics. Minimum/maximum usable distance remain measurement
+validity limits. Changes discard previous target evidence. On a real robot the
+same area remains a measured-geometry configuration; it cannot move hardware.
+
 The bootstrap downloads the official `yolo26n.pt` weights, verifies the pinned
 SHA-256 and selects a cup texture from the official Ultralytics COCO128 sample.
 Texture/model provenance is recorded in `/tmp/ee3033_sim/assets/provenance.json`
