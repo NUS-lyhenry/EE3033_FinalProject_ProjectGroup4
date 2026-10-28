@@ -28,6 +28,7 @@ class SingleTarget:
         self.turn_sites = []
         self.last_goal_reason = None
         self.last_goal_action = None
+        self.reframe_positions = []
         self.reframe_attempts = 0
         self.reframe_distance = 0.
 
@@ -151,13 +152,13 @@ class SingleTarget:
         self.last_goal_action=None
         near=requires_reframing(d) or ('bearing' not in d and 'steering_bearing' in d)
         if near:
-            if not any(math.dist(pose[:2],p)<.12 for p in self.positions):
-                if len(self.positions)>=3:
-                    self.last_goal_reason='Three observation positions already used'
-                    return None
-                self.positions.append(tuple(pose[:2]))
+            # Framing recovery is not an A/B/C capture station: a cropped
+            # view can contain no usable measurement at all. Keep its bounded
+            # route history separate so two retreats still permit valid A/B.
+            if not any(math.dist(pose[:2],p)<.12 for p in self.reframe_positions):
+                self.reframe_positions.append(tuple(pose[:2]))
             if self.reframe_attempts<2 and self.reframe_distance<.6-1e-6:
-                goal,reason=retreat_goal(planner,pose,d,self.visited,self.positions,
+                goal,reason=retreat_goal(planner,pose,d,self.visited,self.reframe_positions,
                     allowed,deadline,cancel)
                 self.last_goal_reason=reason
                 if goal is not None:
@@ -167,6 +168,11 @@ class SingleTarget:
                     self.last_goal_action='retreat'
                     return goal
             else:self.last_goal_reason='Bounded near-field retreat budget used'
+            # A still-invalid cropped view must not consume a capture site.
+            # A valid independent horizontal bearing may proceed even when
+            # floor contact remains vertically clipped or below minimum range.
+            if not d.get('bearing_valid',False):
+                return None
         if 'bearing' not in d:
             return None
         camera_yaw = planner.camera_model.yaw if planner.camera_model else 0.

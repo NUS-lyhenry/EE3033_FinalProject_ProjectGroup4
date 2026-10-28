@@ -1077,7 +1077,9 @@ class Mission(Node):
                             self.acquisition.phase='Holding safely; continuing localization and target reacquisition'
                             self.acquisition_decision_after=now+2.
                         else:
-                            self.acquisition.phase=(f'Moving to {"ABC"[min(2,len(self.acquisition.positions))]}: '+str(self.acquisition.last_goal_reason)
+                            self.acquisition.phase=('Recovering target framing: '+str(self.acquisition.last_goal_reason)
+                                if self.acquisition.last_goal_action=='retreat' else
+                                f'Moving to {"ABC"[min(2,len(self.acquisition.positions))]}: '+str(self.acquisition.last_goal_reason)
                                 if math.dist(goal[:2],self.pose()[:2])>=.12 else 'Centering or locally reacquiring')
                             self.acquisition.steps += 1
                             self.send_goal(self.make_pose(*goal), 'acquire')

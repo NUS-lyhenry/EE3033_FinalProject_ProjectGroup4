@@ -100,7 +100,7 @@ def test_invalid_reframe_geometry_rejects_without_crashing(field,value):
     assert retreat_goal(planner(),(2.,2.,0.),d)[0] is None
 
 
-def test_near_field_moves_are_bounded_by_two_retreats_and_three_positions(monkeypatch):
+def test_near_field_moves_are_bounded_without_spending_abc_stations(monkeypatch):
     monkeypatch.setattr('ee3033_project.near_view.observation_visibility',
         lambda *a,**kw:NS(visible=True,reason='test clear'))
     target=SingleTarget();p=planner();pose=(2.,2.,0.)
@@ -112,7 +112,8 @@ def test_near_field_moves_are_bounded_by_two_retreats_and_three_positions(monkey
     d=near_detection();d['origin']=list(pose[:2]);target.candidate=d
     assert target.observation_goal(p,pose) is None
     assert target.reframe_attempts==2 and target.reframe_distance<=.6+1e-9
-    assert len(target.positions)==3
+    assert len(target.positions)==0
+    assert len(target.reframe_positions)==3
 
 
 def legacy_perception(point):
@@ -146,3 +147,35 @@ def test_legacy_coarse_far_point_remains_outside_the_accepted_measurement_range(
     p,image,locate=legacy_perception([1.4,0.,0.])
     assert locate(p,[290.,200.,350.,350.],image,None,None)==pytest.approx([1.4,0.,0.])
     assert p.projection_in_range is False
+
+
+def test_two_failed_framing_views_still_allow_valid_a_and_lateral_b():
+    target=SingleTarget();p=planner();pose=(2.,2.,0.)
+    for stamp in (10.,11.):
+        d=near_detection();d['stamp']=stamp;d['origin']=list(pose[:2])
+        target.candidate=d
+        goal=target.observation_goal(p,pose)
+        assert goal is not None and target.last_goal_action=='retreat'
+        pose=goal
+    # Only here does the camera first recover a complete, usable A view.
+    assert target.positions==[]
+    target.candidate=dict(stamp=12.,label='cup',confidence=.9,bearing=0.,
+        origin=list(pose[:2]),projection_valid=False,range_state='within_range',
+        reframe_required=False,bearing_valid=True)
+    goal=target.observation_goal(p,pose,force_baseline=True)
+    assert goal is not None
+    assert abs(goal[1]-pose[1])>=.25
+    assert target.last_goal_reason=='Depth-free lateral baseline'
+    assert target.positions==[tuple(pose[:2])]
+    assert target.reframe_attempts==2 and target.reframe_distance<=.6+1e-9
+    assert not target.expired(100.)
+
+
+def test_repeated_near_view_does_not_duplicate_recovery_position():
+    target=SingleTarget();p=planner();pose=(2.,2.,0.)
+    target.candidate=near_detection()
+    target.observation_goal(p,pose)
+    target.observation_goal(p,pose)
+    assert target.reframe_positions==[(2.,2.)]
+    assert target.positions==[]
+    assert target.reframe_attempts<=2 and target.reframe_distance<=.6+1e-9
