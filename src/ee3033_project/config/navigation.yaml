@@ -108,7 +108,9 @@ controller_server:
       linear_granularity: 0.04
       angular_granularity: 0.025
       transform_tolerance: 0.3
-      xy_goal_tolerance: 0.12
+      # RotateToGoal must not stop translation outside the tightest goal
+      # checker (.10 m for observations), leaving it waiting for impossible XY.
+      xy_goal_tolerance: 0.09
       trans_stopped_velocity: 0.025
       short_circuit_trajectory_evaluation: true
       stateful: true
