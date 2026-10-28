@@ -485,10 +485,10 @@ class Mission(Node):
         serial = self.goal_serial
         self.goal_pending = True
         self.goal_pending_serial = serial
+        current=self.pose()
+        self.goal_translation=self.goal_requires_translation(pose,kind,retry,current)
         self.goal_kind = kind
         self.current_goal = pose
-        current=self.pose()
-        self.goal_translation=bool(current and math.hypot(pose.pose.position.x-current[0],pose.pose.position.y-current[1])>=.12)
         if kind=='acquire' and not retry:
             self.localization_motion_log.append(dict(origin=list(current) if current else None,
                 goal=[pose.pose.position.x,pose.pose.position.y,quaternion_yaw(pose.pose.orientation)],
@@ -513,6 +513,21 @@ class Mission(Node):
         self.heartbeat(False, kind == 'search')
         future = self.nav.send_goal_async(goal)
         future.add_done_callback(lambda f: self.goal_response(f, serial))
+
+    def goal_requires_translation(self, pose, kind, retry, current):
+        previous=getattr(self,'current_goal',None)
+        if (retry and previous is not None and self.goal_kind==kind
+                and pose.header.frame_id==previous.header.frame_id
+                and math.hypot(pose.pose.position.x-previous.pose.position.x,
+                               pose.pose.position.y-previous.pose.position.y)<=1e-6
+                and abs(angle_difference(quaternion_yaw(pose.pose.orientation),
+                                         quaternion_yaw(previous.pose.orientation)))<=1e-6):
+            # A retry a few centimetres from its destination is still the same
+            # translation task. The independent progress/heading phase decides
+            # when actual travel ends, rather than this remaining-distance test.
+            return self.goal_translation
+        return bool(current and math.hypot(pose.pose.position.x-current[0],
+                                          pose.pose.position.y-current[1])>=.12)
 
     def goal_response(self, future, serial):
         try:
