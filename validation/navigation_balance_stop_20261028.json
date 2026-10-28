@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-28",
+  "operator_report": "Green planned path jumps, followed by STOPPED",
+  "evidence": {
+    "source": "Existing browser DOM cached after robot disconnected; no reload",
+    "navigation_error": "Navigation goal reached; Actual stationary stop was not verified; navigation locked",
+    "mission_state": "STOPPED",
+    "final_reason": "Stop requested",
+    "stage_elapsed_seconds": 12,
+    "viewpoints": 24,
+    "failed_viewpoints": 24,
+    "control_fault": "Gap policy unavailable; driving locked: global_costmap/global_costmap parameter request timed out",
+    "raw_robot_logs_recovered": false,
+    "limitations": [
+      "The final Stop requested does not establish who initiated the earlier failure",
+      "The exact original stationary_check and timing of the costmap timeout remain unverified"
+    ],
+    "operator_screenshot_confirms_navigation_error": true
+  },
+  "source_findings": [
+    "Mission candidate ranking used the public planner action; every successful candidate path was published on the green /plan topic",
+    "Mission treated rejected navigation as an unreachable viewpoint and did not latch global terminal lock after its handle cleared",
+    "Supervisor used stricter stationary spans than Mission and a shorter half-second hold; measured bounded balance may exceed its old 1cm span, but the precise original failing condition is not yet known"
+  ],
+  "changes": [
+    "Candidate evaluations share the safe planner queue and checks through /project/evaluate_path_to_pose without repainting /plan",
+    "Mission latches fresh global locks and stops on public rejection without consuming viewpoints",
+    "Supervisor uses 2s bounded-balance hold and 5s timeout with fresh zero command and actual odometry checks",
+    "Mean limits .035m/s and .10rad/s, spans .05m and .12rad, maximum sample gap .25s; sustained creep remains rejected",
+    "Detailed failed stationary reason and ages retained; outer cancellation waits 10s"
+  ],
+  "verification": {
+    "pure_tests_passed": 712,
+    "compileall": true,
+    "native_action_tests_added": 4,
+    "native_action_tests_run_locally": false,
+    "local_ros_world_simulation_started": false,
+    "physical_motion_command_sent": false,
+    "browser_tests_passed": 56
+  },
+  "deployment": {
+    "deployed": false,
+    "reason": "Operator confirmed robot powered off; repair not deployed"
+  },
+  "acceptance": {
+    "physical_regression_passed": false,
+    "merge_allowed": false
+  }
+}

@@ -38,7 +38,7 @@ class NavigationSupervisor(Node):
         self.p = parameters(self, dict(goal_timeout=60., maximum_recoveries=2,
             translation_window=12., translation_distance=.08, heading_window=3.,
             sensor_timeout=1., gate_timeout=1.5, cancel_timeout=3.,
-            enable_grace=2., stationary_seconds=.5, stationary_timeout=2.,
+            enable_grace=2., stationary_seconds=2., stationary_timeout=5.,
             xy_tolerance=.12, command_topic='/cmd_vel', base_frame='base_footprint',
             odom_frame='odom_combined', map_frame='map'))
         self.group = ReentrantCallbackGroup()
@@ -276,26 +276,55 @@ class NavigationSupervisor(Node):
 
     def stationary(self, budget=None, ignore_stop=False):
         self.set_stage('STOPPING', 'Verifying final command and actual stationary odometry pose')
-        window = StationaryWindow(seconds=max(.5,self.p['stationary_seconds']),
-            linear_limit=.035,angular_limit=.10,position_limit=.01,heading_limit=.02,max_gap=.25)
+        # A balancing chassis can oscillate around a fixed point. Use the same
+        # complete hold as the mission's final stop: bounded oscillation is
+        # allowed, but two seconds exposes slow translation or heading creep.
+        window = StationaryWindow(seconds=max(2.,self.p['stationary_seconds']),
+            linear_limit=.035,angular_limit=.10,position_limit=.05,heading_limit=.12,max_gap=.25)
+        with self.guard:
+            self.status['stationary_check'] = window.evaluate(self.get_clock().now().nanoseconds*1e-9)
         start = time.monotonic()
         while rclpy.ok() and time.monotonic()-start < self.p['stationary_timeout']:
-            if not ignore_stop and self.interrupted(budget):
+            interrupted = None if ignore_stop else self.interrupted(budget)
+            if interrupted:
+                with self.guard:
+                    self.status['stationary_check'].update(verified=False,
+                        reason='Stationary verification interrupted: '+interrupted,
+                        reason_code='stationary_interrupted')
                 return False
             now = time.monotonic()
             with self.guard:
                 odom,stamp,frame = self.odom,self.odom_stamp,self.odom_frame
                 command = self.final_command
-                fresh = now-self.odom_time<=self.p['sensor_timeout'] and now-self.command_time<=.3
-            valid = (fresh and odom and frame
-                     and all(math.isfinite(v) and abs(v)<=1e-5 for v in command))
+                odom_age, command_age = now-self.odom_time, now-self.command_time
+            clock = self.get_clock().now().nanoseconds*1e-9
+            capture_age = clock-stamp
+            fault = (('Odometry pose or frame is missing', 'stationary_odom_missing') if not odom or not frame else
+                ('Odometry reception is stale', 'stationary_odom_stale') if not 0<=odom_age<=self.p['sensor_timeout'] else
+                ('Odometry capture time is stale or in the future', 'stationary_odom_capture_stale') if not 0<=capture_age<=window.max_gap else
+                ('Final velocity command is stale', 'stationary_command_stale') if not 0<=command_age<=.3 else
+                ('Final velocity command is nonzero or invalid', 'stationary_command_nonzero')
+                    if not all(math.isfinite(v) and abs(v)<=1e-5 for v in command) else None)
+            valid = fault is None
             if valid:
                 # Duplicate stamps cannot extend the hold. Position and yaw
                 # spans independently reject falsely reported zero twist.
                 window.add(stamp,odom[0],odom[1],odom[2],odom[3],odom[4],frame)
             else:
                 window.reset()
-            check = window.evaluate(self.get_clock().now().nanoseconds*1e-9)
+            check = window.evaluate(clock)
+            if fault:
+                check.update(reason=fault[0], reason_code=fault[1])
+            else:
+                check['reason_code'] = {
+                    'Mean linear speed is too high': 'stationary_linear_speed',
+                    'Mean angular speed is too high': 'stationary_angular_speed',
+                    'Position is still drifting': 'stationary_position_span',
+                    'Heading is still drifting': 'stationary_heading_span',
+                }.get(check['reason'], 'stationary_verified' if check['verified'] else 'stationary_window_incomplete')
+            finite = lambda value: value if math.isfinite(value) else None
+            check.update(odom_receipt_age=finite(odom_age), odom_capture_age=finite(capture_age),
+                         command_age=finite(command_age), final_command=[finite(v) for v in command])
             with self.guard:
                 self.status['stationary_check'] = check
             if valid and check['verified']:
@@ -628,6 +657,10 @@ class NavigationSupervisor(Node):
                 self.status['locked'] = True
             status = GoalStatus.STATUS_ABORTED
             detail = 'Raw navigation terminal was not confirmed' if not confirmed else 'Actual stationary stop was not verified'
+            if confirmed:
+                check_reason = self.status.get('stationary_check', {}).get('reason')
+                if check_reason:
+                    detail += ': '+check_reason
             reason = (reason or 'Navigation failed')+'; '+detail+'; navigation locked'
         elif status==GoalStatus.STATUS_SUCCEEDED and not self.reached_goal(outer.request):
             status = GoalStatus.STATUS_ABORTED

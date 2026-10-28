@@ -236,3 +236,143 @@ def test_best_same_map_posterior_survives_worse_frames_and_temporary_loss():
     assert reported[0][0]['stamp']==10. and reported[0][1]=='approximate'
     m.planner.grid[0,0]=100
     assert not m.report_best_target()  # a changed coordinate/map context invalidates it
+
+
+def navigation_mission(state='SEARCHING',accepted=True,pending=False):
+    m=mission();del m.cancel
+    m.state=state;m.goal_serial=9;m.goal_pending=pending
+    m.goal_pending_serial=9 if pending else None
+    m.goal_handle_serial=9 if accepted else None
+    m.raw_cancels=[]
+    m.goal_handle=(NS(goal_id=NS(uuid=bytes(range(16))),
+        cancel_goal_async=lambda:m.raw_cancels.append(True)) if accepted else None)
+    m.navigation_status={};m.navigation_lock_reason=None
+    m.goal_requested_stamp=10.;m.cancel_next=None;m.reason='Following route'
+    m.p={'cancel_timeout':10.};m.goal_kind='search';m.goal_started=time.monotonic()
+    m.index=0;m.failures=[];m.failed_options=set();m.current_option=0
+    m.heartbeat=lambda *args:None;m.persist=lambda:None
+    m.summary=lambda:dict(state=m.state,reason=m.reason)
+    m.result_pub=NS(publish=lambda _:None)
+    m.set_state=lambda state,reason:(setattr(m,'state',state),setattr(m,'reason',reason))
+    m.next_viewpoint=lambda:pytest.fail('Safety lock/rejection must not advance the route')
+    return m
+
+
+def navigation_message(**changes):
+    event=dict(stamp=10.5,goal_id=bytes(range(16)).hex(),recovery_count=0,
+        stage='FAILED',locked=True,reason='Actual stationary stop was not verified; navigation locked')
+    event.update(changes)
+    return NS(data=json.dumps(event))
+
+
+@pytest.mark.parametrize('state',['WAITING','STOPPED'])
+def test_fresh_global_lock_is_latched_without_handle_and_blocks_start(state):
+    m=navigation_mission(state,accepted=False)
+    m.on_navigation_status(navigation_message(goal_id='ff'*16))
+    assert 'Actual stationary stop was not verified' in m.navigation_lock_reason
+    assert m.plan_cancel.is_set() and m.state==state
+    assert m.readiness_error()==m.navigation_lock_reason
+    response=NS(success=False,message='')
+    assert not m.start(NS(),response).success
+    assert response.message==m.navigation_lock_reason
+    m.on_navigation_status(navigation_message(locked=False,stage='IDLE',reason='Ready'))
+    assert m.readiness_error()==response.message  # No heartbeat clears a lockout.
+
+
+@pytest.mark.parametrize('changes',[
+    {'stamp':8.},{'stamp':12.},{'stamp':math.nan},{'goal_id':'not-a-goal'},
+    {'recovery_count':True},{'reason':None},{'locked':'true'},
+])
+def test_invalid_or_stale_global_status_cannot_latch_lock(changes):
+    m=navigation_mission('WAITING',accepted=False)
+    m.on_navigation_status(navigation_message(**changes))
+    assert m.navigation_lock_reason is None and not m.plan_cancel.is_set()
+
+
+def test_global_lock_cancels_active_goal_until_terminal_without_counting_failed_views(monkeypatch):
+    m=navigation_mission()
+    m.on_navigation_status(navigation_message())
+    assert m.state=='CANCELING' and m.cancel_next=='FAILED' and m.raw_cancels==[True]
+    deadline=m.cancel_deadline
+    m.on_navigation_status(navigation_message())
+    assert m.cancel_deadline==deadline and m.raw_cancels==[True]
+    m.goal_result(NS(result=lambda:NS(status=6)),9)
+    assert m.state=='STOPPED' and m.goal_handle is None
+    assert m.internal_error==m.termination_reason==m.navigation_lock_reason
+    assert m.failures==[] and m.failed_options==set() and m.index==0
+
+
+def test_operator_stop_remains_primary_when_locked_diagnostic_arrives_during_cancel():
+    m=navigation_mission()
+    m.stop(NS(),NS())
+    deadline=m.cancel_deadline
+    m.on_navigation_status(navigation_message())
+    assert m.cancel_next=='STOPPED' and m.reason=='Stop requested' and m.cancel_deadline==deadline
+    m.goal_result(NS(result=lambda:NS(status=6)),9)
+    assert m.state=='STOPPED' and m.reason=='Stop requested'
+    assert m.navigation_lock_reason and m.failures==[]
+
+
+@pytest.mark.parametrize('kind',['search','acquire','home'])
+def test_public_rejection_stops_once_without_consuming_viewpoints_or_retrying(kind):
+    m=navigation_mission(accepted=False,pending=True);m.goal_kind=kind
+    m.goal_response(NS(result=lambda:NS(accepted=False)),9)
+    assert m.state=='STOPPED' and not m.goal_pending
+    assert 'rejected the goal' in m.internal_error
+    assert m.failures==[] and m.failed_options==set() and m.index==0
+
+
+def test_rejection_during_operator_cancellation_preserves_stop_priority():
+    m=navigation_mission(accepted=False,pending=True)
+    m.stop(NS(),NS())
+    m.goal_response(NS(result=lambda:NS(accepted=False)),9)
+    assert m.state=='STOPPED' and m.reason=='Stop requested' and m.failures==[]
+
+
+def test_goal_request_transport_failure_during_stop_preserves_operator_reason():
+    m=navigation_mission(accepted=False,pending=True)
+    m.stop(NS(),NS())
+    def unavailable():raise RuntimeError('Action transport failed')
+    m.goal_response(NS(result=unavailable),9)
+    assert m.state=='STOPPED' and m.reason=='Stop requested' and m.failures==[]
+
+
+def test_lock_during_pending_acceptance_waits_for_late_handle_terminal_before_finishing():
+    from concurrent.futures import Future
+    m=navigation_mission(accepted=False,pending=True)
+    m.on_navigation_status(navigation_message())
+    assert m.state=='CANCELING' and m.goal_pending and m.cancel_next=='FAILED'
+    result=Future()
+    handle=NS(accepted=True,goal_id=NS(uuid=bytes(range(16))),get_result_async=lambda:result,
+        cancel_goal_async=lambda:m.raw_cancels.append(True))
+    m.goal_response(NS(result=lambda:handle),9)
+    assert m.state=='CANCELING' and m.goal_handle is handle and not m.goal_pending
+    assert m.raw_cancels==[True]
+    result.set_result(NS(status=5))
+    assert m.state=='STOPPED' and m.goal_handle is None and m.failures==[]
+    assert m.reason==m.navigation_lock_reason
+
+
+def test_cached_lock_prevents_direct_dispatch_and_goal_failure_replanning():
+    m=navigation_mission(accepted=False)
+    m.navigation_lock_reason='Navigation supervisor locked: cancellation unconfirmed'
+    m.send_goal(object(),'search')
+    assert m.state=='STOPPED' and m.index==0
+    m.goal_finished(False)
+    assert m.state=='STOPPED' and m.index==0 and m.failures==[]
+
+
+def test_accepted_navigation_failure_still_marks_only_its_viewpoint_when_not_locked():
+    m=navigation_mission(accepted=False)
+    selected=[];m.next_viewpoint=lambda:selected.append(True)
+    m.goal_finished(False)
+    assert m.failures==[0] and m.failed_options=={0} and m.index==1 and selected==[True]
+
+
+def test_mission_cancel_budget_covers_raw_cancel_and_actual_stationary_verification():
+    defaults=next(n.value for n in ast.walk(cls) if isinstance(n,ast.Assign)
+        and any(isinstance(t,ast.Attribute) and t.attr=='p' for t in n.targets))
+    values=defaults.args[1]
+    timeout=next(value for key,value in zip(values.keys,values.values)
+        if isinstance(key,ast.Constant) and key.value=='cancel_timeout')
+    assert ast.literal_eval(timeout)>=10.

@@ -253,7 +253,7 @@ class Mapper(Node):
         self.drive_pub.publish(Bool(data=False))
         if self.nav_handle or self.pending:
             self.state='CANCELING'
-            self.cancel_deadline=time.monotonic()+5
+            self.cancel_deadline=time.monotonic()+10
             if self.nav_handle:
                 self.nav_handle.cancel_goal_async()
         else:

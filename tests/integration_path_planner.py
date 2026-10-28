@@ -103,7 +103,9 @@ class PlannerTests(unittest.TestCase):
         for n in (self.fixture,self.node):self.executor.add_node(n)
         self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
         self.client=ActionClient(self.fixture,ComputePathToPose,'/compute_path_to_pose')
+        self.evaluation=ActionClient(self.fixture,ComputePathToPose,'/project/evaluate_path_to_pose')
         self.assertTrue(self.client.wait_for_server(timeout_sec=3))
+        self.assertTrue(self.evaluation.wait_for_server(timeout_sec=3))
         until(lambda:self.node.map is not None and self.node.raw.server_is_ready() and self.node.cost.service_is_ready())
 
     def tearDown(self):
@@ -111,13 +113,30 @@ class PlannerTests(unittest.TestCase):
         self.executor.shutdown(timeout_sec=3);self.thread.join(timeout=3)
         self.node.destroy_node();self.fixture.destroy_node();rclpy.shutdown()
 
-    def begin(self):
+    def begin(self,client=None):
         g=ComputePathToPose.Goal();g.use_start=True
         g.start.header.frame_id=g.goal.header.frame_id='map'
         g.start.pose.position.x=.5;g.start.pose.position.y=1.5
         g.goal.pose.position.x=2.5;g.goal.pose.position.y=1.5
         g.start.pose.orientation.w=g.goal.pose.orientation.w=1.
-        h=result(self.client.send_goal_async(g));self.assertTrue(h.accepted);return h
+        h=result((client or self.client).send_goal_async(g));self.assertTrue(h.accepted);return h
+
+    def test_candidate_evaluation_never_overwrites_active_plan(self):
+        h=self.begin();r=result(h.get_result_async())
+        self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED)
+        until(lambda:len(self.fixture.paths)==1)
+        active=self.fixture.paths[0]
+        answers=[result(self.begin(self.evaluation).get_result_async()) for _ in range(6)]
+        self.assertTrue(all(r.status==GoalStatus.STATUS_SUCCEEDED for r in answers))
+        time.sleep(.15)
+        self.assertEqual(self.fixture.paths,[active])
+
+    def test_candidate_evaluation_retains_collision_checks(self):
+        self.fixture.grid[:,30]=-1;self.fixture.publish_map()
+        until(lambda:self.node.map.data[30]==-1)
+        h=self.begin(self.evaluation);r=result(h.get_result_async())
+        self.assertEqual(r.status,GoalStatus.STATUS_ABORTED)
+        self.assertFalse(self.fixture.paths)
 
     def test_safe_native_route_is_forwarded(self):
         h=self.begin();r=result(h.get_result_async())
@@ -177,6 +196,22 @@ class PlannerTests(unittest.TestCase):
 
     def test_cancel_and_late_acceptance_never_publish_route(self):
         self.fixture.mode='late';h=self.begin()
+        until(lambda:any(c.future is not None for c in self.node.contexts.values()))
+        result(h.cancel_goal_async());r=result(h.get_result_async())
+        self.assertEqual(r.status,GoalStatus.STATUS_CANCELED)
+        until(lambda:self.fixture.active==0 and self.fixture.calls==1)
+        self.assertFalse(self.fixture.paths)
+        self.assertFalse(self.node.blocked)
+
+    def test_public_and_candidate_requests_share_one_serial_queue(self):
+        handles=[self.begin(self.evaluation if i%2 else self.client) for i in range(6)]
+        answers=[result(h.get_result_async()) for h in handles]
+        self.assertTrue(all(r.status==GoalStatus.STATUS_SUCCEEDED for r in answers))
+        self.assertEqual(self.fixture.maximum,1)
+        until(lambda:len(self.fixture.paths)==3)
+
+    def test_late_candidate_cancellation_is_confirmed_without_publishing(self):
+        self.fixture.mode='late';h=self.begin(self.evaluation)
         until(lambda:any(c.future is not None for c in self.node.contexts.values()))
         result(h.cancel_goal_async());r=result(h.get_result_async())
         self.assertEqual(r.status,GoalStatus.STATUS_CANCELED)

@@ -28,6 +28,7 @@ from .ros_utils import LATCHED, parameters, set_yaw
 
 @dataclass
 class PlanningRequest:
+    publish_plan: bool = True
     created: float = field(default_factory=time.monotonic)
     stop: threading.Event = field(default_factory=threading.Event)
     accepted: threading.Event = field(default_factory=threading.Event)
@@ -69,6 +70,13 @@ class PathPlanner(Node):
             execute_callback=self.execute,goal_callback=self.goal,
             cancel_callback=self.cancel,handle_accepted_callback=self.accepted,
             callback_group=self.group)
+        # Candidate scoring must use identical safety checks without repainting
+        # the route the robot is actually following.
+        self.evaluation_server=ActionServer(self,ComputePathToPose,'/project/evaluate_path_to_pose',
+            execute_callback=self.execute,goal_callback=self.goal,
+            cancel_callback=self.cancel,
+            handle_accepted_callback=lambda handle:self.accepted(handle,publish_plan=False),
+            callback_group=self.group)
         self.create_timer(.02,self.start_next,callback_group=self.group)
 
     def on_map(self,msg):
@@ -105,9 +113,9 @@ class PathPlanner(Node):
             self.count+=1
         return GoalResponse.ACCEPT
 
-    def accepted(self,handle):
+    def accepted(self,handle,publish_plan=True):
         with self.guard:
-            self.contexts[bytes(handle.goal_id.uuid)]=PlanningRequest()
+            self.contexts[bytes(handle.goal_id.uuid)]=PlanningRequest(publish_plan=publish_plan)
             self.queue.append(handle)
 
     def start_next(self):
@@ -238,8 +246,10 @@ class PathPlanner(Node):
                 result.path=path
                 result.planning_time.sec=int(elapsed)
                 result.planning_time.nanosec=int((elapsed-int(elapsed))*1e9)
-                self.publisher.publish(path)
-                handle.succeed();self.status(handle,'VALIDATED',reason,replaced=replaced)
+                visible=context is None or getattr(context,'publish_plan',True)
+                if visible:self.publisher.publish(path)
+                handle.succeed();self.status(handle,'VALIDATED',reason,replaced=replaced,
+                    purpose='navigation' if visible else 'candidate_evaluation')
         return result
 
     def execute(self,handle):
@@ -354,6 +364,7 @@ class PathPlanner(Node):
         for context in contexts:
             context.stop.set();self.cancel_raw(context)
         self.server.destroy()
+        self.evaluation_server.destroy()
         super().destroy_node()
 
 

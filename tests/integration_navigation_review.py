@@ -46,8 +46,8 @@ class ReviewBoundaries(unittest.TestCase):
     def setUp(self):
         rclpy.init();self.fixture=CoastingFixture()
         self.supervisor=NavigationSupervisor(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
-            goal_timeout=6.,translation_window=.35,translation_distance=.08,heading_window=.2,
-            stationary_seconds=.06,stationary_timeout=.8,sensor_timeout=.2,enable_grace=.5).items()])
+            goal_timeout=20.,translation_window=.35,translation_distance=.08,heading_window=.2,
+            stationary_seconds=2.,stationary_timeout=5.,sensor_timeout=.2,enable_grace=.5).items()])
         self.executor=MultiThreadedExecutor(num_threads=8)
         for n in (self.fixture,self.supervisor):self.executor.add_node(n)
         self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
@@ -89,10 +89,9 @@ class ReviewBoundaries(unittest.TestCase):
         self.assertIn('stationary',self.supervisor.status['reason'])
 
     def test_outer_success_waits_for_actual_pose_to_finish_coasting(self):
-        self.supervisor.p['stationary_timeout']=2.
         handle=self.begin('success_coast');answer=result(handle.get_result_async())
         self.assertEqual(answer.status,GoalStatus.STATUS_SUCCEEDED,self.supervisor.status)
-        self.assertGreater(time.monotonic()-self.fixture.raw_success,.65)
+        self.assertGreater(time.monotonic()-self.fixture.raw_success,2.)
         self.assertTrue(self.supervisor.status['stationary_check']['verified'])
         self.assertFalse(self.supervisor.blocked)
 

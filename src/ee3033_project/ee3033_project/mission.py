@@ -56,7 +56,7 @@ class Mission(Node):
             'observe_seconds': 3.0, 'min_observation_frames': 3,
             'search_linear_speed': 0.12, 'search_angular_speed': 0.4,
             'max_observation_retries': 2, 'goal_timeout': 75.0, 'mission_timeout': 900.0,
-            'cancel_timeout': 5.0, 'accept_timeout': 8.0, 'planning_timeout': 45.0,
+            'cancel_timeout': 10.0, 'accept_timeout': 8.0, 'planning_timeout': 45.0,
             'return_tolerance': 0.20, 'return_heading_required': False,
             'verify_seconds': 2.0, 'max_stationary_speed': 0.035,
             'max_stationary_angular_speed': 0.10, 'stationary_position_span': 0.05,
@@ -119,6 +119,7 @@ class Mission(Node):
         self.goal_translation = False
         self.navigation_recoveries = []
         self.navigation_status = {}
+        self.navigation_lock_reason = None
         self.navigation_recovery_seen = set()
         self.goal_requested_stamp = 0.
         self.localization_motion_log = []
@@ -169,7 +170,7 @@ class Mission(Node):
         self.tf = Buffer(cache_time=Duration(seconds=20))
         self.listener = TransformListener(self.tf, self)
         self.nav = ActionClient(self, NavigateToPose, '/navigate_to_pose')
-        self.path_nav = ActionClient(self, ComputePathToPose, '/compute_path_to_pose')
+        self.path_nav = ActionClient(self, ComputePathToPose, '/project/evaluate_path_to_pose')
         self.navigation_map = NavigationCostmap(self)
         self.pending_navigation = None
         self.enable_pub = self.create_publisher(Bool, '/project/drive_enabled', LATCHED)
@@ -312,6 +313,8 @@ class Mission(Node):
 
     def readiness_error(self, require_perception=True):
         now = time.monotonic()
+        if getattr(self,'navigation_lock_reason',None):
+            return self.navigation_lock_reason
         if self.map is None:
             return 'No saved map received'
         if self.state not in self.ACTIVE and not self.navigation_map.fresh(now):
@@ -352,6 +355,9 @@ class Mission(Node):
         del request
         if self.state in self.ACTIVE or self.goal_pending or self.goal_handle is not None:
             response.message = 'A mission or navigation cancellation is still active'
+            return response
+        if getattr(self,'navigation_lock_reason',None):
+            response.message = self.navigation_lock_reason
             return response
         if self.plan_future is not None and not self.plan_future.done():
             response.message = 'Previous search planning is still stopping'
@@ -478,6 +484,9 @@ class Mission(Node):
             getattr(self, action)(*args)
 
     def send_goal(self, pose, kind, retry=False):
+        if getattr(self,'navigation_lock_reason',None):
+            self.cancel('FAILED',self.navigation_lock_reason)
+            return
         if self.goal_pending or self.goal_handle is not None:
             self.finish('FAILED', 'Refused overlapping navigation goals')
             return
@@ -546,7 +555,10 @@ class Mission(Node):
                 self.goal_pending = False
                 self.goal_pending_serial = None
             if serial == self.goal_serial:
-                self.finish('FAILED', 'Nav2 goal request failed: '+str(exc))
+                if self.state=='CANCELING':
+                    self.after_cancel()
+                else:
+                    self.finish('FAILED', 'Nav2 goal request failed: '+str(exc))
             return
         if handle.accepted:
             # A stale response must never overwrite a newer accepted goal.
@@ -568,7 +580,10 @@ class Mission(Node):
             if self.state == 'CANCELING':
                 self.after_cancel()
             else:
-                self.goal_finished(False)
+                # Public rejection means no navigation attempt was accepted.
+                # It may be busy/locked, and says nothing about this viewpoint's
+                # reachability. Never consume the route by retrying every view.
+                self.cancel('FAILED','Navigation supervisor rejected the goal; inspect navigation readiness before restarting')
         elif self.state not in ('SEARCHING', 'RETURNING', 'ACQUIRING'):
             handle.cancel_goal_async()
 
@@ -593,6 +608,9 @@ class Mission(Node):
         self.goal_finished(success)
 
     def goal_finished(self, success):
+        if getattr(self,'navigation_lock_reason',None):
+            self.cancel('FAILED',self.navigation_lock_reason)
+            return
         if self.goal_kind == 'acquire':
             self.heartbeat(False, True)
             self.view_frames.clear()
@@ -934,21 +952,39 @@ class Mission(Node):
         self.cancel('GOAL_FAILED',reason)
 
     def on_navigation_status(self,msg):
-        """Consume only this accepted goal's fresh, mission-local diagnostics."""
-        if self.state not in ('SEARCHING','RETURNING','ACQUIRING') or self.goal_handle is None:
-            return
+        """Latch global safety lockout; scope ordinary diagnostics to this goal."""
         try:
             data=json.loads(msg.data)
             stamp=float(data['stamp'])
             now=self.get_clock().now().nanoseconds*1e-9
-            expected=bytes(self.goal_handle.goal_id.uuid).hex()
             goal_id=str(data['goal_id']).replace('-','').lower()
-            if (not self.started_stamp or not math.isfinite(stamp) or not 0<=now-stamp<=2.
-                    or stamp<max(self.started_stamp,self.goal_requested_stamp)
-                    or goal_id!=expected or self.goal_handle_serial!=self.goal_serial):
+            if (not math.isfinite(stamp) or not 0<=now-stamp<=2.
+                    or len(goal_id)!=32 or any(c not in '0123456789abcdef' for c in goal_id)):
                 return
             count=data.get('recovery_count',0)
             if type(count) is not int or not 0<=count<=2:
+                return
+            if data.get('locked') is True:
+                reason=data.get('reason') or data.get('failure_reason')
+                if not isinstance(reason,str) or not reason.strip():return
+                previous=getattr(self,'navigation_lock_reason',None)
+                if previous is None or data.get('stage') in ('FAILED','CANCELED'):
+                    self.navigation_lock_reason='Navigation supervisor locked: '+reason
+                self.navigation_status=dict(data)
+                self.plan_cancel.set()
+                if self.state in self.ACTIVE:
+                    if self.state=='CANCELING' and self.cancel_next=='STOPPED':
+                        return  # Operator Stop remains the controlling transition.
+                    if self.state=='CANCELING' and self.cancel_next=='FAILED':
+                        self.reason=self.navigation_lock_reason
+                    else:
+                        self.cancel('FAILED',self.navigation_lock_reason)
+                return
+            if self.state not in ('SEARCHING','RETURNING','ACQUIRING') or self.goal_handle is None:
+                return
+            expected=bytes(self.goal_handle.goal_id.uuid).hex()
+            if (not self.started_stamp or stamp<max(self.started_stamp,self.goal_requested_stamp)
+                    or goal_id!=expected or self.goal_handle_serial!=self.goal_serial):
                 return
             self.navigation_status=dict(data)
             key=(goal_id,count)
@@ -1052,6 +1088,7 @@ class Mission(Node):
                 'bearing_progress':(self.current_target_estimate or {}).get('bearing_progress'),
                 'navigation_recoveries':self.navigation_recoveries,
                 'navigation_status':self.navigation_status,
+                'navigation_lock_reason':self.navigation_lock_reason,
                 'localization_motion_log':self.localization_motion_log,
                 'localization_diagnostics':self.frame_journal.summary() if self.frame_journal else None,
                 'latest_frame_diagnostic':self.latest_frame_diagnostic,
