@@ -1,0 +1,54 @@
+{
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "cause": "Soft EDT reserve was intersected with the physical-safe graph before component labeling, disconnecting doorways before any NavigateToPose dispatch.",
+  "change": "Fresh Nav2 mask and full physical footprint define connectivity; comfortable connected/frontier endpoints retain tiered preference. Missing/stale costmap cannot enable fallback. Exact requested XY/yaw preserved.",
+  "unchanged": [
+    "body radius and padding",
+    "occupied and unknown thresholds",
+    "safe_grid continuous sampling allowance",
+    "full-footprint path validation"
+  ],
+  "pure_regressions": {
+    "measured": {
+      "passed": 65,
+      "seconds": 1.28
+    },
+    "legacy": {
+      "passed": 65,
+      "seconds": 1.56
+    }
+  },
+  "native_mock_regressions": {
+    "mapping-retry": {
+      "passed": 5,
+      "seconds": 7.874,
+      "ros_domain_id": 155,
+      "container": "ee3033-navigation-integration",
+      "trace_archive": "validation/navigation_artifacts/clearance-fallback-mapping-retry.log.gz",
+      "trace_archive_sha256": "54652e19eca850be045d97c77ace7f14250a1be5b2d4b74aa9c2d318aff24204"
+    },
+    "waypoint": {
+      "passed": 6,
+      "seconds": 7.629,
+      "ros_domain_id": 156,
+      "container": "ee3033-navigation-integration",
+      "trace_archive": "validation/navigation_artifacts/clearance-fallback-waypoint.log.gz",
+      "trace_archive_sha256": "887170ab06b4f99fe15c5d2033b8f085df569b2a287c109134a59719661bdb34"
+    },
+    "mapping": {
+      "passed": 2,
+      "seconds": 4.284,
+      "ros_domain_id": 155,
+      "container": "ee3033-navigation-integration",
+      "trace_archive": "validation/navigation_artifacts/clearance-fallback-mapping.log.gz",
+      "trace_archive_sha256": "0e25b7042b7d225af634cff5aeeb2f37d26c457846251d8e861ebcdbec37585b"
+    }
+  },
+  "production_sha256": {
+    "src/ee3033_project/ee3033_project/frontiers.py": "177719d54c11a12f4072f693eb2e6372c3bf1b4da87a8aa8e4450f492449c7fb",
+    "src/ee3033_project/ee3033_project/waypoint.py": "57103aff2f31bdbfeaa73f6b1b8e95764b933b6110aa2417a37ef97add1909cd",
+    "src/ee3033_project/ee3033_project/mapper.py": "5ac1c41caef991ea9c755777a9146d84360c61f2673f6fd09cc038a6db53d953"
+  },
+  "physical_door28_native_repetitions": "Run separately by benchmark agent against production .0125 maps; not claimed by these mock action tests."
+}

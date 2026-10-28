@@ -167,8 +167,8 @@ def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline
 def test_fast_profile_synchronizes_both_stages_and_search_estimates():
     for phase in ('mapping', 'mission'):
         p = parameter_plan(PROFILES['fast'], phase)
-        assert p['controller_server']['FollowPath.rotate_to_heading_angular_vel'] == .55
-        assert p['project_velocity_gate']['max_angular'] == p['controller_server']['FollowPath.max_vel_theta'] == .60
+        assert p['controller_server']['FollowPath.rotate_to_heading_angular_vel'] == .60
+        assert p['project_velocity_gate']['max_angular'] == p['controller_server']['FollowPath.rotate_to_heading_angular_vel'] == .60
         if phase == 'mission':
             assert p['project_mission']['search_linear_speed'] == .16
 

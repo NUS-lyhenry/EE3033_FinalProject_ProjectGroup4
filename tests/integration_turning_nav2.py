@@ -34,6 +34,7 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from ee3033_project.console import Console
 from ee3033_project.ros_utils import LATCHED, set_yaw
 from ee3033_project.velocity_gate import VelocityGate
+from ee3033_project.motion_safety import FOOTPRINT_RADIUS
 
 
 def wait(future, seconds=15):
@@ -106,7 +107,7 @@ class Chassis(Node):
         if self.rear_blind:
             scan.ranges=[r if math.cos(scan.angle_min+i*scan.angle_increment)>=0 else float('nan')
                          for i,r in enumerate(scan.ranges)]
-        if self.close:scan.ranges[90]=.13
+        if self.close:scan.ranges[90]=FOOTPRINT_RADIUS-.02
         self.scan_pub.publish(scan)
         self.drive.publish(Bool(data=self.running))
         self.status.publish(String(data=json.dumps(dict(phase='mapping',state='WAITING',reason='Synthetic fixture',ready=True))))
@@ -118,8 +119,7 @@ def main():
     root=Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='group4_turning_') as tmp:
         config=yaml.safe_load((root/'src/ee3033_project/config/navigation.yaml').read_text())
-        # Speed up the stall regression; production retains its 18 s allowance.
-        config['controller_server']['ros__parameters']['progress_checker']['movement_time_allowance']=2.
+        # Exercise the original 18 s translation-only allowance, including turns.
         for name in ('local_costmap','global_costmap'):
             p=config[name][name]['ros__parameters']
             p['plugins']=['static_layer','inflation_layer']
@@ -151,7 +151,7 @@ def main():
                 assert client.wait_for_server(timeout_sec=10)
                 assert chassis.count_publishers('/cmd_vel')==0
                 for level,frozen,close,deadband,succeeds in [
-                        ('cautious',False,False,0.,False),('balanced',False,False,.08,True),
+                        ('cautious',False,False,0.,True),('balanced',False,False,.08,True),
                         ('bold',False,False,.08,True),('bold',True,False,.08,False),
                         ('bold',False,True,.08,False)]:
                     chassis.running=False;chassis.drive.publish(Bool(data=False));time.sleep(.15)
@@ -180,7 +180,7 @@ def main():
                         assert chassis.xyz==[0.,0.,2.]
                     print(f'PASS native turning: level={level} frozen={frozen} obstacle={close} status={result.status} pose={chassis.xyz}',flush=True)
                     handle=None
-                # Explicit fast trial updates the installed DWB/shim and gate.
+                # Explicit fast trial updates the installed DWB and gate.
                 chassis.close=chassis.frozen=False;chassis.deadband=.08
                 chassis.xyz=[0.,0.,2.];chassis.command=(0.,0.);chassis.commands=[]
                 req=Request(base+'/api/navigation',json.dumps({'profile':'fast'}).encode(),
@@ -193,17 +193,17 @@ def main():
                 chassis.running=False;chassis.drive.publish(Bool(data=False))
                 assert result.status==4 and max(abs(w) for v,w in chassis.commands)>.45
                 handle=None
-                # Home must finish without rotating to the path's final yaw.
+                # The original default checker requires the final path heading.
                 chassis.xyz=[0.,0.,0.];chassis.command=(0.,0.);chassis.commands=[]
-                goal.goal_checker_id='home_goal_checker'
-                for p in goal.path.poses:set_yaw(p.pose.orientation,2.8)
+                goal.goal_checker_id='goal_checker'
+                for p in goal.path.poses:set_yaw(p.pose.orientation,0.)
                 time.sleep(.3);chassis.running=True
                 handle=wait(client.send_goal_async(goal));assert handle.accepted
                 result=wait(handle.get_result_async(),20)
                 chassis.running=False;chassis.drive.publish(Bool(data=False))
                 assert result.status==4 and abs(chassis.xyz[2])<.4, chassis.xyz
                 handle=None
-                print('PASS: fast native turning, XY-only home, heading progress, stall abort and obstacle stop; no chassis output',flush=True)
+                print('PASS: fast native turning, original goal heading and translation progress, stall abort and obstacle stop; no chassis output',flush=True)
             finally:
                 chassis.running=False;chassis.drive.publish(Bool(data=False))
                 if handle:handle.cancel_goal_async()

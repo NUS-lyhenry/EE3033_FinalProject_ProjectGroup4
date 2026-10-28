@@ -210,22 +210,43 @@ by mapping/mission; pass `calibration_file:=...` to opt into a legacy profile.
 
 ## Navigation and mapping
 
-Automatic frontier selection, deferred-frontier retries, return and unique map
-saving retain the existing mapper algorithm. Occupied/unknown space still
-bounds reachable goals. The rotation shim/DWB controller now tolerates modest
-path-heading changes before choosing an in-place turn (0.70 rad entry,
-0.35 rad exit). Heading-aware progress, bounded recovery, footprints, lidar
-self-mask, obstacle distances, command deadlines and heartbeat checks remain.
+The default follower subclasses Humble Regulated Pure Pursuit (RPP), without a
+rotation shim. A thin adapter preserves the 0.8 rad/s² command-space turn ramp
+when measured angular velocity remains below a motor deadband. At the final
+heading, actual pose changes and queued-command delay determine when to brake;
+bounded corrections require an actual stationary hold. Actual TF/pose and all
+native collision checks remain authoritative. A single navigation supervisor owns cancellation, progress checks and at
+most two recovery rounds. `/navigate_to_pose` remains the public action; Nav2's
+five internal action endpoints are isolated under `/project/nav2_navigate_to_pose`.
+The planner proxy similarly retains `/compute_path_to_pose` and publishes only
+full-footprint-checked routes on `/plan`; unvalidated Navfn output is recorded
+separately on `/project/native_plan`. Unsafe routes may be replaced by a complete
+known-safe grid route, never by an unchecked straight connector.
+
+The final velocity gate preserves curvature when applying speed limits. The
+wheel-inclusive measured balancing chassis is 0.115 m long (forward) and
+0.18 m wide (across the wheels), conservatively enclosed by
+a 0.106801 m body circle plus 0.01 m padding. A map, TF and laser sweep check
+that entire envelope; blocking any motion component stops the whole command.
+Physical mapping defaults to 0.05 m cells (`mapping_resolution`); the isolated
+algorithm preview explicitly uses 0.0125 m. The global static costmap follows
+the loaded map resolution; the local costmap retains its own configured resolution.
+Existing saved maps retain their original resolution rather than inventing finer measurements. Unknown or
+stale geometry cannot authorize motion. Planning reserves remain separate from
+the physical footprint. `EE3033_ROBOT_GEOMETRY=legacy` explicitly retains the
+previous 0.14 m body model for stress comparisons; simulation, oracle and all
+ROS nodes record the selected profile. The DWB configuration is retained in
+`config/navigation_dwb.yaml` for explicit A/B diagnostics.
 
 Original speed is the default until the faster profile is physically validated:
 
-| Profile | Forward cap | Angular cap | Shim turn speed |
-|---|---:|---:|---:|
-| Original | 0.12 m/s | 0.40 rad/s | 0.35 rad/s |
-| Fast trial | 0.16 m/s | 0.60 rad/s | 0.55 rad/s |
+| Profile | Forward cap | Angular cap |
+|---|---:|---:|
+| Original | 0.12 m/s | 0.40 rad/s |
+| Fast trial | 0.16 m/s | 0.60 rad/s |
 
 Apply either while mapping is stopped or before mission Start. Live changes
-synchronize the gate, DWB/shim and mission cost estimates, verify readback and
+synchronize the gate, RPP and mission cost estimates, verify readback and
 roll back on failure. An unverified rollback locks driving. The selected profile
 is reused across owned stage loads in this console session; a console restart
 defaults to Original unless explicitly configured. Startup Spin limits follow
@@ -234,13 +255,18 @@ sliders do not claim to update an already configured Spin plugin.
 
 Clearance is independent of speed. Cautious/Balanced/Bold use centre-to-boundary
 reserves of 0.22/0.18/0.14 m; Bold remains the default clearance policy. Optional
-gap blocking adds 0.04 m reserve and uses a 0.18 m costmap radius. Without it the
-radius is 0.14 m; both include 0.01 m padding. These are planning estimates, not
+gap blocking uses a 0.17 m costmap radius for the measured chassis and adds
+the same 0.063199 m to the selected reserve. Without it the body radius is
+0.106801 m; both include 0.01 m padding. The legacy profile retains its original
+0.18/0.14 m radii and 0.04 m reserve. These are planning estimates, not
 a physical passage-width guarantee.
 
-Home uses an XY-only goal checker, avoiding an unnecessary final heading turn.
-Search viewpoints retain heading requirements. If `return_heading_required`
-is explicitly enabled, home uses the normal heading-aware checker instead.
+Ordinary, observation and home actions use explicit 0.12 m / 0.20 rad,
+0.10 m / 0.03 rad, and 0.12 m / unrestricted-yaw goal checkers respectively.
+The active behavior trees contain no nested recovery loops. The supervisor
+checks actual pose convergence and owns every recovery successor. Missing
+sensor, transform or localization evidence ends navigation without attempting
+recovery, including if it disappears during a reverse.
 
 Return verification retains the assigned position tolerance and a fresh
 two-second odometry window: mean absolute linear/angular speeds at most
@@ -483,15 +509,13 @@ and cannot prove visibility over low furniture or detect new unmapped occluders.
 
 ### Mapping corner recovery and capture-time TF
 
-When automatic mapping makes no translation progress, it cancels the old
-navigation action before selecting a short recovery goal in known-free space.
-Close to an obstacle it seeks greater clearance; in an open area it can split
-a complete safe-grid route into a short intermediate leg. Every direct
-connector includes the configured clearance and a half-cell-diagonal reserve,
-and must also fit the fresh Nav2 costmap. At most six recovery moves are allowed
-per mapping run, including return-to-start recovery. Nav2 and the existing
-velocity gate still control all movement. Unknown space, stale maps and Stop
-prevent recovery; unsuccessful return recovery saves a partial map.
+Translation progress requires 0.08 m over 12 s. Heading alignment must reduce
+its error; rotating indefinitely does not satisfy navigation progress. Recovery
+first cancels and confirms the previous action is terminal, verifies stationary
+odometry and zero final commands, refreshes planning, and only then permits a
+second, map-checked reverse attempt. Reverse remains capped at 0.20 m, 0.04 m/s
+and 8 s, including localization uncertainty. Stop prevents every successor.
+A retry never resets the outer action's absolute deadline.
 
 Image processing holds one frame for at most one inference period when its
 capture-time map transform has not arrived. It then retries that same frame,

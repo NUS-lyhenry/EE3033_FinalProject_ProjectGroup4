@@ -16,11 +16,12 @@ def generate_launch_description():
               'session_directory':'~/ee3033_results/assessment',
               'model':'/home/ros2_ws/weights/yolo26n.pt','software_version':'development',
               'calibration_file':'','calibration_directory':'~/ee3033_calibrations',
-              'calibration_port':'8780','navigation_profile':'original','vision_config':''}
+              'calibration_port':'8780','navigation_profile':'original','vision_config':'',
+              'mapping_resolution':'.05'}
     params={'manage_stages':True,'phase':'mapping'}
     for name in defaults:
         key='stage_'+name if name in ('base','lidar','camera') else name
-        kind=bool if name in ('allow_motion','base','lidar','camera') else int if name in ('port','calibration_port') else str
+        kind=bool if name in ('allow_motion','base','lidar','camera') else int if name in ('port','calibration_port') else float if name=='mapping_resolution' else str
         params[key]=ParameterValue(LaunchConfiguration(name),value_type=kind)
     return LaunchDescription([
         *[DeclareLaunchArgument(name,default_value=value) for name,value in defaults.items()],

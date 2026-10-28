@@ -1,0 +1,31 @@
+{
+  "release": "scan_20261028_e5958c8968",
+  "deployed": true,
+  "ui": "http://127.0.0.1:8765/#/workflow",
+  "scan_filter_readback": {
+    "success": true,
+    "value": 0.08,
+    "live_value": 0.08,
+    "available": true,
+    "synchronized": true,
+    "editable": true,
+    "requires_new_map": true,
+    "limits": {
+      "min": 0.0,
+      "max": 0.2,
+      "step": 0.005
+    },
+    "fault": null,
+    "message": "Applied, read back and saved. Rebuild the map to remove old obstacles."
+  },
+  "default_radius_m": 0.08,
+  "advanced_range_cm": [
+    0,
+    20
+  ],
+  "simulation_run": false,
+  "validation": "Static code review, Python AST/JavaScript syntax, source hash verification, robot install/import and actual parameter save/readback only; no navigation trial issued.",
+  "autonomous_start_issued": false,
+  "old_release_preserved": "navigation_20261028_a2abcc7c49",
+  "camera_and_maps_preserved": true
+}

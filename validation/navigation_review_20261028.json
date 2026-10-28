@@ -1,0 +1,29 @@
+{
+  "simulation_only": true,
+  "review": "Independent review of cancellation, terminal results and actual-pose stationary proof",
+  "fixed": [
+    "Abandoned raw acceptance remains cancelable after public timeout and lockout",
+    "Accepted action missing result or failed result transport never confirms a terminal",
+    "Stop blocks new dispatch and unconfirmed cancellations retain busy+blocked lock",
+    "Actual pose window >=.5 s with <=.01 m / .02 rad spans is required for stationary proof even if reported twist is zero",
+    "Public terminal follows confirmed raw completion and actual stop; settled goal tolerance is rechecked",
+    "Planner cancel token, absolute deadline, current map revision and final costmap freshness are checked atomically before route publication"
+  ],
+  "checks": {
+    "python_review_policy_path_validation": 36,
+    "native_supervisor": 8,
+    "native_path_planner": 9,
+    "native_review_boundaries": 3
+  },
+  "source_sha256": {
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "eb6241d32a0a0be643b9e4b4ee2c7e7aa09dd5255073d21be8199747afb930e2",
+    "src/ee3033_project/ee3033_project/path_planner.py": "755a097cf8c628d4d51594af58d124ffc25bf145db8d33d10f6e636aa37c2ad5"
+  },
+  "tests": [
+    "tests/test_navigation_review.py",
+    "tests/integration_navigation_review.py",
+    "tests/integration_navigation_supervisor.py",
+    "tests/integration_path_planner.py"
+  ],
+  "limitations": "No physical hardware validation; fixed/random/SLAM navigation matrix remains the parent task."
+}

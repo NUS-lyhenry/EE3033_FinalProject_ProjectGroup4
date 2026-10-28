@@ -1,0 +1,6 @@
+PASS native curvature-preserving output limit and known-map sweep
+PASS native offset laser collision stops both velocity components
+PASS native full footprint detects map obstacle beyond current centre
+PASS native bounded reverse uses known map despite absent rear returns
+PASS native unknown rear sweep denies reverse
+PASS native Stop clears complete final command

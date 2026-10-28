@@ -23,3 +23,7 @@
 .legend{flex-wrap:wrap}
 
 .simulation-layout{display:grid;grid-template-columns:1fr 1.2fr;gap:24px}.simulation-layout .buttons{margin-top:14px}.simulation-layout canvas{width:100%;height:auto;border:1px solid var(--line);border-radius:12px;touch-action:manipulation}.simulation-layout input{max-width:100%}@media(max-width:750px){.simulation-layout{grid-template-columns:1fr}}
+
+.dot.local-path{background:#d79727}.dot.travelled{background:#408ee0}#navigationStatus{flex-basis:100%}.legend{flex-wrap:wrap}
+
+.map-footer{flex-wrap:wrap}

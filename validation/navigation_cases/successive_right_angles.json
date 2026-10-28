@@ -1,0 +1,102 @@
+{
+  "case_id": "successive_right_angles",
+  "scenario": {
+    "version": 1,
+    "name": "successive_right_angles",
+    "seed": null,
+    "bounds": [
+      -0.6,
+      -0.6,
+      2.1,
+      1.6
+    ],
+    "walls": [
+      [
+        [
+          -0.6,
+          -0.6
+        ],
+        [
+          2.1,
+          -0.6
+        ]
+      ],
+      [
+        [
+          2.1,
+          -0.6
+        ],
+        [
+          2.1,
+          1.6
+        ]
+      ],
+      [
+        [
+          2.1,
+          1.6
+        ],
+        [
+          -0.6,
+          1.6
+        ]
+      ],
+      [
+        [
+          -0.6,
+          1.6
+        ],
+        [
+          -0.6,
+          -0.6
+        ]
+      ],
+      [
+        [
+          0.5,
+          -0.6
+        ],
+        [
+          0.5,
+          0.65
+        ]
+      ],
+      [
+        [
+          1.2,
+          0.15
+        ],
+        [
+          1.2,
+          1.6
+        ]
+      ]
+    ],
+    "start": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "target": [
+      1.7,
+      1.05,
+      0.0
+    ]
+  },
+  "start_pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "goal": [
+    1.7,
+    1.05,
+    1.5707963267948966
+  ],
+  "oracle": {
+    "reachable": true,
+    "radius": 0.15,
+    "resolution": 0.025
+  },
+  "provenance": "Explicit physical navigation regression fixture"
+}

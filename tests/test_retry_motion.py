@@ -24,7 +24,7 @@ def pose(x,y=0.,yaw=0.):
 
 def mission(goal,translation):
     m=NS(current_goal=goal,goal_kind='acquire',goal_translation=translation,
-         acquisition=SingleTarget(),pending_navigation=None,state='ACQUIRING',nav_progress=NS(phase='translation'))
+         acquisition=SingleTarget(),pending_navigation=None,state='ACQUIRING',navigation_status={'stage':'TRACKING'})
     for name in ('goal_requires_translation','update_localization_clock'):
         setattr(m,name,MethodType(namespace[name],m))
     m.acquisition.started=1.
@@ -40,7 +40,7 @@ def test_retry_keeps_original_translation_at_eleven_centimetres_and_excludes_tra
     clock=[0.];monkeypatch.setattr(time,'monotonic',lambda:clock[0])
     m.update_localization_clock();clock[0]=10.;m.update_localization_clock()
     assert m.acquisition.travel_seconds==10. and m.acquisition.active_seconds==0.
-    m.nav_progress.phase='heading';m.update_localization_clock()
+    m.navigation_status['stage']='FINAL_ALIGN';m.update_localization_clock()
     clock[0]=15.;m.update_localization_clock()
     assert m.acquisition.travel_seconds==10. and m.acquisition.active_seconds==5.
 

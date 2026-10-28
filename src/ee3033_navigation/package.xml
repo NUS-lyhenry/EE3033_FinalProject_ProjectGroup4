@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ee3033_navigation</name>
+  <version>0.1.0</version>
+  <description>Thin Humble RPP adapter with a bounded command-space rotation ramp.</description>
+  <maintainer email="group4@example.invalid">EE3033 Project Group 4</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>nav2_core</depend>
+  <depend>nav2_util</depend>
+  <depend>nav2_regulated_pure_pursuit_controller</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>pluginlib</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+    <nav2_core plugin="${prefix}/regulated_path_follower.xml" />
+  </export>
+</package>

@@ -40,7 +40,7 @@ def console(tmp_path):
         state=dict(state='COMPLETE',ready=True,started_stamp=10.,home=[0,0,0],target={'x':1}),
         selected_map={'id':'room/map.yaml'},stage=NS(process=object(),loading=False),
         freshness={'Mission':time.monotonic()},initial_pose_sent=True,
-        trial_fault=None,gap_fault=None,workflow_fault=None,retry_after_stamp=-math.inf,
+        trial_fault=None,gap_fault=None,workflow_fault=None,scan_filter_fault=None,retry_after_stamp=-math.inf,
         result_data={'old':True},target_estimate={'x':1},route=[1],path=[1],events=deque(),
         lock=threading.RLock(),control_generation=2,status_after=0.,map_revision=1,
         get_clock=lambda:NS(now=lambda:NS(nanoseconds=20_000_000_000)))

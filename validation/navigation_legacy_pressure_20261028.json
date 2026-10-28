@@ -1,0 +1,294 @@
+{
+  "scope": "Legacy geometry algorithm stress regression; does not certify incomplete SLAM/random acceptance",
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "merged": false,
+  "passed": true,
+  "complete": true,
+  "source_versions": 1,
+  "expected_runs": 20,
+  "completed_runs": 20,
+  "geometry": {
+    "name": "legacy",
+    "model": "original conservative circular stress envelope",
+    "length": null,
+    "width": 0.2,
+    "physical_radius": 0.14,
+    "padding": 0.01,
+    "footprint_radius": 0.15
+  },
+  "source_sha256": {
+    "scripts/simulation_robot.py": "2747815f5d8f68222c90fa97da119374a85dd5bc5b3bcd7d47880686249be03c",
+    "scripts/simulation_motion.py": "c679741f9a1012a8a8450e89385a0bb0edf158f516d383469e60c101f0f989f3",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97",
+    "src/ee3033_project/ee3033_project/navigation_supervision.py": "f902ca3cc40d79a786b5be75f613f8f7ff5effb1acab6d1d24a4959dbf072751",
+    "src/ee3033_project/ee3033_project/path_planner.py": "755a097cf8c628d4d51594af58d124ffc25bf145db8d33d10f6e636aa37c2ad5",
+    "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2",
+    "src/ee3033_project/ee3033_project/velocity_gate.py": "c6647799633331190b041ac60c3ed13e24f551c6dce05e46b826cdde32173873",
+    "src/ee3033_project/ee3033_project/motion_safety.py": "b0598558a241f37d269c2929be77928fbdd77eb50026392b041646c46e46ab7a",
+    "src/ee3033_project/ee3033_project/mapper.py": "5ac1c41caef991ea9c755777a9146d84360c61f2673f6fd09cc038a6db53d953",
+    "src/ee3033_project/ee3033_project/mission.py": "b00aa54c69be25d8c147106f13726267f93039418999b16018999024cb6e2f71",
+    "src/ee3033_project/ee3033_project/frontiers.py": "177719d54c11a12f4072f693eb2e6372c3bf1b4da87a8aa8e4450f492449c7fb",
+    "src/ee3033_project/ee3033_project/waypoint.py": "57103aff2f31bdbfeaa73f6b1b8e95764b933b6110aa2417a37ef97add1909cd",
+    "src/ee3033_project/ee3033_project/navigation_costmap.py": "3688e7faf91f49e12478e4f320ce823ce284661cb99f53e2effedcafcd06668f",
+    "src/ee3033_project/ee3033_project/trial.py": "1da9bf40f9922996fb6d7c7671e07cdddaa1eb09839a220000918844ac77d778",
+    "src/ee3033_project/ee3033_project/gap.py": "5bf25f183b1bc67e888eb2843e985477b6448a8cf59fdde7fde9f824902229c1",
+    "src/ee3033_project/ee3033_project/robot_geometry.py": "ac0a4040515248916ed7b5b4d377aa464a0d67fe032becce7a521e695fd94e47",
+    "src/ee3033_project/config/slam.yaml": "8bc429af86ea0d0fbb4a442832e87407b3fe326b292abee18a8177e9453643b8",
+    "src/ee3033_project/launch/navigation.launch.py": "1ff3e5c124d7b995e2de185c85b23fec9483f657ed85cfcc535e7018f43178f9",
+    "src/ee3033_navigation/src/regulated_path_follower.cpp": "8b149873748c5d3b51063a927a14b7ff1862d3c80c9e3635b23a8621498d2359"
+  },
+  "controller_library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+  "source_config_sha256": "c51aa5f23d7fb6449261991e2b0b320ae1070fa5f9301bc68b7c7b269ecc87ad",
+  "runtime_configuration_sha256": "ea179d76eb6c152a84adf0106e6e955e20aa2c7ee11902a7d52dfe19b0854e0e",
+  "cases": {
+    "legacy95": {
+      "repetitions": 5,
+      "all_arrived": true,
+      "collision_rejections": 0,
+      "seconds": [
+        17.298,
+        17.471,
+        17.248,
+        19.302,
+        17.693
+      ],
+      "max_final_distance": 0.11736930719738597,
+      "max_final_heading_error": 0.017066386451400684,
+      "start_modes": [
+        "stalled"
+      ],
+      "starts": [
+        [
+          0.4467404978,
+          0.456814634,
+          0.6804786474
+        ]
+      ],
+      "goals": [
+        [
+          0.95,
+          0.85,
+          0.7
+        ]
+      ]
+    },
+    "successive_right_angles": {
+      "repetitions": 5,
+      "all_arrived": true,
+      "collision_rejections": 0,
+      "seconds": [
+        44.711,
+        46.216,
+        45.911,
+        46.724,
+        47.162
+      ],
+      "max_final_distance": 0.11629725901644099,
+      "max_final_heading_error": 0.024049719075164067,
+      "start_modes": [
+        "origin"
+      ],
+      "starts": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "goals": [
+        [
+          1.7,
+          1.05,
+          1.5707963267948966
+        ]
+      ]
+    },
+    "seed102_live": {
+      "repetitions": 5,
+      "all_arrived": true,
+      "collision_rejections": 0,
+      "seconds": [
+        38.282,
+        38.263,
+        36.429,
+        36.398,
+        38.346
+      ],
+      "max_final_distance": 0.11805000112147258,
+      "max_final_heading_error": 0.019959363082837852,
+      "start_modes": [
+        "stalled"
+      ],
+      "starts": [
+        [
+          0.5379702518903241,
+          -0.27937775950876004,
+          0.7591393678951465
+        ]
+      ],
+      "goals": [
+        [
+          2.99,
+          -0.29,
+          1.5707963267948966
+        ]
+      ]
+    },
+    "tight_passage": {
+      "repetitions": 5,
+      "all_arrived": true,
+      "collision_rejections": 0,
+      "seconds": [
+        22.603,
+        23.103,
+        20.76,
+        23.097,
+        21.076
+      ],
+      "max_final_distance": 0.1185262135172066,
+      "max_final_heading_error": 0.0006736737014242659,
+      "start_modes": [
+        "origin"
+      ],
+      "starts": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "goals": [
+        [
+          1.5,
+          0.0,
+          0.0
+        ]
+      ]
+    }
+  },
+  "artifact_root": "/Users/lyhenry/Library/CloudStorage/OneDrive-NationalUniversityofSingapore/University/Y3S1/.navigation-acceptance/20261028/final-v3",
+  "aggregate": "legacy-aggregate/acceptance_matrix.json",
+  "records": [
+    {
+      "case_id": "legacy95",
+      "repetition": 0,
+      "artifact": "/acceptance/final-v3/legacy-0/legacy95/0_known_waypoint",
+      "result_sha256": "992fce799eefe7323b9c6683c09380ea94ffaed30fc6ed2a4be06ec10db1c385"
+    },
+    {
+      "case_id": "legacy95",
+      "repetition": 1,
+      "artifact": "/acceptance/final-v3/legacy-0/legacy95/1_known_waypoint",
+      "result_sha256": "f60042357cdd50ba68d66e49c838492581ca4c90a8d63fb9e58b831599152e3d"
+    },
+    {
+      "case_id": "legacy95",
+      "repetition": 2,
+      "artifact": "/acceptance/final-v3/legacy-0/legacy95/2_known_waypoint",
+      "result_sha256": "87334d30835d22ad447eac44709b98bb064c47e4322e783a010466b268b48856"
+    },
+    {
+      "case_id": "legacy95",
+      "repetition": 3,
+      "artifact": "/acceptance/final-v3/legacy-0/legacy95/3_known_waypoint",
+      "result_sha256": "a53f3962b307a250906c30ab10645f34aa30faaf0f21b8a2452cb5213f52dfcc"
+    },
+    {
+      "case_id": "legacy95",
+      "repetition": 4,
+      "artifact": "/acceptance/final-v3/legacy-0/legacy95/4_known_waypoint",
+      "result_sha256": "9661f337e6306b3d18694c1f83dfc5a49feb9580fa47d8dc21f5c77ade6621a7"
+    },
+    {
+      "case_id": "successive_right_angles",
+      "repetition": 0,
+      "artifact": "/acceptance/final-v3/legacy-0/successive_right_angles/0_known_waypoint",
+      "result_sha256": "73d3cd10aef455891d3c763dfc56edc28038102e0ee9e7bb0564a1d83a5ed072"
+    },
+    {
+      "case_id": "successive_right_angles",
+      "repetition": 1,
+      "artifact": "/acceptance/final-v3/legacy-0/successive_right_angles/1_known_waypoint",
+      "result_sha256": "b6355f08a461acc25b6527007736bf1acbb5ef4da3b1b3db13c020eef37aaa59"
+    },
+    {
+      "case_id": "successive_right_angles",
+      "repetition": 2,
+      "artifact": "/acceptance/final-v3/legacy-0/successive_right_angles/2_known_waypoint",
+      "result_sha256": "325f8e9eb703c6d954b7d566f5afeee110a0fa942cbcc0f5a3ed373612117ce8"
+    },
+    {
+      "case_id": "successive_right_angles",
+      "repetition": 3,
+      "artifact": "/acceptance/final-v3/legacy-0/successive_right_angles/3_known_waypoint",
+      "result_sha256": "6d38b45c72eab6c4446cb38960740320e6b7c72d5c3ffa5bb41e1dc6cbe5f0ad"
+    },
+    {
+      "case_id": "successive_right_angles",
+      "repetition": 4,
+      "artifact": "/acceptance/final-v3/legacy-0/successive_right_angles/4_known_waypoint",
+      "result_sha256": "fe83f97ab31b24ad8b6171f18ff8b80513485d5b620883469af3f32f5ab3ddae"
+    },
+    {
+      "case_id": "seed102_live",
+      "repetition": 0,
+      "artifact": "/acceptance/final-v3/legacy-1/seed102_live/0_known_waypoint",
+      "result_sha256": "b5944ba1e6185f13bae43ca3927baefede300f6305f2cbf3fb71c3ed928cf592"
+    },
+    {
+      "case_id": "seed102_live",
+      "repetition": 1,
+      "artifact": "/acceptance/final-v3/legacy-1/seed102_live/1_known_waypoint",
+      "result_sha256": "3b2ec2fe6d9269c7dea7e7d3ebc36d13977970005d41d62d40769193a7975936"
+    },
+    {
+      "case_id": "seed102_live",
+      "repetition": 2,
+      "artifact": "/acceptance/final-v3/legacy-1/seed102_live/2_known_waypoint",
+      "result_sha256": "d9ac90684b83b2e1704e0e5b57f46ad63c28a1782a270576f76ffe6571883f97"
+    },
+    {
+      "case_id": "seed102_live",
+      "repetition": 3,
+      "artifact": "/acceptance/final-v3/legacy-1/seed102_live/3_known_waypoint",
+      "result_sha256": "21f2e1d05fa1fffcc0d025b1c4c32c53764c8b4d6cd82d3b9dcee2dd1a37187b"
+    },
+    {
+      "case_id": "seed102_live",
+      "repetition": 4,
+      "artifact": "/acceptance/final-v3/legacy-1/seed102_live/4_known_waypoint",
+      "result_sha256": "89b5747159589b38d0306ff03594269bac572338aed9c4d972446a487c9f58ae"
+    },
+    {
+      "case_id": "tight_passage",
+      "repetition": 0,
+      "artifact": "/acceptance/final-v3/legacy-1/tight_passage/0_known_waypoint",
+      "result_sha256": "094165ad07eec94d4285d95e8a6fcbfa8ae8e57fc72991692d6653334e2ce7b6"
+    },
+    {
+      "case_id": "tight_passage",
+      "repetition": 1,
+      "artifact": "/acceptance/final-v3/legacy-1/tight_passage/1_known_waypoint",
+      "result_sha256": "cbf992e729da1dccf96f239e03c5e3bf6e2bcd9ff1281d852ad9407d98679bf9"
+    },
+    {
+      "case_id": "tight_passage",
+      "repetition": 2,
+      "artifact": "/acceptance/final-v3/legacy-1/tight_passage/2_known_waypoint",
+      "result_sha256": "6aefe166cd97158cfab2dcb516842b57b2827746ff910f19a623b41bfa6256dc"
+    },
+    {
+      "case_id": "tight_passage",
+      "repetition": 3,
+      "artifact": "/acceptance/final-v3/legacy-1/tight_passage/3_known_waypoint",
+      "result_sha256": "d1efb228cb9ce3b1474cec872b2b170f9e14269870f508d926f46991dbbba779"
+    },
+    {
+      "case_id": "tight_passage",
+      "repetition": 4,
+      "artifact": "/acceptance/final-v3/legacy-1/tight_passage/4_known_waypoint",
+      "result_sha256": "ace24d949ba86ca56e58aff09c2e1874d874619a3c913e079e786159982a4c70"
+    }
+  ]
+}

@@ -6,5 +6,5 @@ source /opt/ros/humble/setup.bash
 source /home/ros2_ws/install/setup.bash
 mkdir -p "$project_ws"
 cd "$project_ws"
-colcon build --base-paths "$project_root/src" --symlink-install --packages-select ee3033_project
+colcon build --base-paths "$project_root/src" --symlink-install --packages-up-to ee3033_project
 printf '\nSource this overlay before launching:\nsource %s/install/setup.bash\n' "$project_ws"

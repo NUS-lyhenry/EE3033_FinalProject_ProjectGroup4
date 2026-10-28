@@ -1,0 +1,73 @@
+{
+  "robot": "balance6",
+  "release": "navigation_20261028_a2abcc7c49",
+  "status": "unresolved; awaiting measured body offsets and laser-plane self-structure, no live filtering or footprint change",
+  "start_was_accepted": true,
+  "nav2_nodes_active": true,
+  "navigation_goals_sent": 0,
+  "failure_reason": "No connected footprint-clear known space; use an open starting area",
+  "elapsed_seconds": 2.164344571000129,
+  "health": {
+    "Odometry": {
+      "age": 0.0,
+      "ok": true
+    },
+    "Battery": {
+      "age": 0.1,
+      "ok": true
+    },
+    "Lidar": {
+      "age": 0.1,
+      "ok": true
+    },
+    "Navigation": {
+      "age": 0.1,
+      "ok": true
+    },
+    "Mission": {
+      "age": 0.1,
+      "ok": true
+    },
+    "Map": {
+      "age": 0.7,
+      "ok": true
+    }
+  },
+  "map": {
+    "resolution": 0.0125,
+    "free_cells": 2143,
+    "occupied_cells": 55,
+    "unknown_cells": 66802
+  },
+  "current_footprint": {
+    "radius": 0.116801,
+    "occupied_cell_centres_inside": 3,
+    "safe_map_cells_total": 11
+  },
+  "scan": {
+    "frame": "laser",
+    "min_range_parameter": 0.0,
+    "nearest_observed_return_m": 0.041,
+    "declared_laser_to_base": {
+      "x": 0.002,
+      "y": 0,
+      "z": 0.1875,
+      "yaw": 0
+    }
+  },
+  "direction_check": {
+    "method": "User placed an object in the physically defined front; robot kept stopped; compare unchanged raw angle definitions before and after.",
+    "front_changed_beams": 61,
+    "front_bearing_degrees": 1.6107343878868514,
+    "front_range_median": 0.35600000619888306,
+    "front_baseline_range_median": 2.0889999866485596,
+    "user_confirmation": "User independently confirmed that front and back are not reversed.",
+    "motion_command_issued": false,
+    "scope": "Checks lidar-front mapping; motor forward direction was not tested by driving.",
+    "remaining_start_failure": "Current raw SLAM map labels occupied cells in the declared safety disc; near returns must not be erased without measured self-geometry.",
+    "unverified_geometry": "Total width and length do not establish body-front/body-rear offsets relative to base_footprint or the laser plane solid cross section."
+  },
+  "model_gap": "Measured total length .115 and width .18 do not establish a centred rectangle about base_footprint. Actual base-relative front/rear extents and laser-height self geometry have not been verified.",
+  "safety_action": "Stopped failed task through normal Stop API. Did not issue any movement, rotate TF, clear obstacles, invent free cells or shrink the physical boundary.",
+  "raw_local_evidence_directory": "/private/tmp/ee3033-robot-start-failure"
+}

@@ -1,0 +1,350 @@
+{
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "synthetic_detector": true,
+  "synthetic_chassis": true,
+  "main_controller": "ee3033_navigation/RegulatedPathFollower",
+  "swept_map_safety_enabled": true,
+  "controller_binary_sha256": "62a41eb3b930b09313607cd82ebc08b24b6d177c0bd85adab6577e257638a07c",
+  "test_scope": "Targeted real ROS perception/TF/mission/Nav2 regression; not the random-map acceptance matrix",
+  "cases": {
+    "near": {
+      "case": "near",
+      "passed": true,
+      "seconds": 24.91626192699914,
+      "synthetic_detector": true,
+      "synthetic_chassis": true,
+      "production_nodes": [
+        "Perception",
+        "Mission",
+        "TargetFilter",
+        "VelocityGate",
+        "Nav2"
+      ],
+      "ground_truth": [
+        0.45,
+        0.0
+      ],
+      "camera_height": 0.31,
+      "camera_pitch_degrees": 28.6,
+      "configured_min_range": 0.6,
+      "actual_displacement": 0.20487872969518706,
+      "localization_active_seconds": 17.62481507099983,
+      "localization_travel_seconds": 3.1918201110001974,
+      "reframe_attempts": 1,
+      "target": {
+        "x": 0.44998175357157755,
+        "y": -0.0016778466727746066,
+        "variance": 0.005015269278710405,
+        "class": "bottle",
+        "frame": "map",
+        "covariance": [
+          [
+            0.005015269278710405,
+            1.6341676232207404e-19
+          ],
+          [
+            6.640847930136328e-20,
+            0.005015269278710403
+          ]
+        ],
+        "posterior_mean": [
+          0.44998175357157755,
+          -0.0016778466727746066
+        ],
+        "projected": false,
+        "estimate_id": "ec1d6f8f9949:1793167434.877530575",
+        "estimator": "map-constrained MMSE",
+        "map_signature": "ec1d6f8f99498c96f5cbf9a9b2d089bbb02f13607d98e2a19b7d4782f9a88c6c",
+        "sigma": 0.07081856591819977,
+        "quality": "preferred_precision",
+        "preferred_sigma": 0.15,
+        "observation_stamp": 1793167434.8775306,
+        "geometry_conflict": false,
+        "confidence": 0.9,
+        "confirmation_frames": 4
+      },
+      "valid_floor_observations": 8,
+      "navigation_recoveries": [],
+      "motion_log": [
+        {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "goal": [
+            -0.3,
+            -3.524939260838437e-17,
+            -8.953568198998876e-18
+          ],
+          "translation": true,
+          "reason": "Move away to recover near/cropped target framing"
+        }
+      ],
+      "observation_frames": 201,
+      "code_version": "unspecified",
+      "nav2_log": "/tmp/near-rpp-regression/near.nav2.log"
+    },
+    "crop": {
+      "case": "crop",
+      "passed": true,
+      "seconds": 46.073518788998626,
+      "synthetic_detector": true,
+      "synthetic_chassis": true,
+      "production_nodes": [
+        "Perception",
+        "Mission",
+        "TargetFilter",
+        "VelocityGate",
+        "Nav2"
+      ],
+      "ground_truth": [
+        0.28,
+        0.0
+      ],
+      "camera_height": 0.8,
+      "camera_pitch_degrees": 28.6,
+      "configured_min_range": 0.6,
+      "actual_displacement": 0.4101723608977116,
+      "localization_active_seconds": 34.45182865199786,
+      "localization_travel_seconds": 5.966137767001783,
+      "reframe_attempts": 2,
+      "target": {
+        "x": 0.2800282462556729,
+        "y": 0.002075676631591113,
+        "variance": 0.0032450161879470437,
+        "class": "bottle",
+        "frame": "map",
+        "covariance": [
+          [
+            0.0032450161679925624,
+            -3.2080921587991875e-20
+          ],
+          [
+            -2.7792815771976745e-20,
+            0.0032450161879470437
+          ]
+        ],
+        "posterior_mean": [
+          0.2800282462556729,
+          0.002075676631591113
+        ],
+        "projected": false,
+        "estimate_id": "ec1d6f8f9949:1793167510.799555540",
+        "estimator": "map-constrained MMSE",
+        "map_signature": "ec1d6f8f99498c96f5cbf9a9b2d089bbb02f13607d98e2a19b7d4782f9a88c6c",
+        "sigma": 0.05696504356135475,
+        "quality": "preferred_precision",
+        "preferred_sigma": 0.15,
+        "observation_stamp": 1793167510.7995555,
+        "geometry_conflict": false,
+        "confidence": 0.9,
+        "confirmation_frames": 4
+      },
+      "valid_floor_observations": 9,
+      "navigation_recoveries": [],
+      "motion_log": [
+        {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "goal": [
+            -0.3,
+            -6.364751621991456e-17,
+            8.570684383943508e-17
+          ],
+          "translation": true,
+          "reason": "Move away to recover near/cropped target framing"
+        },
+        {
+          "origin": [
+            -0.20406703108412408,
+            0.015196431401726166,
+            -0.00702327425662499
+          ],
+          "goal": [
+            -0.5039004112244513,
+            0.025193638693067122,
+            -0.03333019505788888
+          ],
+          "translation": true,
+          "reason": "Move away to recover near/cropped target framing"
+        }
+      ],
+      "observation_frames": 447,
+      "code_version": "unspecified",
+      "nav2_log": "/tmp/crop-rpp-regression/crop.nav2.log"
+    },
+    "bearing": {
+      "case": "bearing",
+      "passed": true,
+      "seconds": 28.04064329599896,
+      "synthetic_detector": true,
+      "synthetic_chassis": true,
+      "production_nodes": [
+        "Perception",
+        "Mission",
+        "TargetFilter",
+        "VelocityGate",
+        "Nav2"
+      ],
+      "ground_truth": [
+        0.8,
+        0.0
+      ],
+      "camera_height": 0.31,
+      "camera_pitch_degrees": 28.6,
+      "configured_min_range": 0.35,
+      "actual_displacement": 0.30333406829692244,
+      "localization_active_seconds": 13.599586577000082,
+      "localization_travel_seconds": 3.77803669000059,
+      "reframe_attempts": 0,
+      "target": {
+        "x": 0.8005582395116964,
+        "y": 6.354066922434432e-06,
+        "variance": 0.009805504147906695,
+        "class": "bottle",
+        "frame": "map",
+        "covariance": [
+          [
+            0.009749239343227294,
+            -0.0003111231458801675
+          ],
+          [
+            -0.00031112314588016744,
+            0.008085110511886338
+          ]
+        ],
+        "posterior_mean": [
+          0.8005582395116964,
+          6.354066922434432e-06
+        ],
+        "projected": false,
+        "estimate_id": "ec1d6f8f9949:1793167554.562169075",
+        "estimator": "map-constrained MMSE",
+        "map_signature": "ec1d6f8f99498c96f5cbf9a9b2d089bbb02f13607d98e2a19b7d4782f9a88c6c",
+        "sigma": 0.09902274560880796,
+        "quality": "preferred_precision",
+        "preferred_sigma": 0.15,
+        "observation_stamp": 1793167554.562169,
+        "source": "bearing_intersection",
+        "source_frames": [
+          1793167538.5767248,
+          1793167538.6752384,
+          1793167538.7888083,
+          1793167538.8771596,
+          1793167538.9792147,
+          1793167539.076017,
+          1793167539.1770763,
+          1793167539.27527,
+          1793167539.3754008,
+          1793167539.4746687,
+          1793167539.5747056,
+          1793167539.6765535,
+          1793167554.257145,
+          1793167554.3549757,
+          1793167554.455276,
+          1793167554.562169
+        ],
+        "sites": 2,
+        "crossing_angle": 0.36543014346127367,
+        "baseline": 0.30333406829692244,
+        "geometry_conflict": false,
+        "confidence": 0.9,
+        "confirmation_frames": 16
+      },
+      "valid_floor_observations": 0,
+      "navigation_recoveries": [],
+      "motion_log": [
+        {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "goal": [
+            2.4492935982947065e-17,
+            0.4,
+            -0.4081491037550893
+          ],
+          "translation": true,
+          "reason": "Depth-free lateral baseline"
+        },
+        {
+          "origin": [
+            0.008043043794622624,
+            0.3032274170257033,
+            -0.4042352594876635
+          ],
+          "goal": [
+            0.008043043794622624,
+            0.3032274170257033,
+            -0.36530957612652054
+          ],
+          "translation": false,
+          "reason": "Center locked target"
+        }
+      ],
+      "observation_frames": 208,
+      "code_version": "unspecified",
+      "nav2_log": "/tmp/bearing-rpp-regression/bearing.nav2.log"
+    },
+    "occlusion": {
+      "case": "occlusion",
+      "passed": true,
+      "seconds": 14.62883840700124,
+      "real_nav2_path_points": 95,
+      "planner_startup_rejections": 0,
+      "goal_position_error": 0.09926313765487009,
+      "goal_heading_error": 0.017167065167833895,
+      "reachable_but_occluded": [
+        0.6,
+        0.0,
+        3.141592653589793
+      ],
+      "visible_alternative": [
+        -0.625,
+        0.27500000000000036,
+        -0.4825132950224774
+      ],
+      "actual_arrival": [
+        -0.5976321115597766,
+        0.17958422992286283,
+        -0.4653462298546435
+      ],
+      "no_visible_alternative_rejected": true,
+      "synthetic_chassis": true,
+      "code_version": "unspecified",
+      "nav2_log": "/tmp/occlusion-rpp-regression-strict/occlusion.nav2.log"
+    }
+  },
+  "retained_failures": [
+    {
+      "case": "occlusion",
+      "phase": "initial planning probe",
+      "details": {
+        "case": "occlusion",
+        "passed": false,
+        "error": "",
+        "nav2_log": "/tmp/occlusion-rpp-regression/occlusion.nav2.log"
+      },
+      "observed_failure": "Public ComputePathToPose request rejected before execution; original reject condition was not instrumented",
+      "subsequent_fixture_change": "Bounded startup acceptance wait with rejection count; strict observation .10 m/.03 rad assertions; production checks retained"
+    }
+  ],
+  "evidence_archive": "validation/navigation_artifacts/native-rpp-localization-evidence.tar.gz",
+  "evidence_archive_sha256": "446d2d53e9c12c8391bd797e4ce839b5abe0e44be2767dfb1bcb7be5194facd4",
+  "source_snapshot_after_runs_sha256": {
+    "src/ee3033_navigation/src/regulated_path_follower.cpp": "8ea620e5889e13db249c2769cf900301bc20ec1a7c885990cb2f2d3381971a99",
+    "src/ee3033_project/ee3033_project/perception.py": "092b01cce4a1c7b4c44fab97b3519f020832ac5a09e4b6d4a4b670e54cea2ae3",
+    "src/ee3033_project/ee3033_project/capture_frame.py": "6b18316ff3b54441ee356ba5ed1fdb87a0a79a285b146de8ff2de4d8d472f058",
+    "src/ee3033_project/ee3033_project/mission.py": "b00aa54c69be25d8c147106f13726267f93039418999b16018999024cb6e2f71",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "6eafbd9dc48dbb0ca70bc2f234c3c7f0d3b69e51ee9b95f2f6de8799de3bddee",
+    "src/ee3033_project/ee3033_project/path_planner.py": "44fa4c3caa92ff4a1ea9c05eb286acea80bffe8ebf86568688d4462b39d85fe6",
+    "src/ee3033_project/ee3033_project/velocity_gate.py": "3aea88cbdce6eecd967b93921786116ec5feba10cbacf0bedfad4ebe348a0dc3",
+    "src/ee3033_project/ee3033_project/motion_safety.py": "9b01ea139d6ac8490371a64c7811f58642a2e2a644857da7ac6710a0f00ccc53"
+  }
+}

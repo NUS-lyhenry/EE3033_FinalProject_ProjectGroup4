@@ -1,0 +1,13 @@
+test_client_cancel_waits_for_underlying_cancel (__main__.SupervisorTests) ... ok
+test_false_success_outside_goal_tolerance_is_refused (__main__.SupervisorTests) ... ok
+test_sensor_loss_cancels_without_attempting_recovery (__main__.SupervisorTests) ... ok
+test_stall_retries_then_bounded_reverse_without_overlapping_actions (__main__.SupervisorTests) ... ok
+test_stop_cancels_current_goal_without_successor (__main__.SupervisorTests) ... ok
+test_stop_during_late_raw_acceptance_cancels_without_new_goal (__main__.SupervisorTests) ... ok
+test_success_is_proxied_with_verified_pose (__main__.SupervisorTests) ... ok
+test_unreachable_goal_never_triggers_blind_reverse (__main__.SupervisorTests) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 11.319s
+
+OK

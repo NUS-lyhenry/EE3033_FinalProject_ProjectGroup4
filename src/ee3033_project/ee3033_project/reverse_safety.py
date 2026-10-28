@@ -1,10 +1,11 @@
 """Map-backed, uncertainty-inflated clearance for bounded recovery reversing."""
 import math
 import numpy as np
+from .motion_safety import FOOTPRINT_RADIUS, OCCUPIED_THRESHOLD
 
 
 def reverse_clearance(grid, resolution, origin, pose, covariance, distance=.24,
-                      radius=.15, reserve=.04):
+                      radius=FOOTPRINT_RADIUS, reserve=.04):
     """Return (allowed, reason, inflated radius); unknown space fails closed.
 
     The map is uninflated occupancy. Include every cell intersecting the swept
@@ -15,7 +16,7 @@ def reverse_clearance(grid, resolution, origin, pose, covariance, distance=.24,
         covariance=np.asarray(covariance,dtype=float)
         if (grid.ndim!=2 or covariance.shape!=(3,3) or resolution<=0
                 or not np.isfinite([resolution,*origin,*pose,distance,radius,reserve]).all()
-                or not np.isfinite(covariance).all() or distance<=0 or radius<=0 or reserve<0
+                or not np.isfinite(covariance).all() or distance<=0 or radius<FOOTPRINT_RADIUS or reserve<0
                 or not np.isfinite(grid).all() or np.any((grid < -1)|(grid > 100))):
             return False,'Invalid reverse geometry',None
         if not np.allclose(covariance,covariance.T) or np.linalg.eigvalsh(covariance).min() < -1e-9:
@@ -41,7 +42,7 @@ def reverse_clearance(grid, resolution, origin, pose, covariance, distance=.24,
             mask=((rows-row)**2+(cols-col)**2)*resolution**2<=cell_radius**2
             values=grid[r0:r1+1,c0:c1+1][mask]
             if np.any(values<0):return False,'Unknown space behind robot',envelope
-            if np.any(values>=65):return False,'Obstacle in reverse envelope',envelope
+            if np.any(values>=OCCUPIED_THRESHOLD):return False,'Obstacle in reverse envelope',envelope
         return True,'Mapped reverse corridor clear',envelope
     except (ValueError,TypeError,IndexError):
         return False,'Invalid reverse geometry',None

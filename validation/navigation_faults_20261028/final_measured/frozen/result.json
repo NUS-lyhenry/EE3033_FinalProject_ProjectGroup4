@@ -1,0 +1,48 @@
+{
+  "fault": "frozen",
+  "geometry": {
+    "profile": "measured",
+    "model": "conservative_circumscribed_circle",
+    "length": 0.18,
+    "width": 0.115,
+    "body_radius": 0.106801,
+    "padding": 0.01,
+    "footprint_radius": 0.116801,
+    "exact_circumradius": 0.10680004681646914,
+    "dimension_source": "wheel_inclusive_user_measurement",
+    "front_stop_distance": 0.186801,
+    "rotation_clearances": {
+      "cautious": 0.136801,
+      "balanced": 0.126801,
+      "bold": 0.116801
+    },
+    "selection_environment": "EE3033_ROBOT_GEOMETRY"
+  },
+  "passed": true,
+  "source_sha256": {
+    "src/ee3033_navigation/src/regulated_path_follower.cpp": "8b149873748c5d3b51063a927a14b7ff1862d3c80c9e3635b23a8621498d2359",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97",
+    "src/ee3033_project/ee3033_project/path_planner.py": "755a097cf8c628d4d51594af58d124ffc25bf145db8d33d10f6e636aa37c2ad5",
+    "src/ee3033_project/ee3033_project/velocity_gate.py": "c6647799633331190b041ac60c3ed13e24f551c6dce05e46b826cdde32173873"
+  },
+  "controller_library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+  "action_status": 6,
+  "recoveries": 2,
+  "reason": "Safe reverse unavailable or unsuccessful",
+  "collision_rejections": 0,
+  "pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "injected": true,
+  "terminal_after_fault": 33.63769221399889,
+  "terminal_command": [
+    0.0,
+    0.0
+  ],
+  "actual_velocity": [
+    0.0,
+    0.0
+  ]
+}

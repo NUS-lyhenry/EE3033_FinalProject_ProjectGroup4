@@ -1,0 +1,122 @@
+{
+  "geometry": {
+    "profile": "measured",
+    "model": "conservative_circumscribed_circle",
+    "length": 0.115,
+    "width": 0.18,
+    "body_radius": 0.106801,
+    "padding": 0.01,
+    "footprint_radius": 0.116801,
+    "exact_circumradius": 0.10680004681646914,
+    "dimension_source": "wheel_inclusive_user_measurement",
+    "front_stop_distance": 0.186801,
+    "rotation_clearances": {
+      "cautious": 0.136801,
+      "balanced": 0.126801,
+      "bold": 0.116801
+    },
+    "selection_environment": "EE3033_ROBOT_GEOMETRY"
+  },
+  "reserved_radius": 0.16999999999999998,
+  "disabled_plan": {
+    "global_costmap/global_costmap": {
+      "robot_radius": 0.106801
+    },
+    "local_costmap/local_costmap": {
+      "robot_radius": 0.106801
+    },
+    "project_mapper": {
+      "clearance": 0.14
+    },
+    "controller_server": {},
+    "project_velocity_gate": {
+      "rotation_clearance": 0.116801
+    }
+  },
+  "enabled_plan": {
+    "global_costmap/global_costmap": {
+      "robot_radius": 0.16999999999999998
+    },
+    "local_costmap/local_costmap": {
+      "robot_radius": 0.16999999999999998
+    },
+    "project_mapper": {
+      "clearance": 0.20319900000000002
+    },
+    "controller_server": {},
+    "project_velocity_gate": {
+      "rotation_clearance": 0.116801
+    }
+  },
+  "footprint": 0.116801,
+  "door28": {
+    "exact": true,
+    "chosen": [
+      1.5,
+      0.0,
+      0.0
+    ],
+    "error": null,
+    "physical_path": true,
+    "oracle": true,
+    "chosen_footprint_safe": true
+  },
+  "door28_without_native": {
+    "exact": false,
+    "chosen": null,
+    "error": null,
+    "physical_path": true,
+    "oracle": true,
+    "chosen_footprint_safe": true
+  },
+  "door28_coarse": {
+    "exact": false,
+    "chosen": null,
+    "error": null,
+    "physical_path": false,
+    "oracle": true,
+    "chosen_footprint_safe": true
+  },
+  "door28_medium": {
+    "exact": false,
+    "chosen": null,
+    "error": null,
+    "physical_path": false,
+    "oracle": true,
+    "chosen_footprint_safe": true
+  },
+  "door20": {
+    "exact": false,
+    "chosen": null,
+    "error": null,
+    "physical_path": false,
+    "oracle": false,
+    "chosen_footprint_safe": true
+  },
+  "unknown28": {
+    "exact": false,
+    "chosen": null,
+    "error": "No connected footprint-clear known space; use an open starting area",
+    "physical_path": false,
+    "oracle": true,
+    "chosen_footprint_safe": true
+  },
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "tests_passed": 7,
+  "source_sha256": {
+    "tests/test_navigation_clearance_boundaries.py": "6295945ff164307c0edb7b44d7b03a462ed1cf69862ef1ffa4d08ee9279a9107",
+    "src/ee3033_project/ee3033_project/frontiers.py": "177719d54c11a12f4072f693eb2e6372c3bf1b4da87a8aa8e4450f492449c7fb",
+    "src/ee3033_project/ee3033_project/waypoint.py": "57103aff2f31bdbfeaa73f6b1b8e95764b933b6110aa2417a37ef97add1909cd",
+    "src/ee3033_project/ee3033_project/robot_geometry.py": "ac0a4040515248916ed7b5b4d377aa464a0d67fe032becce7a521e695fd94e47",
+    "src/ee3033_project/ee3033_project/gap.py": "5bf25f183b1bc67e888eb2843e985477b6448a8cf59fdde7fde9f824902229c1",
+    "src/ee3033_project/ee3033_project/motion_safety.py": "b0598558a241f37d269c2929be77928fbdd77eb50026392b041646c46e46ab7a",
+    "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2"
+  },
+  "notes": [
+    "Positive .28 m uses original physical world rasterized directly at .0125 m, never upsampling a captured map.",
+    "Native corridor mask supplied in pure fixture is all known admissible; production freshness remains the caller responsibility.",
+    "Unknown cells and complete .116801 m circular swept footprint checks remain authoritative.",
+    "Width .18 m controls optional .17 m side reserve; width-length exchange leaves circumscribed circle unchanged."
+  ]
+}

@@ -308,7 +308,15 @@ def occlusion_scene(directory):
         path=ActionClient(chassis,ComputePathToPose,'/compute_path_to_pose');assert path.wait_for_server(timeout_sec=5)
         blocked_pose=(.6,0.,math.pi)
         goal=ComputePathToPose.Goal();goal.goal=make_goal(chassis,blocked_pose);goal.planner_id='GridBased'
-        h=wait(path.send_goal_async(goal));assert h.accepted
+        # The proxy can advertise its public action before its internal DDS
+        # discovery is complete. Wait boundedly for actual request acceptance.
+        planner_startup_rejections=0;ready_deadline=time.monotonic()+5.
+        while True:
+            h=wait(path.send_goal_async(goal))
+            if h.accepted:break
+            planner_startup_rejections+=1
+            assert time.monotonic()<ready_deadline,'Planner proxy remained unready after native lifecycle activation'
+            time.sleep(.1)
         result=wait(h.get_result_async(),10)
         assert result.status==4 and len(result.result.path.poses)>3,'No native route around divider'
         points=[p.pose.position for p in result.result.path.poses]
@@ -323,11 +331,15 @@ def occlusion_scene(directory):
         assert selected and selected[0]<.2 and observation_visibility(planner,selected,(-.1,0.)),selected
         nav=ActionClient(chassis,NavigateToPose,'/navigate_to_pose');assert nav.wait_for_server(timeout_sec=5)
         task=NavigateToPose.Goal();task.pose=make_goal(chassis,selected)
+        # This is an observation goal, with the actual .10 m/.03 rad checker.
         from ament_index_python.packages import get_package_share_directory
         task.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/'behavior_trees/navigate_observation.xml')
         chassis.running=True;handle=wait(nav.send_goal_async(task));assert handle.accepted
         answer=wait(handle.get_result_async(),60);handle=None
         assert answer.status==4,(answer.status,chassis.xyz,selected)
+        assert math.dist(chassis.xyz[:2],selected[:2])<=.10+1e-6,(chassis.xyz,selected)
+        yaw_error=abs(math.atan2(math.sin(chassis.xyz[2]-selected[2]),math.cos(chassis.xyz[2]-selected[2])))
+        assert yaw_error<=.03+1e-6,(chassis.xyz,selected,yaw_error)
         assert observation_visibility(planner,tuple(chassis.xyz),(-.1,0.))
         # Unknown-space endpoints/rays are not usable alternatives, even when
         # the base grid geometry would offer candidates in that direction.
@@ -339,7 +351,9 @@ def occlusion_scene(directory):
         assert none is None,none
         assert not observation_visibility(limited,(-.6,.4,0.),source_origin=(-.6,0.),bearing=0.)
         return dict(case='occlusion',passed=True,seconds=time.monotonic()-started,
-            real_nav2_path_points=len(result.result.path.poses),reachable_but_occluded=list(blocked_pose),
+            real_nav2_path_points=len(result.result.path.poses),planner_startup_rejections=planner_startup_rejections,
+            goal_position_error=math.dist(chassis.xyz[:2],selected[:2]),goal_heading_error=yaw_error,
+            reachable_but_occluded=list(blocked_pose),
             visible_alternative=list(selected),actual_arrival=list(chassis.xyz),
             no_visible_alternative_rejected=True,synthetic_chassis=True)
     finally:
@@ -411,7 +425,8 @@ def main():
         path=Path(tmp)/'nav.yaml';path.write_text(yaml.safe_dump(config))
         log=output.with_suffix('.nav2.log')
         with log.open('w') as stream:
-            proc=subprocess.Popen(['ros2','launch','ee3033_project','navigation.launch.py','nav_config:='+str(path)],
+            proc=subprocess.Popen(['ros2','launch','ee3033_project','navigation.launch.py','nav_config:='+str(path),
+                'final_command_topic:=/test/turn_output'],
                 stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
             try:
                 mission_directory=output.parent/(args.case+'-mission');mission_directory.mkdir(parents=True,exist_ok=True)

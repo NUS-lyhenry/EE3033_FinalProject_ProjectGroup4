@@ -84,5 +84,10 @@ project_velocity_gate:
     scan_timeout: 0.7
     max_linear: 0.12
     max_angular: 0.40
-    stop_distance: 0.22
-    rotation_clearance: 0.14
+    stop_distance: 0.186801
+    rotation_clearance: 0.116801
+    enforce_swept_map: true
+    swept_horizon: 1.0
+    braking_deceleration: 0.30
+    footprint_radius: 0.116801
+    reverse_radius: 0.116801

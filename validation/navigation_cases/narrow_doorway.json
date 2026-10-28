@@ -1,0 +1,102 @@
+{
+  "case_id": "narrow_doorway",
+  "scenario": {
+    "version": 1,
+    "name": "narrow_doorway",
+    "seed": null,
+    "bounds": [
+      -1.0,
+      -1.0,
+      2.0,
+      2.0
+    ],
+    "walls": [
+      [
+        [
+          -1.0,
+          -1.0
+        ],
+        [
+          2.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          -1.0
+        ],
+        [
+          2.0,
+          2.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          2.0
+        ],
+        [
+          -1.0,
+          2.0
+        ]
+      ],
+      [
+        [
+          -1.0,
+          2.0
+        ],
+        [
+          -1.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          0.7,
+          -1.0
+        ],
+        [
+          0.7,
+          -0.3
+        ]
+      ],
+      [
+        [
+          0.7,
+          0.3
+        ],
+        [
+          0.7,
+          2.0
+        ]
+      ]
+    ],
+    "start": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "target": [
+      1.5,
+      0.0,
+      0.0
+    ]
+  },
+  "start_pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "goal": [
+    1.5,
+    0.0,
+    0.0
+  ],
+  "oracle": {
+    "reachable": true,
+    "radius": 0.15,
+    "resolution": 0.025
+  },
+  "provenance": "Explicit physical navigation regression fixture"
+}

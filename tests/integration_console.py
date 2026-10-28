@@ -62,7 +62,9 @@ class ConsoleTests(unittest.TestCase):
         initial=dict(max_linear=.12,max_angular=.4,goal_timeout=75.)
         for key,value in parameter_plan(initial,'mission')['controller_server'].items():
             controller.declare_parameter(key,value)
-        nodes=(console,mission,gate,controller)
+        supervisor=Node('project_navigation_supervisor')
+        supervisor.declare_parameter('goal_timeout',75.)
+        nodes=(console,mission,gate,controller,supervisor)
         executor=MultiThreadedExecutor(num_threads=4)
         for node in nodes:executor.add_node(node)
         thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
@@ -106,6 +108,8 @@ class ConsoleTests(unittest.TestCase):
         initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.)
         for key,value in parameter_plan(initial)['controller_server'].items():
             controller.declare_parameter(key,value)
+        supervisor=Node('project_navigation_supervisor')
+        supervisor.declare_parameter('goal_timeout',60.)
         reject=[False]
         def accept(changes):
             if reject[0]:
@@ -115,7 +119,7 @@ class ConsoleTests(unittest.TestCase):
         controller.add_on_set_parameters_callback(accept)
         voltage=controller.create_publisher(Float32,'/power_voltage',10)
         executor=MultiThreadedExecutor(num_threads=4)
-        for node in (console,gate,mapper,controller):
+        for node in (console,gate,mapper,controller,supervisor):
             executor.add_node(node)
         thread=threading.Thread(target=executor.spin,daemon=True)
         thread.start()
@@ -138,7 +142,7 @@ class ConsoleTests(unittest.TestCase):
             time.sleep(.2)
             self.assertEqual(gate.p['max_linear'],.18)
             self.assertEqual(mapper.p['goal_timeout'],90.)
-            self.assertEqual(gate.p['rotation_clearance'],.14)
+            self.assertEqual(gate.p['rotation_clearance'],gap.TURNING['bold']['stop'])
             with self.assertRaises(HTTPError):
                 post({**changed,'max_linear':1.})
             # A rejection restores all nodes already updated, not just UI values.
@@ -168,7 +172,7 @@ class ConsoleTests(unittest.TestCase):
         finally:
             executor.shutdown(timeout_sec=3)
             thread.join(timeout=3)
-            for node in (console,gate,mapper,controller):
+            for node in (console,gate,mapper,controller,supervisor):
                 node.destroy_node()
             rclpy.shutdown()
 
@@ -199,7 +203,7 @@ class ConsoleTests(unittest.TestCase):
             for name in gap.COSTMAPS:
                 namespace,node_name=name.split('/')
                 node=Node(node_name,namespace=namespace)
-                for key,value in dict(robot_radius=.14,footprint='[]',footprint_padding=.01,resolution=.05,
+                for key,value in dict(robot_radius=gap.BASE_RADIUS,footprint='[]',footprint_padding=.01,resolution=.05,
                         **{'inflation_layer.enabled':True,'inflation_layer.inflation_radius':.24}).items():
                     node.declare_parameter(key,value)
                 costmaps.append(node)
@@ -244,12 +248,14 @@ class ConsoleTests(unittest.TestCase):
                         response=post(enabled,audacity=level)
                         self.assertEqual(response['audacity'],level)
                         self.assertTrue(response['synchronized'])
-                        self.assertAlmostEqual(consumer.get_parameter('clearance').value,clearance+(.04 if enabled else 0))
+                        self.assertAlmostEqual(consumer.get_parameter('clearance').value,
+                                               clearance+(gap.RESERVED_RADIUS-gap.BASE_RADIUS if enabled else 0))
                         for key,value in gap.parameter_plan(enabled,phase,level)['controller_server'].items():
                             self.assertEqual(controller.get_parameter(key).value,value)
                         self.assertEqual(gate.get_parameter('rotation_clearance').value,gap.TURNING[level]['stop'])
                         for node in costmaps:
-                            self.assertAlmostEqual(node.get_parameter('robot_radius').value,.18 if enabled else .14)
+                            self.assertAlmostEqual(node.get_parameter('robot_radius').value,
+                                                   gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)
                         reject[0]=True
                         with self.assertRaises(HTTPError): post(not enabled,audacity='balanced' if level!='balanced' else 'bold')
                         restored=json.load(urlopen(base+'/api/gap',timeout=15))
@@ -269,9 +275,11 @@ class ConsoleTests(unittest.TestCase):
                 self.assertTrue(post(False)['audacity']=='bold') # legacy toggle preserves the selected tier
                 self.assertTrue(post(False,audacity='cautious')['synchronized'])
                 self.assertTrue(post(True)['synchronized'])
-                self.assertAlmostEqual(consumer.get_parameter('clearance').value,.26)
+                self.assertAlmostEqual(consumer.get_parameter('clearance').value,
+                                       .22+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
                 if phase=='mapping':
-                    time.sleep(.2);self.assertAlmostEqual(consumer.p['clearance'],.26)
+                    time.sleep(.2);self.assertAlmostEqual(consumer.p['clearance'],
+                                                        .22+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
                 reject[0]=True
                 with self.assertRaises(HTTPError): post(False)
                 self.assertTrue(json.load(urlopen(base+'/api/gap',timeout=15))['enabled'])

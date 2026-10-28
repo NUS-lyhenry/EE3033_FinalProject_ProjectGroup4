@@ -1,5 +1,39 @@
 # Validation record
 
+## Supervised RPP navigation development — 2026-10-28
+
+This supersedes the first-revision restoration below. Fixed and random scene
+acceptance is still in progress; no complete navigation acceptance or merge
+is claimed. Runtime startup failures, algorithm failures and safe negative
+outcomes are recorded separately by `scripts/navigation_benchmark.py`.
+
+The motor-deadband failure is reproduced in native Humble with the physical
+angular acceleration capped at 0.8 rad/s² and angular speed at 0.4 rad/s.
+Evidence: `validation/rpp_deadband_20261028.json`. Previous simple-controller
+passes cannot substitute for the pending full-scene acceptance.
+
+## First-revision navigation restoration — 2026-10-28
+
+The user requested the five navigation/mapping behaviors from `3465a34`.
+Direct DWB, SimpleProgressChecker (0.10 m translation / 18 s), the 0.12 m
+DWB arrival distance, the standard 0.20 rad mapping heading tolerance and
+Nav2 default recovery are restored. Mapping navigation timeout now fails and
+cancels without escape goals or deferred retries. Audacity changes clearance
+and rotation safety distances only; it cannot re-enable heading progress.
+Mission goals also no longer automatically select the optional custom trees.
+
+This is a scoped navigation restoration, not a whole-project checkout rollback.
+Current perception/TF timing, UI, simulation worlds, costmap safety checks and
+stationary return verification remain. The earlier records below describe the
+previous recovery policy and do not validate the restored configuration.
+
+Validated: 447 Python checks; 52 browser checks plus the updated mapping-policy
+UI case; native Console (5), mapping policy (5), common ROS (9), waypoint (6)
+and final single-checker DWB turning/frozen/obstacle/fast cases passed. Live
+ROS parameters confirm the original defaults. The random-scene run was
+interrupted by the user-requested restart, so full mapping is not claimed.
+Evidence: `validation/first_navigation_restore_20261028.json`.
+
 ## Final corner recovery, capture-time TF and simulator checks — 2026-10-28
 
 The original legacy seed-95 scene is saved as

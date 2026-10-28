@@ -9,6 +9,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from ee3033_project.robot_geometry import GEOMETRY_PROFILE, FOOTPRINT_RADIUS, DEFAULT_STOP_DISTANCE
 
 
 def start(context):
@@ -67,11 +68,13 @@ def start(context):
                      'attempt_respawn_reconnection': False}])]
     return [*localization,
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(share, 'launch', 'hardware.launch.py')),
-                                 launch_arguments={k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}.items()),
+                                 launch_arguments={k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera', 'self_mask_radius')}.items()),
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
             os.path.join(share, 'config', 'project.yaml'), dict(allow_motion=motion,
                 reverse_policy='calibration',
-                max_linear=.04, max_angular=.15, rotation_clearance=.16)]),
+                max_linear=.04, max_angular=.15, rotation_clearance=.16),
+            ({'footprint_radius':FOOTPRINT_RADIUS,'reverse_radius':FOOTPRINT_RADIUS,
+              'stop_distance':DEFAULT_STOP_DISTANCE} if GEOMETRY_PROFILE=='legacy' else {})]),
         Node(package='ee3033_project', executable='camera_calibration', output='screen', parameters=[{
             'map_file': map_path, 'allow_motion': motion, 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
             'parent_port': ParameterValue(LaunchConfiguration('parent_port'), value_type=int),
@@ -82,7 +85,7 @@ def start(context):
 
 
 def generate_launch_description():
-    defaults = dict(allow_motion='false', base='true', lidar='true', camera='true', port='8780',
+    defaults = dict(allow_motion='false', base='true', lidar='true', camera='true', self_mask_radius='.08', port='8780',
                     model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
                     output_directory='~/ee3033_calibrations', parent_port='8765', map='',
                     seed_pose='false', initial_x='0', initial_y='0', initial_yaw='0')

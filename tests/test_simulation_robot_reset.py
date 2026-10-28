@@ -1,5 +1,6 @@
 """Exercise real simulated-robot callbacks with message-only ROS stubs."""
 import ast
+from collections import deque
 import math
 from pathlib import Path
 import sys
@@ -10,6 +11,8 @@ import numpy as np
 
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from simulation_geometry import clearance,raycast
+from simulation_motion import motion_profile,advance_motion
+from ee3033_project.motion_safety import PHYSICAL_RADIUS
 from simulation_scenarios import default_scenario,generate_scenario,validate_scenario
 
 
@@ -23,6 +26,7 @@ def set_yaw(q,a):q.z=math.sin(a/2);q.w=math.cos(a/2)
 source=Path(__file__).parents[1]/'scripts/simulation_robot.py'
 cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef) and n.name=='SimulatedRobot')
 namespace=dict(Node=object,math=math,np=np,time=time,json=__import__('json'),
+    motion_profile=motion_profile,advance_motion=advance_motion,PHYSICAL_RADIUS=PHYSICAL_RADIUS,
     validate_scenario=validate_scenario,clearance=clearance,raycast=raycast,
     TransformStamped=transform,Odometry=odometry,LaserScan=lambda:NS(header=NS()),set_yaw=set_yaw)
 exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),namespace)
@@ -31,10 +35,10 @@ SimulatedRobot=namespace['SimulatedRobot']
 
 def test_scenario_apply_changes_sensor_walls_and_resets_actual_odometry_without_old_motion():
     robot=SimulatedRobot.__new__(SimulatedRobot)
-    robot.world_lock=threading.RLock();robot.accept_commands=True
+    robot.world_lock=threading.RLock();robot.accept_commands=True;robot.command_queue=deque()
     robot.scene=default_scenario();robot.pose=[.6,-.4,.8];robot.command=(.12,.4)
     robot.command_time=robot.last_tick=time.monotonic();robot.phase='mission'
-    robot.scene_status_after=-math.inf
+    robot.scene_status_after=-math.inf;robot.collision_rejections=3
     stamp=NS(sec=1,nanosec=0)
     robot.get_clock=lambda:NS(now=lambda:NS(nanoseconds=1_000_000_000,to_msg=lambda:stamp))
     transforms=[];odoms=[];scans=[]
@@ -45,6 +49,7 @@ def test_scenario_apply_changes_sensor_walls_and_resets_actual_odometry_without_
     robot.on_command(NS(linear=NS(x=.12),angular=NS(z=.4)))
     robot.resume_commands();robot.tick();robot.scan_tick()
     assert robot.pose==scene['start'] and robot.phase=='mapping'
+    assert robot.collision_rejections==0
     assert robot.command==(0.,0.) and odoms[-1].twist.twist.linear.x==0.
     assert [odoms[-1].pose.pose.position.x,odoms[-1].pose.pose.position.y]==scene['start'][:2]
     assert odoms[-1].header.frame_id=='odom_combined'

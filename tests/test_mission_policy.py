@@ -154,10 +154,10 @@ def test_frame_journal_reports_disk_cap_instead_of_silent_evidence_loss(tmp_path
 
 def test_arrival_centering_counts_as_work_instead_of_waypoint_travel(monkeypatch):
     m=mission();m.state='ACQUIRING';m.acquisition.started=1.;m.goal_translation=True
-    m.nav_progress=NS(phase='translation')
+    m.navigation_status={'stage':'TRACKING'}
     now=[1.];monkeypatch.setattr(time,'monotonic',lambda:now[0])
     m.update_localization_clock()
-    now[0]=11.;m.nav_progress.phase='heading';m.update_localization_clock()
+    now[0]=11.;m.navigation_status['stage']='FINAL_ALIGN';m.update_localization_clock()
     now[0]=16.;m.update_localization_clock()
     assert m.acquisition.travel_seconds==10.
     assert m.acquisition.active_seconds==5.

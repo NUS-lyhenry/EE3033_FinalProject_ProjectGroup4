@@ -95,19 +95,25 @@ class FakeRobot(Node):
         # This fixture substitutes Nav2 actions, so provide its matching safety
         # snapshot too. Production Mission now waits for actual costmap data.
         self.fixture_map=m
-        self.costmap_service=self.create_service(GetCostmap,'/global_costmap/get_costmap',self.costmap)
+        self.costmap_requests=0
+        self.costmap_service=self.create_service(GetCostmap,'/global_costmap/get_costmap',self.costmap,
+            callback_group=ReentrantCallbackGroup())
 
     def costmap(self,request,response):
         import numpy as np
-        from scipy.ndimage import distance_transform_edt
+        from ee3033_project.path_validation import safe_grid
         del request
+        self.costmap_requests+=1
         source=self.fixture_map;cost=response.map
         cost.header.frame_id='map';cost.header.stamp=self.get_clock().now().to_msg()
+        cost.metadata.map_load_time=source.header.stamp
+        cost.metadata.update_time=cost.header.stamp
+        cost.metadata.layer='fixture_full_footprint'
         cost.metadata.resolution=source.info.resolution
         cost.metadata.size_x=source.info.width;cost.metadata.size_y=source.info.height
         cost.metadata.origin=source.info.origin
-        occupied=np.asarray(source.data).reshape(source.info.height,source.info.width)!=0
-        blocked=distance_transform_edt(~occupied)*source.info.resolution<=.15
+        cells=np.asarray(source.data).reshape(source.info.height,source.info.width)
+        blocked=~safe_grid(cells,source.info.resolution)
         cost.data=np.where(blocked,254,0).astype(np.uint8).ravel().tolist()
         return response
 
@@ -294,7 +300,8 @@ class GateIntegration(unittest.TestCase):
         io = Node('gate_test_inputs')
         gate = VelocityGate(parameter_overrides=overrides(
             allow_motion=True, output_topic='/test/gated_velocity',
-            command_timeout=0.25, heartbeat_timeout=0.25, scan_timeout=0.25))
+            command_timeout=0.25, heartbeat_timeout=0.25, scan_timeout=0.25,
+            enforce_swept_map=False))
         command_pub = io.create_publisher(Twist,'/project/nav_cmd_vel',10)
         enable_pub = io.create_publisher(Bool,'/project/drive_enabled',LATCHED)
         scan_pub = io.create_publisher(LaserScan,'/scan_fixed',qos_profile_sensor_data)
@@ -316,6 +323,7 @@ class GateIntegration(unittest.TestCase):
                 msg.header.stamp = io.get_clock().now().to_msg()
                 if controls['stale']:
                     msg.header.stamp.sec -= 3
+                msg.header.frame_id='base_footprint'
                 msg.range_min,msg.range_max = 0.08,8.0
                 msg.angle_min,msg.angle_increment = -math.pi,math.pi/2
                 msg.ranges = [controls['back'],3.0,controls['front'],3.0]
@@ -327,7 +335,7 @@ class GateIntegration(unittest.TestCase):
         thread = threading.Thread(target=executor.spin,daemon=True)
         thread.start()
         try:
-            self.assertTrue(wait(lambda: received and received[-1] == (0.15,0.45)))
+            self.assertTrue(wait(lambda: received and all(math.isclose(a,b,abs_tol=1e-7) for a,b in zip(received[-1],(.12,.135)))))
             controls['front'] = 0.10
             self.assertTrue(wait(lambda: received[-1] == (0.0,0.0)))
             controls['front'],controls['back'],controls['linear'] = 3.0,0.1,-0.8
@@ -340,11 +348,11 @@ class GateIntegration(unittest.TestCase):
             self.assertEqual(received[-1],(0.0,0.0))
             self.assertEqual(gate.reverse_reason,'reverse_map_or_localization_missing')
             controls['linear'] = .8
-            self.assertTrue(wait(lambda: received[-1] == (0.15,0.45)))
+            self.assertTrue(wait(lambda: all(math.isclose(a,b,abs_tol=1e-7) for a,b in zip(received[-1],(.12,.135)))))
             controls['heartbeat'] = False
             self.assertTrue(wait(lambda: received[-1] == (0.0,0.0)))
             controls['heartbeat'] = True
-            self.assertTrue(wait(lambda: received[-1] == (0.15,0.45)))
+            self.assertTrue(wait(lambda: all(math.isclose(a,b,abs_tol=1e-7) for a,b in zip(received[-1],(.12,.135)))))
             controls['commands'] = False
             self.assertTrue(wait(lambda: received[-1] == (0.0,0.0)))
             controls['commands'],controls['stale'] = True,True
@@ -360,7 +368,7 @@ class GateIntegration(unittest.TestCase):
 
 
 class MappingIntegration(unittest.TestCase):
-    def test_timeout_cancels_before_saving_partial_map(self):
+    def test_timeout_fails_and_cancels_without_successor_or_save(self):
         rclpy.init()
         root=tempfile.TemporaryDirectory(prefix='group4_partial_test_')
         robot=FakeRobot('mapping_timeout')
@@ -372,7 +380,8 @@ class MappingIntegration(unittest.TestCase):
         for node in (robot,mapper): executor.add_node(node)
         thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
         try:
-            self.assertTrue(wait(lambda:mapper.error() is None and mapper.nav.server_is_ready()))
+            self.assertTrue(wait(lambda:mapper.error() is None and mapper.nav.server_is_ready()
+                and mapper.navigation_map.fresh()))
             client=robot.create_client(Trigger,'/project/start')
             self.assertTrue(client.wait_for_service(timeout_sec=3))
             future=client.call_async(Trigger.Request());self.assertTrue(wait(future.done))
@@ -380,12 +389,14 @@ class MappingIntegration(unittest.TestCase):
             self.assertTrue(wait(lambda:mapper.state=='RETURNING' and mapper.nav_handle is not None))
             mapper.goal_time=time.monotonic()-61
             self.assertTrue(wait(lambda:mapper.state in ('MAPPED_PARTIAL','FAILED'),15))
-            self.assertEqual(mapper.state,'MAPPED_PARTIAL',mapper.reason)
+            self.assertEqual(mapper.state,'FAILED',mapper.reason)
+            self.assertTrue(wait(lambda:robot.canceled==1 and robot.active_goals==0))
             self.assertEqual(robot.canceled,1)
             self.assertEqual(robot.active_goals,0)
             self.assertIsNone(mapper.nav_handle)
-            self.assertTrue(Path(mapper.saved_map).is_file())
-            print('PASS: mapping timeout confirmed cancellation before separate partial-map save')
+            self.assertIsNone(mapper.saved_map)
+            self.assertEqual(mapper.reason,'Mapping navigation time limit exceeded')
+            print('PASS: original mapping timeout fails, cancels and sends no successor or save')
         finally:
             executor.shutdown(timeout_sec=3);thread.join(timeout=3)
             mapper.destroy_node();robot.destroy_node();rclpy.shutdown();root.cleanup()
@@ -407,7 +418,8 @@ class MappingIntegration(unittest.TestCase):
         thread=threading.Thread(target=executor.spin,daemon=True)
         thread.start()
         try:
-            self.assertTrue(wait(lambda:mapper.error() is None and mapper.nav.server_is_ready()))
+            self.assertTrue(wait(lambda:mapper.error() is None and mapper.nav.server_is_ready()
+                and mapper.navigation_map.fresh()))
             client=robot.create_client(Trigger,'/project/start')
             self.assertTrue(client.wait_for_service(timeout_sec=3))
             future=client.call_async(Trigger.Request())

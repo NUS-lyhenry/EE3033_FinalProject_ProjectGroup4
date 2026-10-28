@@ -93,7 +93,9 @@ class WaypointTests(unittest.TestCase):
         for node in (self.robot,self.mapper,self.console):self.executor.add_node(node)
         self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
         self.base=f'http://127.0.0.1:{self.console.p["port"]}'
-        self.assertTrue(wait(lambda:self.mapper.error() is None and self.mapper.nav.server_is_ready() and self.mapper.spin.server_is_ready()))
+        self.assertTrue(wait(lambda:self.mapper.error() is None and self.mapper.nav.server_is_ready()
+            and self.mapper.spin.server_is_ready() and self.mapper.navigation_map.fresh()))
+        self.assertGreater(self.robot.costmap_requests,0)
         self.assertTrue(wait(lambda:'Map' in self.console.freshness and 'Mission' in self.console.freshness))
 
     def tearDown(self):

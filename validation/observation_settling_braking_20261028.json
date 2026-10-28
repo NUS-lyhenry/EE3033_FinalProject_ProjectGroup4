@@ -1,0 +1,1130 @@
+{
+  "simulation_only": true,
+  "synthetic_chassis": true,
+  "real_nav2": true,
+  "physical_model": {
+    "command_delay": 0.15,
+    "angular_deadband": 0.08,
+    "angular_acceleration": 0.8,
+    "linear_acceleration": 0.3
+  },
+  "checker": {
+    "id": "observation_goal_checker",
+    "xy_tolerance": 0.1,
+    "yaw_tolerance": 0.03
+  },
+  "settle_seconds": 0.8,
+  "actual_pose_source": "map->base_footprint TF",
+  "cases": [
+    {
+      "name": "near_backoff",
+      "mode": "delayed_deadband",
+      "repetition": 1,
+      "target": [
+        -0.3,
+        0.0,
+        0.0
+      ],
+      "raw_action_status": 4,
+      "action_seconds": 19.741920232772827,
+      "at_result": {
+        "stamp": 1793168796.2710257,
+        "pose": [
+          -0.2134699376996132,
+          0.009904803120505627,
+          -0.024218050050170786
+        ]
+      },
+      "error_at_result": {
+        "xy": 0.08709510208137308,
+        "yaw": 0.024218050050170786
+      },
+      "after_settling": {
+        "stamp": 1793168797.0713596,
+        "pose": [
+          -0.2134699376996132,
+          0.009904803120505627,
+          -0.005175126585928139
+        ]
+      },
+      "error_after_settling": {
+        "xy": 0.08709510208137308,
+        "yaw": 0.005175126585928139
+      },
+      "actual_settled_velocity_from_tf": {
+        "linear": 0.0,
+        "angular": 0.0
+      },
+      "final_command": [
+        0.0,
+        0.0
+      ],
+      "actual_velocity_model": [
+        0.0,
+        0.0
+      ],
+      "maximum_actual_angular_acceleration": 0.8000000000000012,
+      "passed": true,
+      "maximum_nonzero_rotation_command_step": 0.053333333333333344
+    },
+    {
+      "name": "pure_yaw",
+      "mode": "delayed_deadband",
+      "repetition": 1,
+      "target": [
+        0.0,
+        0.0,
+        1.57
+      ],
+      "raw_action_status": 4,
+      "action_seconds": 4.521786212921143,
+      "at_result": {
+        "stamp": 1793168802.111844,
+        "pose": [
+          0.0,
+          0.0,
+          1.5436899266479667
+        ]
+      },
+      "error_at_result": {
+        "xy": 0.0,
+        "yaw": 0.026310073352033392
+      },
+      "after_settling": {
+        "stamp": 1793168802.9310822,
+        "pose": [
+          0.0,
+          0.0,
+          1.5459990117394102
+        ]
+      },
+      "error_after_settling": {
+        "xy": 0.0,
+        "yaw": 0.024000988260589832
+      },
+      "actual_settled_velocity_from_tf": {
+        "linear": 0.0,
+        "angular": 0.0
+      },
+      "final_command": [
+        0.0,
+        0.0
+      ],
+      "actual_velocity_model": [
+        0.0,
+        0.0
+      ],
+      "maximum_actual_angular_acceleration": 0.8000000000000012,
+      "passed": true,
+      "maximum_nonzero_rotation_command_step": 0.053333333333333344
+    },
+    {
+      "name": "near_backoff",
+      "mode": "angular_odom_zero",
+      "repetition": 1,
+      "target": [
+        -0.3,
+        0.0,
+        0.0
+      ],
+      "raw_action_status": 4,
+      "action_seconds": 19.790158987045288,
+      "at_result": {
+        "stamp": 1793168823.2313576,
+        "pose": [
+          -0.21277710987456927,
+          0.009694026897358862,
+          -0.02469471785019308
+        ]
+      },
+      "error_at_result": {
+        "xy": 0.08775993800886414,
+        "yaw": 0.024694717850193077
+      },
+      "after_settling": {
+        "stamp": 1793168824.0511992,
+        "pose": [
+          -0.21277710987456927,
+          0.009694026897358862,
+          -0.010100014077834693
+        ]
+      },
+      "error_after_settling": {
+        "xy": 0.08775993800886414,
+        "yaw": 0.010100014077834693
+      },
+      "actual_settled_velocity_from_tf": {
+        "linear": 0.0,
+        "angular": 0.0
+      },
+      "final_command": [
+        0.0,
+        0.0
+      ],
+      "actual_velocity_model": [
+        0.0,
+        0.0
+      ],
+      "maximum_actual_angular_acceleration": 0.8000000000000013,
+      "passed": true,
+      "maximum_nonzero_rotation_command_step": 0.053333333333333344
+    },
+    {
+      "name": "pure_yaw",
+      "mode": "angular_odom_zero",
+      "repetition": 1,
+      "target": [
+        0.0,
+        0.0,
+        1.57
+      ],
+      "raw_action_status": 4,
+      "action_seconds": 5.000009298324585,
+      "at_result": {
+        "stamp": 1793168829.5710588,
+        "pose": [
+          0.0,
+          0.0,
+          1.5453022274322015
+        ]
+      },
+      "error_at_result": {
+        "xy": 0.0,
+        "yaw": 0.024697772567798593
+      },
+      "after_settling": {
+        "stamp": 1793168830.3712943,
+        "pose": [
+          0.0,
+          0.0,
+          1.565173009574502
+        ]
+      },
+      "error_after_settling": {
+        "xy": 0.0,
+        "yaw": 0.004826990425498057
+      },
+      "actual_settled_velocity_from_tf": {
+        "linear": 0.0,
+        "angular": 0.0
+      },
+      "final_command": [
+        0.0,
+        0.0
+      ],
+      "actual_velocity_model": [
+        0.0,
+        0.0
+      ],
+      "maximum_actual_angular_acceleration": 0.8000000000000012,
+      "passed": true,
+      "maximum_nonzero_rotation_command_step": 0.053333333333333344
+    }
+  ],
+  "controller_parameters": {
+    "FollowPath.max_linear_vel": 0.12,
+    "FollowPath.max_angular_vel": 0.4,
+    "FollowPath.max_angular_accel": 0.8,
+    "FollowPath.rotation_command_delay": 0.15,
+    "FollowPath.rotation_braking_accel": 0.8,
+    "FollowPath.rotation_stop_margin": 0.005,
+    "FollowPath.rotation_motor_deadband": 0.08
+  },
+  "passed": true,
+  "controller_binary_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+  "physical_robot_contacted": false,
+  "initial_failure_summary": "validation/observation_settling_initial_20261028.json",
+  "implementation": "Native RPP transforms/collision checks retained. Final pure rotation uses measured pose-difference yaw rate, queued-command delay bound and .8 rad/s^2 braking; finite correction budget. Observation tolerances unchanged.",
+  "source_sha256": {
+    "src/ee3033_navigation/src/regulated_path_follower.cpp": "8b149873748c5d3b51063a927a14b7ff1862d3c80c9e3635b23a8621498d2359",
+    "src/ee3033_navigation/include/ee3033_navigation/regulated_path_follower.hpp": "5d606da7dad706dfa9bfff561791e62763f8b87cfb0993a9667d1c7edd3ce9d4"
+  },
+  "trace_archive": "validation/navigation_artifacts/observation-settling-braking-final.json.gz",
+  "trace_archive_sha256": "e4986e1b5145498a3a56e8eb4ea7d05d0b7ac343e84a40996f52f7125f0c335c",
+  "previous_wrapper_regressions": {
+    "base": {
+      "plugin": "wrapper",
+      "max_linear": 0.12,
+      "max_angular": 0.4,
+      "physical_angular_accel": 0.8,
+      "motor_deadband": 0.08,
+      "command_delay": 0.15,
+      "cases": [
+        {
+          "plugin": "wrapper",
+          "replans": 0,
+          "acceleration": 0.8,
+          "mode": "delayed_deadband",
+          "status": 4,
+          "reached": true,
+          "seconds": 8.012346444998911,
+          "pose": [
+            0.2828527993385348,
+            0.007177925557336019,
+            -0.008465242058211584
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.4,
+          "max_command_linear": 0.12,
+          "max_actual_angular": 0.4,
+          "max_actual_angular_acceleration": 0.8000000000000012,
+          "max_early_rotation_command_step": 0.053333333333333344
+        },
+        {
+          "plugin": "wrapper",
+          "replans": 0,
+          "acceleration": 0.8,
+          "mode": "angular_odom_zero",
+          "status": 4,
+          "reached": true,
+          "seconds": 7.939579182000671,
+          "pose": [
+            0.2819616626908465,
+            0.007336232769623457,
+            -0.011970296935649435
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.4,
+          "max_command_linear": 0.12,
+          "max_actual_angular": 0.4,
+          "max_actual_angular_acceleration": 0.8000000000000012,
+          "max_early_rotation_command_step": 0.053333333333333344
+        }
+      ],
+      "trace_archive": "validation/navigation_artifacts/observation-braking-wrapper-base.json.gz",
+      "trace_archive_sha256": "3daf54d1c87c1cceaf9dddd7665886ccadbcc94a24494699e53c786bff7a2f08"
+    },
+    "replan": {
+      "plugin": "wrapper",
+      "max_linear": 0.12,
+      "max_angular": 0.4,
+      "physical_angular_accel": 0.8,
+      "motor_deadband": 0.08,
+      "command_delay": 0.15,
+      "cases": [
+        {
+          "plugin": "wrapper",
+          "replans": 7,
+          "acceleration": 0.8,
+          "mode": "delayed_deadband",
+          "status": 4,
+          "reached": true,
+          "seconds": 8.003319412000565,
+          "pose": [
+            0.28289490716378557,
+            0.006408652570663512,
+            -0.01568825813072788
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.4,
+          "max_command_linear": 0.12,
+          "max_actual_angular": 0.4,
+          "max_actual_angular_acceleration": 0.8000000000000012,
+          "max_early_rotation_command_step": 0.053333333333333344
+        },
+        {
+          "plugin": "wrapper",
+          "replans": 7,
+          "acceleration": 0.8,
+          "mode": "angular_odom_zero",
+          "status": 4,
+          "reached": true,
+          "seconds": 8.044365059000484,
+          "pose": [
+            0.2837774603814619,
+            0.006613357597592896,
+            -0.010048242018167328
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.4,
+          "max_command_linear": 0.12,
+          "max_actual_angular": 0.4,
+          "max_actual_angular_acceleration": 0.8000000000000012,
+          "max_early_rotation_command_step": 0.053333333333333344
+        }
+      ],
+      "trace_archive": "validation/navigation_artifacts/observation-braking-wrapper-replan.json.gz",
+      "trace_archive_sha256": "e12fd47083eb49979a2987f99e6098a7887e3f7c85be25f6113997508bf5b1f9"
+    },
+    "caps": {
+      "plugin": "wrapper",
+      "max_linear": 0.16,
+      "max_angular": 0.6,
+      "physical_angular_accel": 0.8,
+      "motor_deadband": 0.08,
+      "command_delay": 0.15,
+      "cases": [
+        {
+          "plugin": "wrapper",
+          "replans": 0,
+          "acceleration": 0.8,
+          "mode": "delayed_deadband",
+          "status": 4,
+          "reached": true,
+          "seconds": 8.013988156000778,
+          "pose": [
+            0.2818367683513513,
+            0.00713778683517969,
+            -0.008153690646872118
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.4,
+          "max_command_linear": 0.12,
+          "max_actual_angular": 0.4,
+          "max_actual_angular_acceleration": 0.8000000000000013,
+          "max_early_rotation_command_step": 0.053333333333333344
+        },
+        {
+          "plugin": "wrapper",
+          "replans": 0,
+          "acceleration": 0.8,
+          "mode": "angular_odom_zero",
+          "status": 4,
+          "reached": true,
+          "seconds": 8.016482928000187,
+          "pose": [
+            0.2831121150042431,
+            0.007026228520645636,
+            -0.008818014878364352
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.4,
+          "max_command_linear": 0.12,
+          "max_actual_angular": 0.4,
+          "max_actual_angular_acceleration": 0.8000000000000006,
+          "max_early_rotation_command_step": 0.053333333333333344
+        }
+      ],
+      "trace_archive": "validation/navigation_artifacts/observation-braking-wrapper-caps.json.gz",
+      "trace_archive_sha256": "21207f0bb0975a3ab188c1488c3be04b4660093767d983e53787b0155af6b3e5"
+    },
+    "reduced_caps": {
+      "plugin": "wrapper",
+      "max_linear": 0.08,
+      "max_angular": 0.25,
+      "physical_angular_accel": 0.8,
+      "motor_deadband": 0.08,
+      "command_delay": 0.15,
+      "cases": [
+        {
+          "plugin": "wrapper",
+          "replans": 0,
+          "acceleration": 0.8,
+          "mode": "delayed_deadband",
+          "status": 4,
+          "reached": true,
+          "seconds": 11.14337470800092,
+          "pose": [
+            0.2836206471878683,
+            0.011973133653196848,
+            -0.010060387494677083
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.25,
+          "max_command_linear": 0.08,
+          "max_actual_angular": 0.25,
+          "max_actual_angular_acceleration": 0.8000000000000006,
+          "max_early_rotation_command_step": 0.05333333333333334
+        },
+        {
+          "plugin": "wrapper",
+          "replans": 0,
+          "acceleration": 0.8,
+          "mode": "angular_odom_zero",
+          "status": 4,
+          "reached": true,
+          "seconds": 11.142577718001121,
+          "pose": [
+            0.2837127183631394,
+            0.012810496160600633,
+            -0.0028582231103444983
+          ],
+          "first_nonzero_command": [
+            0.0,
+            -0.10666666666666667
+          ],
+          "max_command_angular": 0.25,
+          "max_command_linear": 0.08,
+          "max_actual_angular": 0.25,
+          "max_actual_angular_acceleration": 0.8000000000000006,
+          "max_early_rotation_command_step": 0.053333333333333344
+        }
+      ],
+      "trace_archive": "validation/navigation_artifacts/observation-braking-wrapper-reduced_caps.json.gz",
+      "trace_archive_sha256": "ae55bb831f3795563657145b56530ad9872dd2067fe953d60b205c8922a1f771"
+    }
+  },
+  "five_repeats_per_mode": {
+    "simulation_only": true,
+    "synthetic_chassis": true,
+    "real_nav2": true,
+    "physical_model": {
+      "command_delay": 0.15,
+      "angular_deadband": 0.08,
+      "angular_acceleration": 0.8,
+      "linear_acceleration": 0.3
+    },
+    "checker": {
+      "id": "observation_goal_checker",
+      "xy_tolerance": 0.1,
+      "yaw_tolerance": 0.03
+    },
+    "settle_seconds": 0.8,
+    "actual_pose_source": "map->base_footprint TF",
+    "cases": [
+      {
+        "name": "pure_yaw",
+        "mode": "delayed_deadband",
+        "repetition": 1,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.533292531967163,
+        "at_result": {
+          "stamp": 1793168942.3745677,
+          "pose": [
+            0.0,
+            0.0,
+            1.542007581510919
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.027992418489080958
+        },
+        "after_settling": {
+          "stamp": 1793168943.192021,
+          "pose": [
+            0.0,
+            0.0,
+            1.544323385646685
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.02567661435331514
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "angular_odom_zero",
+        "repetition": 1,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.472178220748901,
+        "at_result": {
+          "stamp": 1793168948.1720948,
+          "pose": [
+            0.0,
+            0.0,
+            1.5479483050126097
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.022051694987390347
+        },
+        "after_settling": {
+          "stamp": 1793168948.9723806,
+          "pose": [
+            0.0,
+            0.0,
+            1.556442570750256
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.013557429249744011
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "delayed_deadband",
+        "repetition": 2,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.5231852531433105,
+        "at_result": {
+          "stamp": 1793168954.0123036,
+          "pose": [
+            0.0,
+            0.0,
+            1.5437114758913564
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.026288524108643685
+        },
+        "after_settling": {
+          "stamp": 1793168954.8325768,
+          "pose": [
+            0.0,
+            0.0,
+            1.5460559254477801
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.02394407455221992
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "angular_odom_zero",
+        "repetition": 2,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.452577829360962,
+        "at_result": {
+          "stamp": 1793168959.8122995,
+          "pose": [
+            0.0,
+            0.0,
+            1.5486326096853407
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.021367390314659396
+        },
+        "after_settling": {
+          "stamp": 1793168960.6327121,
+          "pose": [
+            0.0,
+            0.0,
+            1.560177730658887
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.009822269341112966
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "delayed_deadband",
+        "repetition": 3,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.536462306976318,
+        "at_result": {
+          "stamp": 1793168965.691995,
+          "pose": [
+            0.0,
+            0.0,
+            1.546140819087886
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.02385918091211403
+        },
+        "after_settling": {
+          "stamp": 1793168966.4921308,
+          "pose": [
+            0.0,
+            0.0,
+            1.5478535772392665
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.022146422760733534
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000013,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "angular_odom_zero",
+        "repetition": 3,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 5.0014026165008545,
+        "at_result": {
+          "stamp": 1793168972.0130997,
+          "pose": [
+            0.0,
+            0.0,
+            1.5451037806195536
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.0248962193804465
+        },
+        "after_settling": {
+          "stamp": 1793168972.8119907,
+          "pose": [
+            0.0,
+            0.0,
+            1.5647968508589485
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.005203149141051578
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "delayed_deadband",
+        "repetition": 4,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.466479539871216,
+        "at_result": {
+          "stamp": 1793168977.8119967,
+          "pose": [
+            0.0,
+            0.0,
+            1.5434562429842245
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.026543757015775604
+        },
+        "after_settling": {
+          "stamp": 1793168978.613475,
+          "pose": [
+            0.0,
+            0.0,
+            1.5541275659084575
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.015872434091542598
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "angular_odom_zero",
+        "repetition": 4,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.477976083755493,
+        "at_result": {
+          "stamp": 1793168983.632022,
+          "pose": [
+            0.0,
+            0.0,
+            1.542681251209544
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.027318748790456038
+        },
+        "after_settling": {
+          "stamp": 1793168984.4331658,
+          "pose": [
+            0.0,
+            0.0,
+            1.5488460785820275
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.021153921417972565
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "delayed_deadband",
+        "repetition": 5,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.543039083480835,
+        "at_result": {
+          "stamp": 1793168989.5727239,
+          "pose": [
+            0.0,
+            0.0,
+            1.541684040477055
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.028315959522944967
+        },
+        "after_settling": {
+          "stamp": 1793168990.3922265,
+          "pose": [
+            0.0,
+            0.0,
+            1.5439694866000526
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.02603051339994744
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000012,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      },
+      {
+        "name": "pure_yaw",
+        "mode": "angular_odom_zero",
+        "repetition": 5,
+        "target": [
+          0.0,
+          0.0,
+          1.57
+        ],
+        "raw_action_status": 4,
+        "action_seconds": 4.521446466445923,
+        "at_result": {
+          "stamp": 1793168995.4519672,
+          "pose": [
+            0.0,
+            0.0,
+            1.540335072168505
+          ]
+        },
+        "error_at_result": {
+          "xy": 0.0,
+          "yaw": 0.029664927831495103
+        },
+        "after_settling": {
+          "stamp": 1793168996.2722929,
+          "pose": [
+            0.0,
+            0.0,
+            1.544279058222704
+          ]
+        },
+        "error_after_settling": {
+          "xy": 0.0,
+          "yaw": 0.025720941777296114
+        },
+        "actual_settled_velocity_from_tf": {
+          "linear": 0.0,
+          "angular": 0.0
+        },
+        "final_command": [
+          0.0,
+          0.0
+        ],
+        "actual_velocity_model": [
+          0.0,
+          0.0
+        ],
+        "maximum_actual_angular_acceleration": 0.8000000000000013,
+        "passed": true,
+        "maximum_nonzero_rotation_command_step": 0.053333333333333344
+      }
+    ],
+    "controller_parameters": {
+      "FollowPath.max_linear_vel": 0.12,
+      "FollowPath.max_angular_vel": 0.4,
+      "FollowPath.max_angular_accel": 0.8,
+      "FollowPath.rotation_command_delay": 0.15,
+      "FollowPath.rotation_braking_accel": 0.8,
+      "FollowPath.rotation_stop_margin": 0.005,
+      "FollowPath.rotation_motor_deadband": 0.08
+    },
+    "passed": true,
+    "trace_archive": "validation/navigation_artifacts/observation-settling-braking-repeat.json.gz",
+    "trace_archive_sha256": "e48c3f20f93138bf64f9e7abc77583d0030049335a6700decee79a73b4ce77b9"
+  },
+  "post_braking_end_to_end": {
+    "near": {
+      "case": "near",
+      "passed": true,
+      "seconds": 30.23655368300024,
+      "synthetic_detector": true,
+      "synthetic_chassis": true,
+      "production_nodes": [
+        "Perception",
+        "Mission",
+        "TargetFilter",
+        "VelocityGate",
+        "Nav2"
+      ],
+      "ground_truth": [
+        0.45,
+        0.0
+      ],
+      "camera_height": 0.31,
+      "camera_pitch_degrees": 28.6,
+      "configured_min_range": 0.6,
+      "actual_displacement": 0.21271415996064746,
+      "localization_active_seconds": 18.34843401300168,
+      "localization_travel_seconds": 3.2049457149987575,
+      "reframe_attempts": 1,
+      "target": {
+        "x": 0.4502599481455959,
+        "y": 0.00443319754470369,
+        "variance": 0.004844644627311974,
+        "class": "bottle",
+        "frame": "map",
+        "covariance": [
+          [
+            0.00484174892325367,
+            2.576075279207476e-07
+          ],
+          [
+            2.5760752792061996e-07,
+            0.004844621710039661
+          ]
+        ],
+        "posterior_mean": [
+          0.4502599481455959,
+          0.00443319754470369
+        ],
+        "projected": false,
+        "estimate_id": "ec1d6f8f9949:1793169096.259372473",
+        "estimator": "map-constrained MMSE",
+        "map_signature": "ec1d6f8f99498c96f5cbf9a9b2d089bbb02f13607d98e2a19b7d4782f9a88c6c",
+        "sigma": 0.06960348143097422,
+        "quality": "preferred_precision",
+        "preferred_sigma": 0.15,
+        "observation_stamp": 1793169096.2593725,
+        "geometry_conflict": false,
+        "confidence": 0.9,
+        "confirmation_frames": 4
+      },
+      "valid_floor_observations": 14,
+      "navigation_recoveries": [],
+      "motion_log": [
+        {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "goal": [
+            -0.3,
+            -3.524939260838437e-17,
+            -8.953568198998876e-18
+          ],
+          "translation": true,
+          "reason": "Move away to recover near/cropped target framing"
+        }
+      ],
+      "observation_frames": 200,
+      "code_version": "unspecified",
+      "nav2_log": "/tmp/near-final-braking/near.nav2.log"
+    },
+    "occlusion": {
+      "case": "occlusion",
+      "passed": true,
+      "seconds": 18.443495973999234,
+      "real_nav2_path_points": 86,
+      "planner_startup_rejections": 0,
+      "goal_position_error": 0.09776244930830992,
+      "goal_heading_error": 0.025163417370605456,
+      "reachable_but_occluded": [
+        0.6,
+        0.0,
+        3.141592653589793
+      ],
+      "visible_alternative": [
+        -0.625,
+        0.27500000000000036,
+        -0.4825132950224774
+      ],
+      "actual_arrival": [
+        -0.5990388947131873,
+        0.1807475862004223,
+        -0.45734987765187196
+      ],
+      "no_visible_alternative_rejected": true,
+      "synthetic_chassis": true,
+      "code_version": "unspecified",
+      "nav2_log": "/tmp/near-final-braking/occlusion.nav2.log"
+    },
+    "archive": "validation/navigation_artifacts/near-occlusion-final-braking.tar.gz",
+    "archive_sha256": "c5705ee447f6ce91bcbc9767a63d2922819c7ad65c2b8605ccd37a00181cbe32"
+  }
+}

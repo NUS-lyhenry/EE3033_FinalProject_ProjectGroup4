@@ -11,7 +11,7 @@ ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 def methods(filename, classname):
     tree=ast.parse((ROOT/filename).read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==classname)
-    scope=dict(math=math,time=time,NavigateToPose=NS(Goal=NS))
+    scope=dict(math=math,time=time,NavigateToPose=NS(Goal=lambda:NS(behavior_tree='')))
     exec(compile(ast.Module(body=[n for n in cls.body if isinstance(n,ast.FunctionDef)],
                            type_ignores=[]),str(ROOT/filename),'exec'),scope)
     return scope
@@ -35,8 +35,9 @@ def node(fresh=False):
         scan_time=now,odom_time=now,perception_time=now,geometry_error=None,
         amcl=NS(pose=NS(covariance=[0.]*36)),pose=lambda:(0.,0.,0.),
         p=dict(sensor_timeout=3.,perception_timeout=3.,max_xy_variance=.2,
-               max_yaw_variance=.2,return_heading_required=True),
-        goal_serial=0,nav_progress=NS(reset=lambda:None),index=0,route=[1],
+               max_yaw_variance=.2,return_heading_required=True,home_behavior_tree='test-home.xml'),
+        goal_serial=0,index=0,route=[1],
+        get_clock=lambda:NS(now=lambda:NS(nanoseconds=100_000_000_000)),
         set_state=lambda state,reason:None,failures=[],failed_options=set(),seen=set())
     for name in ('defer_for_costmap','retry_costmap_wait','send_goal','readiness_error','goal_requires_translation'):
         setattr(n,name,MethodType(MISSION[name],n))
@@ -107,6 +108,6 @@ def test_costmap_wait_is_not_localization_work_or_waypoint_travel():
     n.send_goal(pose(),'search')
     samples=[]
     n.acquisition=NS(started=1.,advance_clock=lambda *args:samples.append(args))
-    n.nav_progress=NS(phase='translation');n.goal_translation=True
+    n.navigation_status={'stage':'TRACKING'};n.goal_translation=True
     MISSION['update_localization_clock'](n)
     assert samples[0][1:]==(False,False)

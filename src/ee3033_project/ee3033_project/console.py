@@ -34,6 +34,8 @@ from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from .core import quaternion_yaw, stamp_seconds
+from .motion_safety import FOOTPRINT_RADIUS
+from .robot_geometry import geometry_metadata
 from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
 from .trial import LIMITS, PROFILES, parameter_plan, validate_trial
@@ -43,9 +45,10 @@ from . import gap
 from .console_workflow import Workflow
 from .model_labels import ModelLabels
 from .waypoint import validate_waypoint
+from .console_scan import ScanFilterSettings
 
 
-class Console(Workflow, Node):
+class Console(ScanFilterSettings, Workflow, Node):
     def __init__(self, **kwargs):
         super().__init__('project_console', **kwargs)
         self.p = parameters(self, {'port': 8765, 'phase': 'mission', 'allow_motion': False,
@@ -55,7 +58,8 @@ class Console(Workflow, Node):
                                    'stage_camera':True,'model':'/home/ros2_ws/weights/yolo26n.pt',
                                    'software_version':'development','calibration_file':'',
                                    'calibration_directory':'~/ee3033_calibrations','calibration_port':8780,
-                                   'navigation_profile':'original','vision_config':''})
+                                   'navigation_profile':'original','vision_config':'',
+                                   'mapping_resolution':.05})
         if self.p['phase'] not in ('mapping','mission','calibration'):
             raise ValueError('phase must be mapping or mission')
         self.lock = threading.Lock()
@@ -74,6 +78,11 @@ class Console(Workflow, Node):
         self.map_revision = 0
         self.target_estimate = None
         self.route = self.path = []
+        self.local_path=[]
+        self.local_path_time=-math.inf
+        self.travelled=deque(maxlen=1500)
+        self.navigation_status={}
+        self.simulation_motion={}
         self.events = deque(maxlen=20)
         self.freshness = {}
         self.jpeg = {}
@@ -93,11 +102,13 @@ class Console(Workflow, Node):
         node_names.update(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.), 'mission'))
         node_names.update(gap.parameter_plan(False,'mapping'))
         node_names.update(gap.parameter_plan(False,'mission'))
+        node_names.add('project_scan_resampler')
         self.parameter_clients = {
             (name,operation):self.create_client(kind,f'/{name}/{operation}')
             for name in node_names for operation,kind in [
                 ('get_parameters',GetParameters),('set_parameters_atomically',SetParametersAtomically)]}
         self.init_workflow()
+        self.init_scan_filter()
         self.gate_status = None
         self.create_subscription(String, '/project/velocity_gate_status', self.on_gate_status, 10)
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
@@ -109,6 +120,11 @@ class Console(Workflow, Node):
         self.create_subscription(OccupancyGrid,'/map',self.on_map,LATCHED)
         self.create_subscription(NavPath,'/project/search_path',self.on_route,LATCHED)
         self.create_subscription(NavPath,'/plan',self.on_path,10)
+        self.create_subscription(NavPath,'/local_plan',self.on_local_path,10)
+        self.create_subscription(NavPath,'/lookahead_arc',self.on_local_path,10)
+        self.create_subscription(NavPath,'/lookahead_collision_arc',self.on_local_path,10)
+        self.create_subscription(String,'/project/navigation_status',self.on_navigation_status,10)
+        self.create_subscription(String,'/project/simulation_motion',self.on_simulation_motion,10)
         for source,topic in [('project','/project/detection_image'),('lab','/detector/result_image')]:
             self.create_subscription(Image,topic,lambda m,s=source:self.on_image(m,s),
                                      qos_profile_sensor_data)
@@ -147,10 +163,11 @@ class Console(Workflow, Node):
                     return self.reply(200,node.snapshot())
                 if path=='/api/labels':
                     return self.reply(200,node.model_labels.read())
-                if path in ('/api/trial','/api/gap'):
+                if path in ('/api/trial','/api/gap','/api/scan_filter'):
                     try:
                         with node.control_lock:
-                            data = node.trial_settings() if path=='/api/trial' else node.gap_settings()
+                            data = (node.scan_filter_settings() if path=='/api/scan_filter' else
+                                    node.trial_settings() if path=='/api/trial' else node.gap_settings())
                         return self.reply(200,data)
                     except (RuntimeError,ValueError) as exc:
                         return self.reply(503,{'error':str(exc)})
@@ -294,6 +311,42 @@ class Console(Workflow, Node):
         with self.lock:
             self.path = [[p.pose.position.x,p.pose.position.y] for p in msg.poses]
 
+    def on_local_path(self,msg):
+        if self.retry_after_stamp>-math.inf and stamp_seconds(msg.header.stamp)<=self.retry_after_stamp:return
+        try:
+            if msg.header.frame_id=='map':
+                points=[[p.pose.position.x,p.pose.position.y] for p in msg.poses]
+            else:
+                t=self.tf.lookup_transform('map',msg.header.frame_id,Time.from_msg(msg.header.stamp))
+                a=quaternion_yaw(t.transform.rotation);c,ss=math.cos(a),math.sin(a)
+                tr=t.transform.translation
+                points=[[tr.x+c*p.pose.position.x-ss*p.pose.position.y,
+                         tr.y+ss*p.pose.position.x+c*p.pose.position.y] for p in msg.poses]
+            if not all(math.isfinite(v) for point in points for v in point):return
+            with self.lock:
+                self.local_path=points[:250]
+                self.local_path_time=time.monotonic()
+        except TransformException:
+            pass
+
+    def on_navigation_status(self,msg):
+        try:
+            status=json.loads(msg.data)
+            if not isinstance(status,dict):return
+            with self.lock:
+                self.navigation_status=status
+                self.freshness['Navigation']=time.monotonic()
+        except (ValueError,TypeError):
+            pass
+
+    def on_simulation_motion(self,msg):
+        try:
+            status=json.loads(msg.data)
+            if not isinstance(status,dict):return
+            with self.lock:self.simulation_motion=status
+        except (ValueError,TypeError):
+            pass
+
     def on_image(self,msg,source):
         now = time.monotonic()
         if now-self.last_encoding.get(source,0)<0.35:
@@ -325,6 +378,8 @@ class Console(Workflow, Node):
             pass
         with self.lock:
             now = time.monotonic()
+            if pose and (not self.travelled or math.dist(pose[:2],self.travelled[-1])>=.02):
+                self.travelled.append(list(pose[:2]))
             health = {name:{'age':round(now-t,1),'ok':now-t<limit}
                       for name,t in self.freshness.items()
                       for limit in [3 if name in ('YOLO','Mission') else
@@ -337,9 +392,15 @@ class Console(Workflow, Node):
                     'velocity_gate': self.gate_status,
                     'target_estimate': self.displayed_target_estimate(),
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
+                    'local_path':self.local_path if now-self.local_path_time<=1.5 else [],
+                    'travelled_path':list(self.travelled),
+                    'footprint_radius':FOOTPRINT_RADIUS,'robot_geometry':geometry_metadata(),
+                    'navigation':self.navigation_status,
+                    'scan_filter':self.scan_filter_snapshot(),
+                    'simulation_motion':self.simulation_motion if hasattr(self,'simulation_robot') else None,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
-                    'control_fault':self.trial_fault or self.gap_fault or self.workflow_fault,
+                    'control_fault':self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault,
                     **self.workflow_snapshot(),
                     'battery':{'voltage':self.battery_voltage,
                                'age':round(battery_age,1) if math.isfinite(battery_age) else None,
@@ -526,6 +587,8 @@ class Console(Workflow, Node):
         request_generation=self.control_generation if expected_generation is None else expected_generation
         if not isinstance(body,dict):
             raise ValueError('Request must be a JSON object')
+        if path=='/api/scan_filter':
+            return self.scan_filter_settings(body,request_generation)
         if path == '/api/calibration_target':
             return self.set_calibration_target(body)
         workflow=self.workflow_command(path,body)
@@ -558,8 +621,8 @@ class Console(Workflow, Node):
                 return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
             if key=='start' and not self.p['allow_motion']:
                 raise ValueError('Motion disabled in this console')
-            if key=='start' and (self.trial_fault or self.gap_fault or self.workflow_fault):
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if key=='start' and (self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault):
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault)
             if key=='start':
                 record=self.record.snapshot()
                 if record['interrupted'] or record['finished'] is not None:
@@ -626,8 +689,8 @@ class Console(Workflow, Node):
         if path=='/api/map_waypoint':
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Mapping waypoints are available only while stage 1 is stopped')
-            if self.trial_fault or self.gap_fault or self.workflow_fault:
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault)
             record=self.record.snapshot()
             if record['interrupted'] or record['finished'] is not None:
                 raise ValueError('Begin a new trial before waypoint mapping')
@@ -709,8 +772,8 @@ class Console(Workflow, Node):
             self.initial_pose_sent=True
             return {'success':True,'message':'Assigned initial pose sent to AMCL'}
         if path=='/api/teleop':
-            if self.trial_fault or self.gap_fault or self.workflow_fault:
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault)
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Manual driving is restricted to the mapping stage')
             x,z = float(body.get('linear',0)),float(body.get('angular',0))

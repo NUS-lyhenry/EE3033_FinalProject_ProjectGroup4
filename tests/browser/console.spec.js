@@ -203,13 +203,27 @@ test('camera setup is a preparation page and shows saved profile reuse',async({p
   expect(f.errors).toEqual([]);
 });
 
-test('mapping shows deferred areas and the final retry pass',async({page})=>{
+test('mapping reports excluded failures and bounded navigation recovery',async({page})=>{
   const f=await fixture(page,{active:true});
-  Object.assign(f.state.mission,{viewpoints_completed:2,deferred_frontiers:1,frontier_retry_round:0});
-  await expect(page.locator('#mappingProgress')).toContainText('2 goals reached · 1 deferred');
-  await expect(page.locator('#mappingProgress')).toContainText('Explore other areas');
-  f.state.mission.frontier_retry_round=1;
-  await expect(page.locator('#mappingProgress')).toContainText('Final retry pass');
+  Object.assign(f.state.mission,{viewpoints_completed:2,failed_viewpoints:[[1,1]]});
+  await expect(page.locator('#mappingProgress')).toContainText('2 goals reached · 1 failed areas skipped');
+  await expect(page.locator('#mappingProgress')).toContainText('Bounded navigation recovery');
+  await expect(page.locator('#mappingProgress')).not.toContainText('retry pass');
+  expect(f.errors).toEqual([]);
+});
+
+test('map distinguishes global route, local prediction, travelled path and recovery state',async({page})=>{
+  const f=await fixture(page,{active:true});
+  Object.assign(f.state,{path:[[1,1],[2,1]],local_path:[[1,1],[1.1,1.05]],
+    travelled_path:[[.7,1],[1,1]],footprint_radius:.116801,
+    robot_geometry:{profile:'measured',length:.115,width:.18},
+    navigation:{stage:'REVERSING',reason:'Known rear corridor verified',recovery_count:1}});
+  await expect(page.locator('#navigationStatus')).toContainText('Backing up safely');
+  await expect(page.locator('#navigationStatus')).toContainText('Recovery 1/2');
+  for(const name of ['Global path','Local prediction','Travelled']){
+    await expect(page.locator('.legend').getByText(name,{exact:true})).toBeVisible();
+  }
+  await expect(page.locator('#stop')).toBeEnabled();
   expect(f.errors).toEqual([]);
 });
 

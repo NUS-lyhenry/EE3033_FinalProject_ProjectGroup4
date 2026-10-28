@@ -16,6 +16,9 @@ from .trial import guarded_parameters
 from .gap import DEFAULT_AUDACITY, TURNING, guard_rotation
 from .core import quaternion_yaw, stamp_seconds
 from .reverse_safety import reverse_clearance
+from .robot_geometry import DEFAULT_STOP_DISTANCE, geometry_metadata
+from .motion_safety import (FOOTPRINT_RADIUS, limit_twist, swept_arc,
+                            swept_map_clearance, swept_scan_clearance)
 
 
 class VelocityGate(Node):
@@ -24,14 +27,20 @@ class VelocityGate(Node):
         self.p = parameters(self, {
             'allow_motion': False, 'mapping_mode': False, 'output_topic': '/cmd_vel',
             'command_timeout': 0.5, 'heartbeat_timeout': 0.7, 'scan_timeout': 0.7,
-            'max_linear': 0.15, 'max_angular': 0.45,
-            'stop_distance': 0.25, 'rotation_clearance': TURNING[DEFAULT_AUDACITY]['stop'],
+            'max_linear': 0.12, 'max_angular': 0.40,
+            'stop_distance': DEFAULT_STOP_DISTANCE, 'rotation_clearance': TURNING[DEFAULT_AUDACITY]['stop'],
             'navigation_profile': 'original',
             'reverse_speed': .04, 'reverse_distance': .20,
-            'reverse_reserve': .04, 'reverse_radius': .15,
+            'reverse_reserve': .04, 'reverse_radius': FOOTPRINT_RADIUS,
             'odom_frame': 'odom_combined', 'base_frame': 'base_footprint',
             'reverse_policy': 'recovery',
+            'enforce_swept_map': True, 'swept_horizon': 1.0,
+            'braking_deceleration': 0.30, 'footprint_radius': FOOTPRINT_RADIUS,
         })
+        if (not math.isfinite(self.p['swept_horizon']) or self.p['swept_horizon']<=0
+                or not math.isfinite(self.p['braking_deceleration']) or self.p['braking_deceleration']<=0
+                or not math.isfinite(self.p['footprint_radius']) or self.p['footprint_radius']<FOOTPRINT_RADIUS):
+            raise ValueError('Swept motion requires a positive horizon, braking limit and full footprint')
         if self.p['reverse_policy'] not in ('recovery','calibration'):
             raise ValueError('reverse_policy must be recovery or calibration')
         if self.p['navigation_profile'] not in ('original', 'fast'):
@@ -51,6 +60,10 @@ class VelocityGate(Node):
         self.scan = None
         self.map = None
         self.localization = None
+        self.output_arc = []
+        self.output_arc_frame = None
+        self.speed_scale = 1.
+        self.safety_reason = None
         self.reverse_start = None
         self.reverse_idle = None
         self.reverse_reason = None
@@ -100,7 +113,7 @@ class VelocityGate(Node):
                 self.reverse_start = (now, op.x, op.y)
             duration = now-self.reverse_start[0]
             traveled = math.hypot(op.x-self.reverse_start[1],op.y-self.reverse_start[2])
-            if duration > 8. or traveled >= self.p['reverse_distance']:
+            if duration > 8. or traveled >= min(.20,self.p['reverse_distance']):
                 return False, 'reverse_distance_or_time_limit'
             m=self.map;o=m.info.origin
             covariance=np.asarray(self.localization.pose.covariance).reshape(6,6)[np.ix_([0,1,5],[0,1,5])]
@@ -108,14 +121,18 @@ class VelocityGate(Node):
                 np.asarray(m.data).reshape(m.info.height,m.info.width),m.info.resolution,
                 (o.position.x,o.position.y,quaternion_yaw(o.orientation)),
                 (p.x,p.y,quaternion_yaw(q)),covariance,
-                distance=self.p['reverse_distance']-traveled+.04,
-                radius=self.p['reverse_radius'],reserve=self.p['reverse_reserve'])
+                distance=min(.20,self.p['reverse_distance'])-traveled+.04,
+                radius=max(FOOTPRINT_RADIUS,self.p['reverse_radius']),reserve=max(.04,self.p['reverse_reserve']))
             self.reverse_envelope = envelope
             return allowed, reason
         except (TransformException, ValueError, TypeError):
             return False, 'reverse_pose_unavailable'
 
     def on_enable(self, msg):
+        if msg.data != self.enabled:
+            # A new movement generation must receive a new command. A late
+            # command from the canceled goal cannot survive Stop/re-enable.
+            self.commands['nav'] = (Twist(), -math.inf)
         self.enabled, self.enable_time = msg.data, time.monotonic()
 
     def on_automatic(self,msg):
@@ -132,6 +149,61 @@ class VelocityGate(Node):
         if 0 <= age < self.p['scan_timeout']:
             self.scan, self.scan_time = msg, time.monotonic()
 
+    def laser_hits(self):
+        """Actual scan endpoints in base coordinates, using capture-time mount TF."""
+        scan = self.scan
+        frame = scan.header.frame_id
+        if not frame:
+            raise ValueError('scan_frame_missing')
+        tx = ty = yaw = 0.
+        if frame != self.p['base_frame']:
+            tr = self.tf.lookup_transform(self.p['base_frame'], frame, Time.from_msg(scan.header.stamp))
+            tx, ty = tr.transform.translation.x, tr.transform.translation.y
+            yaw = quaternion_yaw(tr.transform.rotation)
+        points = []
+        usable = 0
+        for i, distance in enumerate(scan.ranges):
+            if (math.isnan(distance) or distance < scan.range_min
+                    or (math.isfinite(distance) and distance > scan.range_max)):
+                continue
+            usable += 1
+            if not math.isfinite(distance) or distance >= scan.range_max:
+                continue
+            a = scan.angle_min + i*scan.angle_increment + yaw
+            points.append((tx+distance*math.cos(a), ty+distance*math.sin(a)))
+        return np.asarray(points,dtype=float).reshape(-1,2),usable
+
+    def check_sweep(self, linear, angular, hits, require_map):
+        """Check final, limited motion; never mutate its curvature for avoidance."""
+        # Include command expiry and braking in the swept horizon. This is an
+        # output check, not a second path planner or an authorization to move.
+        horizon=max(self.p['swept_horizon'], self.p['command_timeout']+
+                    abs(linear)/self.p['braking_deceleration'])
+        radius=max(FOOTPRINT_RADIUS,self.p['footprint_radius'])
+        laser=swept_scan_clearance(hits,linear,angular,horizon,radius)
+        self.output_arc=swept_arc(linear,angular,horizon)[:,:2].tolist()
+        self.output_arc_frame=self.p['base_frame']
+        if not laser.allowed:
+            return False,laser.reason
+        if self.map is None:
+            return (False,'swept_map_missing') if require_map else (True,laser.reason)
+        try:
+            tr=self.tf.lookup_transform('map',self.p['base_frame'],Time())
+            clock=self.get_clock().now().nanoseconds*1e-9
+            if not -.5<=clock-stamp_seconds(tr.header.stamp)<=.5:
+                return False,'swept_transform_stale'
+            p,q=tr.transform.translation,tr.transform.rotation
+            pose=(p.x,p.y,quaternion_yaw(q))
+            self.output_arc=swept_arc(linear,angular,horizon,pose=pose)[:,:2].tolist()
+            self.output_arc_frame='map'
+            m=self.map;o=m.info.origin
+            check=swept_map_clearance(np.asarray(m.data).reshape(m.info.height,m.info.width),
+                m.info.resolution,(o.position.x,o.position.y,quaternion_yaw(o.orientation)),
+                pose,linear,angular,horizon,radius)
+            return check.allowed,check.reason
+        except (TransformException,ValueError,TypeError,ZeroDivisionError):
+            return False,'swept_pose_unavailable'
+
     def tick(self):
         for name in ('max_linear','max_angular','rotation_clearance'):
             self.p[name] = self.get_parameter(name).value
@@ -139,6 +211,7 @@ class VelocityGate(Node):
         out = Twist()
         reason = 'motion_disabled'
         nearest = bearing = None
+        self.output_arc=[];self.output_arc_frame=None;self.speed_scale=1.;self.safety_reason=None
         manual = self.p['mapping_mode'] and not self.automatic
         self.command,self.command_time = self.commands['manual' if manual else 'nav']
         active = manual or (self.enabled and now-self.enable_time < self.p['heartbeat_timeout'])
@@ -153,13 +226,16 @@ class VelocityGate(Node):
             vx, wz = self.command.linear.x, self.command.angular.z
             if math.isfinite(vx) and math.isfinite(wz):
                 reason = 'passing'
-                out.linear.x = max(-self.p['max_linear'], min(self.p['max_linear'], vx))
-                out.angular.z = max(-self.p['max_angular'], min(self.p['max_angular'], wz))
+                out.linear.x,out.angular.z,self.speed_scale=limit_twist(
+                    vx,wz,self.p['max_linear'],self.p['max_angular'])
                 if vx < -1e-5 and self.p['reverse_policy']=='recovery':
                     self.reverse_idle = None
                     approved,self.reverse_reason = self.approve_reverse(now)
                     if approved and abs(wz) <= .01:
-                        out.linear.x = max(-self.p['reverse_speed'],out.linear.x)
+                        out.linear.x = max(-min(.04,self.p['reverse_speed']),out.linear.x)
+                        # Bounded recovery is straight by contract, not a
+                        # clipped curve which the controller expected to turn.
+                        out.angular.z = 0.
                         reason = 'bounded_map_checked_reverse'
                     else:
                         out = Twist()
@@ -168,33 +244,35 @@ class VelocityGate(Node):
                     self.reverse_idle = self.reverse_idle or now
                     if now-self.reverse_idle >= .5:
                         self.reverse_start = None
-                front, back, clearance = math.inf, math.inf, math.inf
-                usable = 0
-                for i, distance in enumerate(self.scan.ranges):
-                    if math.isnan(distance) or distance < self.scan.range_min:
-                        continue
-                    usable += 1
-                    if distance > self.scan.range_max:
-                        continue
-                    a = self.scan.angle_min+i*self.scan.angle_increment
-                    if nearest is None or distance < nearest:
-                        nearest, bearing = distance, a
-                    clearance = min(clearance, distance)
-                    if math.cos(a) > math.cos(0.50):
-                        front = min(front, distance)
-                    if math.cos(a) < -math.cos(0.50):
-                        back = min(back, distance)
-                if usable == 0:
-                    out = Twist()
-                    reason = 'scan_unusable'
-                elif ((out.linear.x > 0 and front < self.p['stop_distance'])
-                      or (out.linear.x < 0 and back < self.p['stop_distance'])):
-                    out.linear.x = 0.0
-                    reason = 'forward_obstacle' if vx > 0 else 'rear_obstacle'
-                if clearance < self.p['rotation_clearance']:
-                    out.angular.z = 0.0
-                    if abs(wz) > 1e-5:
-                        reason = 'rotation_obstacle'
+                if abs(out.linear.x)>1e-5 or abs(out.angular.z)>1e-5:
+                    try:
+                        hits,usable=self.laser_hits()
+                        if not usable:
+                            out=Twist();reason='scan_unusable'
+                        else:
+                            if len(hits):
+                                distances=np.linalg.norm(hits,axis=1)
+                                idx=int(np.argmin(distances))
+                                nearest=float(distances[idx]);bearing=math.atan2(hits[idx,1],hits[idx,0])
+                            # Preserve the configured front/rear emergency
+                            # stop and rotation floor in base coordinates.
+                            angles=np.arctan2(hits[:,1],hits[:,0]) if len(hits) else np.array([])
+                            ranges=np.linalg.norm(hits,axis=1) if len(hits) else np.array([])
+                            front=ranges[np.cos(angles)>math.cos(.50)]
+                            back=ranges[np.cos(angles)<-math.cos(.50)]
+                            blocked=(out.linear.x>0 and len(front) and min(front)<self.p['stop_distance']) or (out.linear.x<0 and len(back) and min(back)<self.p['stop_distance'])
+                            if blocked:
+                                reason='forward_obstacle' if out.linear.x>0 else 'rear_obstacle'
+                                out=Twist()
+                            elif (nearest is not None and nearest<self.p['rotation_clearance'] and abs(out.angular.z)>1e-5):
+                                reason='rotation_obstacle';out=Twist()
+                            else:
+                                allowed,self.safety_reason=self.check_sweep(out.linear.x,out.angular.z,hits,
+                                    self.p['enforce_swept_map'] and not manual)
+                                if not allowed:
+                                    reason=self.safety_reason;out=Twist()
+                    except (TransformException,ValueError,TypeError):
+                        reason='scan_transform_unavailable';out=Twist()
             else:
                 reason = 'invalid_command'
         self.pub.publish(out)
@@ -204,7 +282,10 @@ class VelocityGate(Node):
             self.status_pub.publish(String(data=json.dumps(dict(
                 stamp=self.get_clock().now().nanoseconds*1e-9, reason=reason,
                 requested=[finite(self.command.linear.x), finite(self.command.angular.z)],
-                output=[out.linear.x, out.angular.z],
+                output=[out.linear.x, out.angular.z], speed_scale=self.speed_scale,
+                safety_reason=self.safety_reason, output_arc=self.output_arc,
+                output_arc_frame=self.output_arc_frame, footprint_radius=FOOTPRINT_RADIUS,
+                robot_geometry=geometry_metadata(),
                 nearest=nearest, bearing=bearing,
                 command_age=finite(now-self.command_time), scan_age=finite(now-self.scan_time),
                 heartbeat_age=finite(now-self.enable_time)))))

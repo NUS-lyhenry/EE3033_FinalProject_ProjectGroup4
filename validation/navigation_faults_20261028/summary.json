@@ -1,0 +1,154 @@
+{
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "motion": "ideal",
+  "whole_native_negative_runs": [
+    {
+      "profile": "measured",
+      "fault": "laser",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 0,
+      "terminal_after_fault": 1.3972689660004107,
+      "reason": "Navigation sensors, localization or velocity gate are stale: scan_stale",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_measured/laser2/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "measured",
+      "fault": "localization",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 0,
+      "terminal_after_fault": 1.074192010999468,
+      "reason": "Navigation sensors, localization or velocity gate are stale",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_measured/localization/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "measured",
+      "fault": "stop",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 0,
+      "terminal_after_fault": 0.6115542640000058,
+      "reason": "Navigation stopped by owner",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_measured/stop/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "measured",
+      "fault": "frozen",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 2,
+      "terminal_after_fault": 33.63769221399889,
+      "reason": "Safe reverse unavailable or unsuccessful",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_measured/frozen/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "measured",
+      "fault": "unknown_rear",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 2,
+      "terminal_after_fault": 26.197352318000412,
+      "reason": "Safe reverse refused: Unknown space behind robot",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_measured/unknown_rear/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "measured",
+      "fault": "reverse_laser",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 2,
+      "terminal_after_fault": 1.6356542720004654,
+      "reason": "Safe reverse refused: Navigation sensors, localization or velocity gate are stale: scan_stale",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_measured/reverse_laser/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "legacy",
+      "fault": "laser",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 0,
+      "terminal_after_fault": 1.3026834210013476,
+      "reason": "Navigation sensors, localization or velocity gate are stale: scan_stale",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_legacy/laser/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "legacy",
+      "fault": "localization",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 0,
+      "terminal_after_fault": 1.045346224998866,
+      "reason": "Navigation sensors, localization or velocity gate are stale",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_legacy/localization/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    },
+    {
+      "profile": "legacy",
+      "fault": "stop",
+      "passed": true,
+      "action_status": 6,
+      "recoveries": 0,
+      "terminal_after_fault": 0.5726234510002541,
+      "reason": "Navigation stopped by owner",
+      "collision_rejections": 0,
+      "report": "validation/navigation_faults_20261028/final_legacy/stop/result.json",
+      "library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+      "supervisor_sha256": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97"
+    }
+  ],
+  "passed": true,
+  "pure": {
+    "measured": {
+      "passed": 585,
+      "failed": 0,
+      "seconds": 11.05
+    },
+    "legacy": {
+      "passed": 585,
+      "failed": 0,
+      "seconds": 11.08
+    }
+  },
+  "retained_failures": [
+    {
+      "path": "validation/navigation_faults_20261028/laser_before_sensor_fix",
+      "cause": "Fresh diagnostics masked stale laser; two recoveries and backup started; terminal delayed 34.219 s."
+    },
+    {
+      "path": "validation/navigation_faults_20261028/fixture_startup_map_race",
+      "cause": "Fixture dispatched before planner had its map; startup recovery preceded sensor failure; fixed by map heartbeat and readiness delay."
+    }
+  ],
+  "native_component_checks": 26,
+  "notes": [
+    "Whole native tests use actual public NavigateToPose, proxied planner, Nav2 controller and final safety gate.",
+    "Unknown-rear and frozen cases wait for production 12 s progress windows; no artificial short timeout is used.",
+    "reverse_laser injects sensor loss only once recovery backup is active.",
+    "Negative scenarios fail the navigation action and verify fresh final zero commands and actual odometry pose."
+  ]
+}

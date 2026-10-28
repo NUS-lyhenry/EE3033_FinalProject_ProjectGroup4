@@ -3,6 +3,7 @@ import json
 import math
 import time
 import threading
+from collections import deque
 
 import cv2
 import numpy as np
@@ -20,15 +21,23 @@ from ee3033_project.ros_utils import LATCHED, set_yaw
 from simulation_geometry import clearance, raycast, render_camera
 from simulation_scenarios import default_scenario,validate_scenario
 from simulation_camera import default_camera_settings,validate_camera_settings,camera_intrinsics
+from simulation_motion import motion_profile, advance_motion
+from ee3033_project.motion_safety import PHYSICAL_RADIUS
 
 
 class SimulatedRobot(Node):
-    def __init__(self, texture_path,scenario=None):
+    def __init__(self, texture_path,scenario=None, motion='ideal'):
         super().__init__('preview_sensor_world')
         self.pose = [0., 0., 0.]
         self.command = (0., 0.)
         self.command_time = -math.inf
         self.last_tick = time.monotonic()
+        self.motion=motion_profile(motion)
+        self.command_queue=deque()
+        self.actual_velocity=(0.,0.)
+        self.collision_rejections=0
+        self.last_motion_report=-math.inf
+        self.motion_started=self.last_tick
         self.phase = 'mapping'
         self.world_lock=threading.RLock()
         self.accept_commands=True
@@ -52,6 +61,7 @@ class SimulatedRobot(Node):
         from sensor_msgs.msg import Image
         self.image = self.create_publisher(Image, '/image_raw', qos_profile_sensor_data)
         self.info = self.create_publisher(CameraInfo, '/camera_info', qos_profile_sensor_data)
+        self.motion_pub = self.create_publisher(String, '/project/simulation_motion', 10)
         self.create_subscription(Twist, '/cmd_vel', self.on_command, 10)
         self.create_subscription(String, '/project/mission_status', self.on_status, LATCHED)
         self.create_timer(.02, self.tick)
@@ -93,6 +103,7 @@ class SimulatedRobot(Node):
             if not self.accept_commands:return
             self.command = (msg.linear.x, msg.angular.z)
             self.command_time = time.monotonic()
+            self.command_queue.append((self.command_time,self.command))
 
     def stationary(self):
         with self.world_lock:
@@ -103,10 +114,12 @@ class SimulatedRobot(Node):
         with self.world_lock:
             self.accept_commands=False
             self.command=(0.,0.);self.command_time=-math.inf
+            self.command_queue.clear()
 
     def resume_commands(self):
         with self.world_lock:
             self.command=(0.,0.);self.command_time=-math.inf
+            self.command_queue.clear()
             self.accept_commands=True
 
     def apply_scenario(self,scenario,reset_pose=False):
@@ -119,7 +132,12 @@ class SimulatedRobot(Node):
             if reset_pose:
                 self.pose=list(scene['start'])
                 self.phase='mapping'
+                self.collision_rejections=0
+                self.last_motion_report=-math.inf
+                self.motion_started=time.monotonic()
             self.command=(0.,0.);self.command_time=-math.inf
+            if hasattr(self,'command_queue'):self.command_queue.clear()
+            self.actual_velocity=(0.,0.)
             self.last_tick=time.monotonic()
             self.scene_status_after=self.get_clock().now().nanoseconds*1e-9
 
@@ -137,17 +155,39 @@ class SimulatedRobot(Node):
 
     def physics_tick(self):
         now = time.monotonic()
-        dt = min(.05, now-self.last_tick)
+        start=self.last_tick
+        dt=max(0.,now-start)
         self.last_tick = now
-        v, w = self.command if now-self.command_time < .5 else (0., 0.)
-        x, y, yaw = self.pose
-        heading = yaw+w*dt
-        new_xy = np.array([x+v*math.cos(heading)*dt, y+v*math.sin(heading)*dt])
-        if not self.accept_commands:v=w=0.;new_xy=np.array([x,y]);heading=yaw
-        if clearance(new_xy,self.walls) < .14:
-            v = 0.
-            new_xy = np.array([x, y])
-        self.pose = [*map(float, new_xy), heading]
+        original=list(self.pose)
+        profile=getattr(self,'motion',motion_profile())
+        queue=getattr(self,'command_queue',())
+        rejected=False
+        # Keep every elapsed interval, including delayed command activation and
+        # the watchdog expiry. Timer load must not make the chassis move slower.
+        steps=max(1,math.ceil(dt/.02))
+        for index in range(steps):
+            t=start+(index+.5)*dt/steps
+            v,w=(0.,0.)
+            if self.accept_commands:
+                eligible=[(stamp,cmd) for stamp,cmd in queue if stamp+profile['command_delay']<=t]
+                if eligible:
+                    stamp,cmd=eligible[-1]
+                    if 0<=t-stamp<.5:v,w=cmd
+                elif not queue and profile['command_delay']==0. and 0<=t-self.command_time<.5:
+                    v,w=self.command
+                if abs(v)<profile['linear_deadband']:v=0.
+                if abs(w)<profile['angular_deadband']:w=0.
+                if profile['frozen']:v=w=0.
+            self.pose,blocked=advance_motion(self.pose,(v,w),dt/steps,self.walls,PHYSICAL_RADIUS)
+            rejected |= blocked
+        if queue:
+            while len(queue)>1 and queue[1][0]<now-2.:queue.popleft()
+        x,y,heading=self.pose
+        mid=(heading+original[2])/2
+        linear=((x-original[0])*math.cos(mid)+(y-original[1])*math.sin(mid))/dt if dt>0 else 0.
+        angular=(heading-original[2])/dt if dt>0 else 0.
+        self.actual_velocity=(linear,angular)
+        if rejected:self.collision_rejections=getattr(self,'collision_rejections',0)+1
         stamp = self.get_clock().now().to_msg()
         t = TransformStamped()
         t.header.stamp = stamp
@@ -160,8 +200,17 @@ class SimulatedRobot(Node):
         odom.child_frame_id = 'base_footprint'
         odom.pose.pose.position.x, odom.pose.pose.position.y = self.pose[:2]
         set_yaw(odom.pose.pose.orientation, heading)
-        odom.twist.twist.linear.x, odom.twist.twist.angular.z = float(v), float(w)
+        odom.twist.twist.linear.x, odom.twist.twist.angular.z = float(linear), float(angular)
         self.odom.publish(odom)
+        if hasattr(self,'motion_pub') and now-self.last_motion_report>=.1:
+            self.last_motion_report=now
+            self.motion_pub.publish(String(data=json.dumps(dict(
+                stamp=stamp.sec+stamp.nanosec*1e-9, ground_truth=list(self.pose),
+                command=list(self.command), actual_velocity=list(self.actual_velocity),
+                collision_rejected=rejected, collision_rejections=self.collision_rejections,
+                clearance=clearance(self.pose[:2],self.walls), radius=PHYSICAL_RADIUS,
+                elapsed_step=dt,elapsed_wall=now-self.motion_started,
+                profile=profile,evaluation_only=True))))
 
     def scan_tick(self):
         with self.world_lock:self.publish_scan()

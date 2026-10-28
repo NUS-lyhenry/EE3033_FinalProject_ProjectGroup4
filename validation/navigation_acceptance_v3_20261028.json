@@ -1,0 +1,546 @@
+{
+  "status": "FAILED_INCOMPLETE_SLAM",
+  "passed": false,
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "merged": false,
+  "planned_main": {
+    "fixed": 60,
+    "random": 60,
+    "legacy_pressure": 20
+  },
+  "fixed": {
+    "completed": 60,
+    "arrived": 49,
+    "safe_negative": 10,
+    "failed": 1,
+    "cases": {
+      "dead_end_exit": {
+        "arrived": 5
+      },
+      "final_heading": {
+        "arrived": 5
+      },
+      "legacy95": {
+        "arrived": 5
+      },
+      "seed1023": {
+        "arrived": 5
+      },
+      "successive_right_angles": {
+        "arrived": 5
+      },
+      "too_narrow": {
+        "arrived": 5
+      },
+      "doorway": {
+        "arrived": 5
+      },
+      "large_initial_heading": {
+        "arrived": 4,
+        "navigation_failure": 1
+      },
+      "measured_too_narrow": {
+        "safe_unreachable": 5
+      },
+      "seed102_live": {
+        "arrived": 5
+      },
+      "tight_passage": {
+        "arrived": 5
+      },
+      "unreachable_target": {
+        "safe_unreachable": 5
+      }
+    }
+  },
+  "random_known": {
+    "completed_distinct": 20,
+    "arrived": 20,
+    "collision_rejections": 0,
+    "source_versions": 1,
+    "records": [
+      {
+        "case_id": "random_00",
+        "artifact": "random-known-0/random_00/0_known_navigate/result.json",
+        "result_sha256": "b3f5b58c219d2e2798d67417603d74d0a2460219abe15b29e868fde7ebad1796",
+        "seconds": 52.237,
+        "final_distance": 0.11663629868222837,
+        "final_heading_error": 0.15853663672160603,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_01",
+        "artifact": "random-1/random_01/0_known_navigate/result.json",
+        "result_sha256": "f6c2fbc5eca5fe94f0b45688ba7794e1589d255e0d7e981a3dec394e981f1ff3",
+        "seconds": 52.409,
+        "final_distance": 0.11433680694694814,
+        "final_heading_error": 0.16340889801366204,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_02",
+        "artifact": "random-known-0/random_02/0_known_navigate/result.json",
+        "result_sha256": "ef5110cb650a7226e87b65d8c18bb5b8e1206332a07c004a2517c5e90653f19a",
+        "seconds": 47.67,
+        "final_distance": 0.11411382405258581,
+        "final_heading_error": 0.16561386723025795,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_03",
+        "artifact": "random-1/random_03/0_known_navigate/result.json",
+        "result_sha256": "1ab5c067e7a976bf9949359df829a859ac2f1eb00d47966905c04fadd37961ae",
+        "seconds": 42.865,
+        "final_distance": 0.11517555340193757,
+        "final_heading_error": 0.15265193071817534,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_04",
+        "artifact": "random-known-0/random_04/0_known_navigate/result.json",
+        "result_sha256": "17b8d11ed4a451f491c0998bb75a4f192ef6df9f4b032ca6efaab73e9c869886",
+        "seconds": 42.326,
+        "final_distance": 0.11412878446821373,
+        "final_heading_error": 0.15962322184466526,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_05",
+        "artifact": "random-1/random_05/0_known_navigate/result.json",
+        "result_sha256": "471f68b279b7a40411b78fda1b8c571805362e8820b2a81cd28ceae7391fd554",
+        "seconds": 61.423,
+        "final_distance": 0.11610250125029875,
+        "final_heading_error": 0.1700820942573629,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_06",
+        "artifact": "random-known-0/random_06/0_known_navigate/result.json",
+        "result_sha256": "ac476eb10fe13ee384ef5c82febe976287a1929900f69f040ddce62da64e6ad5",
+        "seconds": 55.717,
+        "final_distance": 0.11743017119620565,
+        "final_heading_error": 0.1702445802446953,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_07",
+        "artifact": "random-1/random_07/0_known_navigate/result.json",
+        "result_sha256": "32666efb1e39be7a3edfb4f064f7ba91296d868405103c8553d0a6ddef3c3131",
+        "seconds": 60.367,
+        "final_distance": 0.11603103519498378,
+        "final_heading_error": 0.14903036392785943,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_08",
+        "artifact": "random-known-0/random_08/0_known_navigate/result.json",
+        "result_sha256": "65b9fd6ea48325aa23273a0a2feff10abb63dd754104f78b2ccf5935635f0da8",
+        "seconds": 52.018,
+        "final_distance": 0.11500521889876028,
+        "final_heading_error": 0.16203123656549936,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_09",
+        "artifact": "random-known-1/random_09/0_known_navigate/result.json",
+        "result_sha256": "17590188ea2c51630499a291e804e40ac5dbfc3730a26264ee76380b561081af",
+        "seconds": 58.535,
+        "final_distance": 0.1176161669246177,
+        "final_heading_error": 0.18097391338234844,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_10",
+        "artifact": "random-known-0/random_10/0_known_navigate/result.json",
+        "result_sha256": "fd8d1c686d7b0a8b90ce837ab1a333c3bdfe9b625227a71fb082a51e4be6c4e7",
+        "seconds": 56.0,
+        "final_distance": 0.11487304139043705,
+        "final_heading_error": 0.17345182987320415,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_11",
+        "artifact": "random-known-1/random_11/0_known_navigate/result.json",
+        "result_sha256": "b85831a8b1cecc12214c227b47f1d19a581df0648f622885a145a8abc3733844",
+        "seconds": 61.032,
+        "final_distance": 0.1163557882937427,
+        "final_heading_error": 0.15929834140095875,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_12",
+        "artifact": "random-known-0/random_12/0_known_navigate/result.json",
+        "result_sha256": "b90be6e554826c5c3d70eb58b5f95a5d85828308044609be10e049ba5a291f5e",
+        "seconds": 59.125,
+        "final_distance": 0.11649475049224324,
+        "final_heading_error": 0.17577059492173494,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_13",
+        "artifact": "random-known-1/random_13/0_known_navigate/result.json",
+        "result_sha256": "b956c28bc8a3e5e277783f4d3ef16f7977128bdff83ca04bbea64e9ecc3cd969",
+        "seconds": 61.648,
+        "final_distance": 0.11436967780774346,
+        "final_heading_error": 0.18140811206251226,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_14",
+        "artifact": "random-known-0/random_14/0_known_navigate/result.json",
+        "result_sha256": "14438f9b4bf2bef6a34ebb67fa899b792fb4cbd5f6d7eccc7868a79d4c7f3294",
+        "seconds": 40.845,
+        "final_distance": 0.11763847437651306,
+        "final_heading_error": 0.1758174111299512,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_15",
+        "artifact": "random-known-1/random_15/0_known_navigate/result.json",
+        "result_sha256": "eea4c161dcae2d4dd3a3733f655ef0384ff1e45a8d6dd553dce56f04b9a724b5",
+        "seconds": 53.18,
+        "final_distance": 0.11273063054037505,
+        "final_heading_error": 0.1695997179736646,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_16",
+        "artifact": "random-known-0/random_16/0_known_navigate/result.json",
+        "result_sha256": "0ce6a51c69777376b4a8e670f502ba6f5e62cde762432a368d591a189155e9d5",
+        "seconds": 58.811,
+        "final_distance": 0.11843737958780133,
+        "final_heading_error": 0.16227573598572637,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_17",
+        "artifact": "random-known-1/random_17/0_known_navigate/result.json",
+        "result_sha256": "d27387712d664c37aafc389bb543f7781f4c3147bc18add2b6bdfdd10d38cfe0",
+        "seconds": 51.005,
+        "final_distance": 0.11483551485643453,
+        "final_heading_error": 0.15943293396882482,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_18",
+        "artifact": "random-known-0/random_18/0_known_navigate/result.json",
+        "result_sha256": "d9f24e40598e192e8aa79147e13739a7d821a367b3d7bc59bf8f4aa2ec9b70d8",
+        "seconds": 51.247,
+        "final_distance": 0.11672414993325252,
+        "final_heading_error": 0.1793694049653285,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      },
+      {
+        "case_id": "random_19",
+        "artifact": "random-known-1/random_19/0_known_navigate/result.json",
+        "result_sha256": "5daee663294005b8ab2db74d8c0a0054521d3088984a6813ab688363f4f5d1dc",
+        "seconds": 60.481,
+        "final_distance": 0.11655176027698771,
+        "final_heading_error": 0.18449346924285973,
+        "collision_rejections": 0,
+        "outcome": "arrived",
+        "error": null
+      }
+    ],
+    "extra_interrupted_attempts": [
+      {
+        "case_id": "random_00",
+        "artifact": "random-0/random_00/0_known_navigate/result.json",
+        "result_sha256": "9d751ad91d6417b9d846ca1c0598149fcaabecf899dd03ba37a4dd1323236436",
+        "seconds": 35.732,
+        "final_distance": null,
+        "final_heading_error": null,
+        "collision_rejections": null,
+        "outcome": "test_interrupted",
+        "error": "Benchmark interrupted by outer watchdog or operator"
+      },
+      {
+        "case_id": "random_09",
+        "artifact": "random-1/random_09/0_known_navigate/result.json",
+        "result_sha256": "37d509b3dba19842231f5772333d4a2e3d8631c12eeb0d891f4abd7fc6d84a33",
+        "seconds": 13.831,
+        "final_distance": null,
+        "final_heading_error": null,
+        "collision_rejections": null,
+        "outcome": "test_interrupted",
+        "error": "Benchmark interrupted by outer watchdog or operator"
+      }
+    ]
+  },
+  "random_slam": {
+    "attempted": 8,
+    "failed": 8,
+    "not_attempted": 32,
+    "records": [
+      {
+        "case_id": "random_01",
+        "task": "waypoint",
+        "outcome": "navigation_failure",
+        "mapper_state": "FAILED",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.03943732730469731,
+        "artifact": "random-1/random_01/1_slam_waypoint/result.json"
+      },
+      {
+        "case_id": "random_01",
+        "task": "automap",
+        "outcome": "navigation_failure",
+        "mapper_state": "MAPPED_PARTIAL",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.03943732730469731,
+        "artifact": "random-1/random_01/2_slam_automap/result.json"
+      },
+      {
+        "case_id": "random_03",
+        "task": "waypoint",
+        "outcome": "navigation_failure",
+        "mapper_state": "FAILED",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.0359251968503937,
+        "artifact": "random-1/random_03/1_slam_waypoint/result.json"
+      },
+      {
+        "case_id": "random_03",
+        "task": "automap",
+        "outcome": "navigation_failure",
+        "mapper_state": "MAPPED_PARTIAL",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.0359251968503937,
+        "artifact": "random-1/random_03/2_slam_automap/result.json"
+      },
+      {
+        "case_id": "random_05",
+        "task": "waypoint",
+        "outcome": "navigation_failure",
+        "mapper_state": "FAILED",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.0228676347855116,
+        "artifact": "random-1/random_05/1_slam_waypoint/result.json"
+      },
+      {
+        "case_id": "random_05",
+        "task": "automap",
+        "outcome": "navigation_failure",
+        "mapper_state": "MAPPED_PARTIAL",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.0228676347855116,
+        "artifact": "random-1/random_05/2_slam_automap/result.json"
+      },
+      {
+        "case_id": "random_07",
+        "task": "waypoint",
+        "outcome": "navigation_failure",
+        "mapper_state": "FAILED",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.023858214042263123,
+        "artifact": "random-1/random_07/1_slam_waypoint/result.json"
+      },
+      {
+        "case_id": "random_07",
+        "task": "automap",
+        "outcome": "navigation_failure",
+        "mapper_state": "MAPPED_PARTIAL",
+        "frontier_goals_sent": 0,
+        "mapped_free_fraction": 0.023858214042263123,
+        "artifact": "random-1/random_07/2_slam_automap/result.json"
+      }
+    ],
+    "root_cause": "Initial footprint-safe region maximum reachable displacement .177285 m, but normal frontiers reject all candidates closer than .35 m; ordinary arrival tolerance also cannot guarantee SLAM XY scan acceptance threshold. No fake scans, free-space dilation or oracle relabeling used."
+  },
+  "legacy": {
+    "completed": 20,
+    "arrived": 20,
+    "passed": true,
+    "summary": "navigation_legacy_pressure_20261028.json"
+  },
+  "failures": [
+    {
+      "case_id": "large_initial_heading",
+      "artifact": "fixed-1/large_initial_heading/1_known_waypoint/result.json",
+      "result_sha256": "7816080e8e1fca6dd5fdc10962622de99d685861f7335b1bbaecfa0f03473bf5",
+      "seconds": 18.859,
+      "final_distance": 1.3341664064126335,
+      "final_heading_error": 1.8895224516223423,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_00",
+      "artifact": "random-0/random_00/0_known_navigate/result.json",
+      "result_sha256": "9d751ad91d6417b9d846ca1c0598149fcaabecf899dd03ba37a4dd1323236436",
+      "seconds": 35.732,
+      "final_distance": null,
+      "final_heading_error": null,
+      "collision_rejections": null,
+      "outcome": "test_interrupted",
+      "error": "Benchmark interrupted by outer watchdog or operator"
+    },
+    {
+      "case_id": "random_01",
+      "artifact": "random-1/random_01/1_slam_waypoint/result.json",
+      "result_sha256": "b07b8c33909049bbfa28d504d1d9dab08bf2606c8ace62099ced98f6220e99e5",
+      "seconds": 10.864,
+      "final_distance": 3.932927344466466,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_01",
+      "artifact": "random-1/random_01/2_slam_automap/result.json",
+      "result_sha256": "b5f6ecf688b5aeeb6f9af82a64825ae3d2596b7c3c0642c7607681d565b8447d",
+      "seconds": 15.478,
+      "final_distance": 0.0,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_03",
+      "artifact": "random-1/random_03/1_slam_waypoint/result.json",
+      "result_sha256": "d1cfd95c59269865fa87bf9fdcda51f6d4d771e10b918b542e18b3d8a9d7c0d9",
+      "seconds": 10.805,
+      "final_distance": 3.9868851727013674,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_03",
+      "artifact": "random-1/random_03/2_slam_automap/result.json",
+      "result_sha256": "8111fd390dd0233ed2334ffc41a8b913766e2131cdf1c496f586aa6a7e4938ab",
+      "seconds": 17.449,
+      "final_distance": 0.0,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_05",
+      "artifact": "random-1/random_05/1_slam_waypoint/result.json",
+      "result_sha256": "396207c4a23fed185a67e9473833c9d24f8c907c00fbb83c67221f0a9d1ce433",
+      "seconds": 11.0,
+      "final_distance": 4.892815966427123,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_05",
+      "artifact": "random-1/random_05/2_slam_automap/result.json",
+      "result_sha256": "bf253623a59cd8bfbdfa455539484f4a058218a6fba147cffec556e0e70d7df9",
+      "seconds": 17.29,
+      "final_distance": 0.0,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_07",
+      "artifact": "random-1/random_07/1_slam_waypoint/result.json",
+      "result_sha256": "c1c4633e889d3fd3223c95c18de460ff697b37bab45e10f7c12a3e118cf738af",
+      "seconds": 14.528,
+      "final_distance": 4.834747297295419,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_07",
+      "artifact": "random-1/random_07/2_slam_automap/result.json",
+      "result_sha256": "074c974d052775debf5b0febc6bc3b520f2eefd0f1ca285df1ff2e9503b0f4c0",
+      "seconds": 17.261,
+      "final_distance": 0.0,
+      "final_heading_error": 0.0,
+      "collision_rejections": 0,
+      "outcome": "navigation_failure",
+      "error": null
+    },
+    {
+      "case_id": "random_09",
+      "artifact": "random-1/random_09/0_known_navigate/result.json",
+      "result_sha256": "37d509b3dba19842231f5772333d4a2e3d8631c12eeb0d891f4abd7fc6d84a33",
+      "seconds": 13.831,
+      "final_distance": null,
+      "final_heading_error": null,
+      "collision_rejections": null,
+      "outcome": "test_interrupted",
+      "error": "Benchmark interrupted by outer watchdog or operator"
+    }
+  ],
+  "total_collision_rejections": 0,
+  "artifact_root": "/Users/lyhenry/Library/CloudStorage/OneDrive-NationalUniversityofSingapore/University/Y3S1/.navigation-acceptance/20261028/final-v3",
+  "failures_retained": true,
+  "production_source_sha256": {
+    "scripts/simulation_robot.py": "2747815f5d8f68222c90fa97da119374a85dd5bc5b3bcd7d47880686249be03c",
+    "scripts/simulation_motion.py": "c679741f9a1012a8a8450e89385a0bb0edf158f516d383469e60c101f0f989f3",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97",
+    "src/ee3033_project/ee3033_project/navigation_supervision.py": "f902ca3cc40d79a786b5be75f613f8f7ff5effb1acab6d1d24a4959dbf072751",
+    "src/ee3033_project/ee3033_project/path_planner.py": "755a097cf8c628d4d51594af58d124ffc25bf145db8d33d10f6e636aa37c2ad5",
+    "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2",
+    "src/ee3033_project/ee3033_project/velocity_gate.py": "c6647799633331190b041ac60c3ed13e24f551c6dce05e46b826cdde32173873",
+    "src/ee3033_project/ee3033_project/motion_safety.py": "b0598558a241f37d269c2929be77928fbdd77eb50026392b041646c46e46ab7a",
+    "src/ee3033_project/ee3033_project/mapper.py": "5ac1c41caef991ea9c755777a9146d84360c61f2673f6fd09cc038a6db53d953",
+    "src/ee3033_project/ee3033_project/mission.py": "b00aa54c69be25d8c147106f13726267f93039418999b16018999024cb6e2f71",
+    "src/ee3033_project/ee3033_project/frontiers.py": "177719d54c11a12f4072f693eb2e6372c3bf1b4da87a8aa8e4450f492449c7fb",
+    "src/ee3033_project/ee3033_project/waypoint.py": "57103aff2f31bdbfeaa73f6b1b8e95764b933b6110aa2417a37ef97add1909cd",
+    "src/ee3033_project/ee3033_project/navigation_costmap.py": "3688e7faf91f49e12478e4f320ce823ce284661cb99f53e2effedcafcd06668f",
+    "src/ee3033_project/ee3033_project/trial.py": "1da9bf40f9922996fb6d7c7671e07cdddaa1eb09839a220000918844ac77d778",
+    "src/ee3033_project/ee3033_project/gap.py": "5bf25f183b1bc67e888eb2843e985477b6448a8cf59fdde7fde9f824902229c1",
+    "src/ee3033_project/ee3033_project/robot_geometry.py": "ac0a4040515248916ed7b5b4d377aa464a0d67fe032becce7a521e695fd94e47",
+    "src/ee3033_project/config/slam.yaml": "8bc429af86ea0d0fbb4a442832e87407b3fe326b292abee18a8177e9453643b8",
+    "src/ee3033_project/launch/navigation.launch.py": "1ff3e5c124d7b995e2de185c85b23fec9483f657ed85cfcc535e7018f43178f9",
+    "src/ee3033_navigation/src/regulated_path_follower.cpp": "8b149873748c5d3b51063a927a14b7ff1862d3c80c9e3635b23a8621498d2359"
+  },
+  "controller_library_sha256": [
+    "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c"
+  ],
+  "evidence_limits": "Known-map successes and old-radius pressure success do not certify real SLAM. Fixed aggregate remains failed because one resource-related stale-sensor abort is retained. Physical robot has not been exercised by this suite."
+}

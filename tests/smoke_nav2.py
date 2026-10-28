@@ -178,9 +178,8 @@ def main():
                 getter=world.create_client(GetParameters,'/controller_server/get_parameters')
                 assert setter.wait_for_service(timeout_sec=3) and getter.wait_for_service(timeout_sec=3)
                 for linear,angular in [(.18,.6),(.12,.4)]:
-                    entries={'FollowPath.max_vel_x':linear,'FollowPath.max_speed_xy':linear,
-                             'FollowPath.max_vel_theta':angular,
-                             'FollowPath.rotate_to_heading_angular_vel':angular*.875}
+                    entries={'FollowPath.desired_linear_vel':linear,'FollowPath.max_linear_vel':linear,
+                             'FollowPath.rotate_to_heading_angular_vel':angular,'FollowPath.max_angular_vel':angular}
                     future=setter.call_async(SetParametersAtomically.Request(parameters=[
                         Parameter(key,value=value).to_parameter_msg() for key,value in entries.items()]))
                     until=time.monotonic()+4

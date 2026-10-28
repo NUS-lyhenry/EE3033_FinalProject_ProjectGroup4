@@ -6,6 +6,7 @@ from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDesc
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def setup(context):
@@ -43,8 +44,10 @@ def generate_launch_description():
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('camera', default_value='true'),
+        DeclareLaunchArgument('self_mask_radius', default_value='.08'),
         OpaqueFunction(function=setup),
-        Node(package='ee3033_project', executable='scan_resampler', output='screen'),
+        Node(package='ee3033_project', executable='scan_resampler', output='screen',
+             parameters=[{'self_mask_radius':ParameterValue(LaunchConfiguration('self_mask_radius'),value_type=float)}]),
         # REP-103 body frame (x forward/y left/z up) -> optical frame (z forward).
         # Existing base launch owns camera_link's measured mounting position/pitch.
         Node(package='tf2_ros', executable='static_transform_publisher',

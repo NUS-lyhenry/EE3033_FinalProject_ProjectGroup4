@@ -275,6 +275,8 @@ class StageProcess:
         self.model = model
         self.calibration_file = calibration_file
         self.navigation_profile = 'original'
+        self.scan_self_mask_radius = .08
+        self.mapping_resolution = .05
         self.vision_config = ''
         self.calibration_directory = '~/ee3033_calibrations'
         self.calibration_port, self.console_port = 8780, 8765
@@ -321,7 +323,10 @@ class StageProcess:
         directory=Path(tempfile.mkdtemp(prefix=phase+'_',dir=self.root))
         self.log=directory/'launch.log'
         args=['ros2','launch','ee3033_project',phase+'.launch.py',
-              'allow_motion:='+str(bool(self.allow_motion)).lower()]
+              'allow_motion:='+str(bool(self.allow_motion)).lower(),
+              'self_mask_radius:='+str(self.scan_self_mask_radius)]
+        if phase=='mapping':
+            args.append('mapping_resolution:='+str(self.mapping_resolution))
         if phase=='calibration':
             args += ['port:='+str(self.calibration_port), 'parent_port:='+str(self.console_port),
                      'output_directory:='+str(self.calibration_directory)]

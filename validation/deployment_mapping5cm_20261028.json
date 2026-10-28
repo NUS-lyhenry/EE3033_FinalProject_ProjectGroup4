@@ -1,0 +1,47 @@
+{
+  "release": "mapping5cm_20261028_dcb78f2c6f",
+  "archive": "/private/tmp/mapping5cm_20261028_dcb78f2c6f.tar.gz",
+  "archive_sha256": "ddd11def950d957f01b17c9304bc9d2052d6baccb959044fee28d4e54b8293ac",
+  "manifest_sha256": "dcb78f2c6f6707a46b87da96971d081673741641ce281a7b8bbd8eb364578240",
+  "files": 109,
+  "deployed": true,
+  "robot": "balance6",
+  "ui": "http://127.0.0.1:8765/#/workflow",
+  "robot_mapping_resolution_m": 0.05,
+  "source_default_resolution_m": 0.0125,
+  "operator_filter_radius_preserved_m": 0.2,
+  "simulation_run": false,
+  "validation": "Static review/syntax, native Python install/import, actual API/config/map readback only; no autonomous Start issued.",
+  "readback": {
+    "version": "mapping5cm_20261028_dcb78f2c6f",
+    "resolution": 0.05000000074505806,
+    "state": "WAITING",
+    "filter": {
+      "success": true,
+      "value": 0.2,
+      "live_value": 0.2,
+      "available": true,
+      "synchronized": true,
+      "editable": true,
+      "requires_new_map": true,
+      "limits": {
+        "min": 0.0,
+        "max": 0.2,
+        "step": 0.005
+      },
+      "fault": null,
+      "message": "Masked readings are unknown. Rebuild the map to remove old recorded obstacles."
+    },
+    "footprint": {
+      "allowed": true,
+      "reason": "swept_map_clear"
+    },
+    "anchor": null,
+    "inside_values": {
+      "0": 16
+    },
+    "auto_start_issued": false
+  },
+  "previous_release_preserved": "scan_20261028_e5958c8968",
+  "status": "Ready for operator test; start-point footprint clear; initial raster connector unavailable in recorded sample, under separate mathematical review; no navigation success claimed."
+}

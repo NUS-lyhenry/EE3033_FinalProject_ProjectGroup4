@@ -1,0 +1,257 @@
+[INFO] [launch]: All log files can be found below /root/.ros/log/2026-10-28-06-37-25-649620-35e0044a26a1-3236
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [controller_server-1]: process started with pid [3240]
+[INFO] [smoother_server-2]: process started with pid [3242]
+[INFO] [planner_server-3]: process started with pid [3244]
+[INFO] [behavior_server-4]: process started with pid [3246]
+[INFO] [bt_navigator-5]: process started with pid [3261]
+[INFO] [path_planner-6]: process started with pid [3281]
+[INFO] [navigation_supervisor-7]: process started with pid [3285]
+[INFO] [lifecycle_manager-8]: process started with pid [3287]
+[controller_server-1] [INFO] [1793169445.690470941] [controller_server]: 
+[controller_server-1] 	controller_server lifecycle node launched. 
+[controller_server-1] 	Waiting on external lifecycle transitions to activate
+[controller_server-1] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[smoother_server-2] [INFO] [1793169445.694476114] [smoother_server]: 
+[smoother_server-2] 	smoother_server lifecycle node launched. 
+[smoother_server-2] 	Waiting on external lifecycle transitions to activate
+[smoother_server-2] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[smoother_server-2] [INFO] [1793169445.751624759] [smoother_server]: Creating smoother server
+[planner_server-3] [INFO] [1793169445.693783176] [planner_server]: 
+[planner_server-3] 	planner_server lifecycle node launched. 
+[planner_server-3] 	Waiting on external lifecycle transitions to activate
+[planner_server-3] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[planner_server-3] [INFO] [1793169445.749900602] [planner_server]: Creating
+[planner_server-3] [INFO] [1793169445.762831970] [global_costmap.global_costmap]: 
+[planner_server-3] 	global_costmap lifecycle node launched. 
+[planner_server-3] 	Waiting on external lifecycle transitions to activate
+[planner_server-3] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[planner_server-3] [INFO] [1793169445.763090587] [global_costmap.global_costmap]: Creating Costmap
+[lifecycle_manager-8] [INFO] [1793169445.763328622] [project_navigation_lifecycle]: Creating
+[lifecycle_manager-8] [INFO] [1793169445.767060970] [project_navigation_lifecycle]: [34m[1mCreating and initializing lifecycle service clients[0m[0m
+[controller_server-1] [INFO] [1793169445.779540060] [controller_server]: Creating controller server
+[controller_server-1] [INFO] [1793169445.781193511] [local_costmap.local_costmap]: 
+[controller_server-1] 	local_costmap lifecycle node launched. 
+[controller_server-1] 	Waiting on external lifecycle transitions to activate
+[controller_server-1] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[controller_server-1] [INFO] [1793169445.781392297] [local_costmap.local_costmap]: Creating Costmap
+[behavior_server-4] [INFO] [1793169445.850861703] [behavior_server]: 
+[behavior_server-4] 	behavior_server lifecycle node launched. 
+[behavior_server-4] 	Waiting on external lifecycle transitions to activate
+[behavior_server-4] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[bt_navigator-5] [INFO] [1793169445.855449817] [bt_navigator]: 
+[bt_navigator-5] 	bt_navigator lifecycle node launched. 
+[bt_navigator-5] 	Waiting on external lifecycle transitions to activate
+[bt_navigator-5] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[bt_navigator-5] [INFO] [1793169445.855511315] [bt_navigator]: Creating
+[lifecycle_manager-8] [INFO] [1793169445.859071419] [project_navigation_lifecycle]: [34m[1mStarting managed nodes bringup...[0m[0m
+[lifecycle_manager-8] [INFO] [1793169445.859099126] [project_navigation_lifecycle]: [34m[1mConfiguring controller_server[0m[0m
+[controller_server-1] [INFO] [1793169445.860289716] [controller_server]: Configuring controller interface
+[controller_server-1] [INFO] [1793169445.860517918] [controller_server]: getting goal checker plugins..
+[controller_server-1] [INFO] [1793169445.860545000] [controller_server]: Controller frequency set to 15.0000Hz
+[controller_server-1] [INFO] [1793169445.860557666] [local_costmap.local_costmap]: Configuring
+[controller_server-1] [INFO] [1793169445.861713132] [local_costmap.local_costmap]: Using plugin "obstacle_layer"
+[controller_server-1] [INFO] [1793169445.869851975] [local_costmap.local_costmap]: Subscribed to Topics: scan
+[controller_server-1] [INFO] [1793169445.872227572] [local_costmap.local_costmap]: Initialized plugin "obstacle_layer"
+[controller_server-1] [INFO] [1793169445.872243488] [local_costmap.local_costmap]: Using plugin "inflation_layer"
+[controller_server-1] [INFO] [1793169445.872681558] [local_costmap.local_costmap]: Initialized plugin "inflation_layer"
+[controller_server-1] [INFO] [1793169445.876381574] [controller_server]: Created progress_checker : progress_checker of type nav2_controller::SimpleProgressChecker
+[controller_server-1] [INFO] [1793169445.877850614] [controller_server]: Created goal checker : goal_checker of type nav2_controller::SimpleGoalChecker
+[controller_server-1] [INFO] [1793169445.878400598] [controller_server]: Created goal checker : home_goal_checker of type nav2_controller::SimpleGoalChecker
+[controller_server-1] [INFO] [1793169445.879114910] [controller_server]: Created goal checker : observation_goal_checker of type nav2_controller::SimpleGoalChecker
+[controller_server-1] [INFO] [1793169445.879660935] [controller_server]: Controller Server has goal_checker home_goal_checker observation_goal_checker  goal checkers available.
+[controller_server-1] [INFO] [1793169445.880716488] [controller_server]: Created controller : FollowPath of type ee3033_navigation::RegulatedPathFollower
+[controller_server-1] [INFO] [1793169445.885677091] [controller_server]: Controller Server has FollowPath  controllers available.
+[lifecycle_manager-8] [INFO] [1793169445.889434813] [project_navigation_lifecycle]: [34m[1mConfiguring smoother_server[0m[0m
+[smoother_server-2] [INFO] [1793169445.889584559] [smoother_server]: Configuring smoother server
+[smoother_server-2] [INFO] [1793169445.955566151] [smoother_server]: Created smoother : simple_smoother of type nav2_smoother::SimpleSmoother
+[smoother_server-2] [INFO] [1793169445.956396127] [smoother_server]: Smoother Server has simple_smoother  smoothers available.
+[lifecycle_manager-8] [INFO] [1793169445.962623776] [project_navigation_lifecycle]: [34m[1mConfiguring planner_server[0m[0m
+[planner_server-3] [INFO] [1793169445.962739731] [planner_server]: Configuring
+[planner_server-3] [INFO] [1793169445.962755856] [global_costmap.global_costmap]: Configuring
+[planner_server-3] [INFO] [1793169445.969284080] [global_costmap.global_costmap]: Using plugin "static_layer"
+[planner_server-3] [INFO] [1793169445.972687687] [global_costmap.global_costmap]: Subscribing to the map topic (/map) with transient local durability
+[planner_server-3] [INFO] [1793169445.974016606] [global_costmap.global_costmap]: Initialized plugin "static_layer"
+[planner_server-3] [INFO] [1793169445.974169769] [global_costmap.global_costmap]: Using plugin "obstacle_layer"
+[planner_server-3] [INFO] [1793169445.974900580] [global_costmap.global_costmap]: Subscribed to Topics: scan
+[planner_server-3] [INFO] [1793169445.978459683] [global_costmap.global_costmap]: Initialized plugin "obstacle_layer"
+[planner_server-3] [INFO] [1793169445.978479725] [global_costmap.global_costmap]: Using plugin "inflation_layer"
+[planner_server-3] [INFO] [1793169445.979295950] [global_costmap.global_costmap]: Initialized plugin "inflation_layer"
+[planner_server-3] [INFO] [1793169446.050650595] [global_costmap.global_costmap]: StaticLayer: Resizing costmap to 80 X 80 at 0.050000 m/pix
+[planner_server-3] [INFO] [1793169446.050771258] [planner_server]: Created global planner plugin GridBased of type nav2_navfn_planner/NavfnPlanner
+[planner_server-3] [INFO] [1793169446.050784633] [planner_server]: Configuring plugin GridBased of type NavfnPlanner
+[planner_server-3] [INFO] [1793169446.050967877] [planner_server]: Planner Server has GridBased  planners available.
+[lifecycle_manager-8] [INFO] [1793169446.055807985] [project_navigation_lifecycle]: [34m[1mConfiguring behavior_server[0m[0m
+[behavior_server-4] [INFO] [1793169446.055921231] [behavior_server]: Configuring
+[behavior_server-4] [INFO] [1793169446.059246133] [behavior_server]: Creating behavior plugin spin of type nav2_behaviors/Spin
+[behavior_server-4] [INFO] [1793169446.059598831] [behavior_server]: Configuring spin
+[behavior_server-4] [INFO] [1793169446.063473800] [behavior_server]: Creating behavior plugin backup of type nav2_behaviors/BackUp
+[behavior_server-4] [INFO] [1793169446.063732001] [behavior_server]: Configuring backup
+[behavior_server-4] [INFO] [1793169446.067295313] [behavior_server]: Creating behavior plugin drive_on_heading of type nav2_behaviors/DriveOnHeading
+[behavior_server-4] [INFO] [1793169446.067557846] [behavior_server]: Configuring drive_on_heading
+[behavior_server-4] [INFO] [1793169446.070381222] [behavior_server]: Creating behavior plugin wait of type nav2_behaviors/Wait
+[behavior_server-4] [INFO] [1793169446.070712920] [behavior_server]: Configuring wait
+[lifecycle_manager-8] [INFO] [1793169446.073113474] [project_navigation_lifecycle]: [34m[1mConfiguring bt_navigator[0m[0m
+[bt_navigator-5] [INFO] [1793169446.073209138] [bt_navigator]: Configuring
+[lifecycle_manager-8] [INFO] [1793169446.259983756] [project_navigation_lifecycle]: [34m[1mActivating controller_server[0m[0m
+[controller_server-1] [INFO] [1793169446.260089628] [controller_server]: Activating
+[controller_server-1] [INFO] [1793169446.260112419] [local_costmap.local_costmap]: Activating
+[controller_server-1] [INFO] [1793169446.260152918] [local_costmap.local_costmap]: Checking transform
+[controller_server-1] [INFO] [1793169446.260208541] [local_costmap.local_costmap]: start
+[controller_server-1] [INFO] [1793169446.462834525] [controller_server]: Activating controller: FollowPath of type regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[controller_server-1] [INFO] [1793169446.462885356] [controller_server]: Creating bond (controller_server) to lifecycle manager.
+[lifecycle_manager-8] [INFO] [1793169446.565289420] [project_navigation_lifecycle]: Server controller_server connected with bond.
+[lifecycle_manager-8] [INFO] [1793169446.565315711] [project_navigation_lifecycle]: [34m[1mActivating smoother_server[0m[0m
+[smoother_server-2] [INFO] [1793169446.565450541] [smoother_server]: Activating
+[smoother_server-2] [INFO] [1793169446.565474373] [smoother_server]: Creating bond (smoother_server) to lifecycle manager.
+[lifecycle_manager-8] [INFO] [1793169446.666748637] [project_navigation_lifecycle]: Server smoother_server connected with bond.
+[lifecycle_manager-8] [INFO] [1793169446.666794177] [project_navigation_lifecycle]: [34m[1mActivating planner_server[0m[0m
+[planner_server-3] [INFO] [1793169446.666939506] [planner_server]: Activating
+[planner_server-3] [INFO] [1793169446.666962714] [global_costmap.global_costmap]: Activating
+[planner_server-3] [INFO] [1793169446.666972130] [global_costmap.global_costmap]: Checking transform
+[planner_server-3] [INFO] [1793169446.667046462] [global_costmap.global_costmap]: start
+[planner_server-3] [INFO] [1793169447.167550005] [planner_server]: Activating plugin GridBased of type NavfnPlanner
+[planner_server-3] [INFO] [1793169447.168020366] [planner_server]: Creating bond (planner_server) to lifecycle manager.
+[lifecycle_manager-8] [INFO] [1793169447.269649291] [project_navigation_lifecycle]: Server planner_server connected with bond.
+[lifecycle_manager-8] [INFO] [1793169447.269685249] [project_navigation_lifecycle]: [34m[1mActivating behavior_server[0m[0m
+[behavior_server-4] [INFO] [1793169447.269847910] [behavior_server]: Activating
+[behavior_server-4] [INFO] [1793169447.269863243] [behavior_server]: Activating spin
+[behavior_server-4] [INFO] [1793169447.269868118] [behavior_server]: Activating backup
+[behavior_server-4] [INFO] [1793169447.269872160] [behavior_server]: Activating drive_on_heading
+[behavior_server-4] [INFO] [1793169447.269875868] [behavior_server]: Activating wait
+[behavior_server-4] [INFO] [1793169447.269881034] [behavior_server]: Creating bond (behavior_server) to lifecycle manager.
+[lifecycle_manager-8] [INFO] [1793169447.372164358] [project_navigation_lifecycle]: Server behavior_server connected with bond.
+[lifecycle_manager-8] [INFO] [1793169447.372204440] [project_navigation_lifecycle]: [34m[1mActivating bt_navigator[0m[0m
+[bt_navigator-5] [INFO] [1793169447.372522514] [bt_navigator]: Activating
+[bt_navigator-5] [INFO] [1793169447.385389927] [bt_navigator]: Creating bond (bt_navigator) to lifecycle manager.
+[lifecycle_manager-8] [INFO] [1793169447.488298731] [project_navigation_lifecycle]: Server bt_navigator connected with bond.
+[lifecycle_manager-8] [INFO] [1793169447.488325772] [project_navigation_lifecycle]: [34m[1mManaged nodes are active[0m[0m
+[lifecycle_manager-8] [INFO] [1793169447.488330147] [project_navigation_lifecycle]: [34m[1mCreating bond timer...[0m[0m
+[bt_navigator-5] [INFO] [1793169449.504607416] [bt_navigator]: Begin navigating from current location (0.00, 0.00) to (1.20, 0.00)
+[controller_server-1] [INFO] [1793169449.565808288] [controller_server]: Received a goal, begin computing control effort.
+[controller_server-1] [INFO] [1793169450.633427477] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169451.699566187] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169452.766227236] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169453.832900554] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169454.901052433] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169455.966222417] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169457.032918421] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169458.099565364] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169459.166227367] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169460.166227012] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169461.232909800] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169461.566255783] [controller_server]: Goal was canceled. Stopping the robot.
+[controller_server-1] [INFO] [1793169461.566325990] [controller_server]: [follow_path] [ActionServer] Client requested to cancel the goal. Cancelling.
+[bt_navigator-5] [INFO] [1793169461.566495943] [bt_navigator]: [navigate_to_pose] [ActionServer] Client requested to cancel the goal. Cancelling.
+[bt_navigator-5] [INFO] [1793169461.566785685] [bt_navigator]: Goal canceled
+[controller_server-1] [INFO] [1793169462.117210617] [local_costmap.local_costmap]: Received request to clear entirely the local_costmap
+[planner_server-3] [INFO] [1793169462.137443580] [global_costmap.global_costmap]: Received request to clear entirely the global_costmap
+[bt_navigator-5] [INFO] [1793169462.461027111] [bt_navigator]: Begin navigating from current location (0.00, 0.00) to (1.20, 0.00)
+[controller_server-1] [INFO] [1793169462.502179433] [controller_server]: Received a goal, begin computing control effort.
+[controller_server-1] [INFO] [1793169463.569048972] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169464.635650162] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169465.702387783] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169466.702291321] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169467.769083891] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169468.836033266] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169469.902322344] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169470.969017387] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169472.035629660] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169473.102296868] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169474.168982510] [controller_server]: Passing new path to controller.
+[controller_server-1] [INFO] [1793169474.502298639] [controller_server]: Goal was canceled. Stopping the robot.
+[controller_server-1] [INFO] [1793169474.502336597] [controller_server]: [follow_path] [ActionServer] Client requested to cancel the goal. Cancelling.
+[bt_navigator-5] [INFO] [1793169474.502518258] [bt_navigator]: [navigate_to_pose] [ActionServer] Client requested to cancel the goal. Cancelling.
+[bt_navigator-5] [INFO] [1793169474.502593756] [bt_navigator]: Goal canceled
+[behavior_server-4] [INFO] [1793169475.100789978] [behavior_server]: Running backup
+[behavior_server-4] [INFO] [1793169475.100928016] [behavior_server]: DriveOnHeading: no acceleration or deceleration limits set
+[behavior_server-4] [INFO] [1793169475.801087707] [behavior_server]: Canceling backup
+[behavior_server-4] [INFO] [1793169475.801467779] [behavior_server]: [backup] [ActionServer] Client requested to cancel the goal. Cancelling.
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[lifecycle_manager-8] [INFO] [1793169477.102498373] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[lifecycle_manager-8] [INFO] [1793169477.102553746] [project_navigation_lifecycle]: Running Nav2 LifecycleManager rcl preshutdown (project_navigation_lifecycle)
+[lifecycle_manager-8] [INFO] [1793169477.102585495] [project_navigation_lifecycle]: [34m[1mTerminating bond timer...[0m[0m
+[bt_navigator-5] [INFO] [1793169477.102809697] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[bt_navigator-5] [INFO] [1793169477.102843113] [bt_navigator]: Running Nav2 LifecycleNode rcl preshutdown (bt_navigator)
+[bt_navigator-5] [INFO] [1793169477.102894153] [bt_navigator]: Deactivating
+[bt_navigator-5] [INFO] [1793169477.102904778] [bt_navigator]: Destroying bond (bt_navigator) to lifecycle manager.
+[INFO] [lifecycle_manager-8]: sending signal 'SIGINT' to process[lifecycle_manager-8]
+[INFO] [navigation_supervisor-7]: sending signal 'SIGINT' to process[navigation_supervisor-7]
+[INFO] [path_planner-6]: sending signal 'SIGINT' to process[path_planner-6]
+[INFO] [bt_navigator-5]: sending signal 'SIGINT' to process[bt_navigator-5]
+[INFO] [behavior_server-4]: sending signal 'SIGINT' to process[behavior_server-4]
+[INFO] [planner_server-3]: sending signal 'SIGINT' to process[planner_server-3]
+[INFO] [smoother_server-2]: sending signal 'SIGINT' to process[smoother_server-2]
+[INFO] [controller_server-1]: sending signal 'SIGINT' to process[controller_server-1]
+[planner_server-3] [INFO] [1793169477.104424902] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[planner_server-3] [INFO] [1793169477.104456610] [planner_server]: Running Nav2 LifecycleNode rcl preshutdown (planner_server)
+[planner_server-3] [INFO] [1793169477.104492442] [planner_server]: Deactivating
+[planner_server-3] [INFO] [1793169477.104518150] [global_costmap.global_costmap]: Deactivating
+[controller_server-1] [INFO] [1793169477.104559524] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[controller_server-1] [INFO] [1793169477.104597814] [controller_server]: Running Nav2 LifecycleNode rcl preshutdown (controller_server)
+[controller_server-1] [INFO] [1793169477.104623397] [controller_server]: Deactivating
+[controller_server-1] [INFO] [1793169477.104658104] [controller_server]: Deactivating controller: FollowPath of type regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[controller_server-1] [INFO] [1793169477.104674479] [local_costmap.local_costmap]: Deactivating
+[smoother_server-2] [INFO] [1793169477.105141799] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[smoother_server-2] [INFO] [1793169477.105194214] [smoother_server]: Running Nav2 LifecycleNode rcl preshutdown (smoother_server)
+[smoother_server-2] [INFO] [1793169477.105240213] [smoother_server]: Deactivating
+[smoother_server-2] [INFO] [1793169477.105258129] [smoother_server]: Destroying bond (smoother_server) to lifecycle manager.
+[behavior_server-4] [INFO] [1793169477.106690048] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[behavior_server-4] [INFO] [1793169477.106721755] [behavior_server]: Running Nav2 LifecycleNode rcl preshutdown (behavior_server)
+[behavior_server-4] [INFO] [1793169477.106757837] [behavior_server]: Deactivating
+[behavior_server-4] [INFO] [1793169477.106785920] [behavior_server]: Destroying bond (behavior_server) to lifecycle manager.
+[path_planner-6] Traceback (most recent call last):
+[path_planner-6]   File "/tmp/fault-python-install/ee3033_project/lib/ee3033_project/path_planner", line 33, in <module>
+[ERROR] [navigation_supervisor-7]: process has died [pid 3285, exit code -2, cmd '/tmp/fault-python-install/ee3033_project/lib/ee3033_project/navigation_supervisor --ros-args --params-file /tmp/launch_params_uim252w0'].
+[bt_navigator-5] [INFO] [1793169477.113080786] [bt_navigator]: Cleaning up
+[path_planner-6]     sys.exit(load_entry_point('ee3033-project', 'console_scripts', 'path_planner')())
+[path_planner-6]   File "/tmp/fault-python-build/ee3033_project/ee3033_project/path_planner.py", line 366, in main
+[path_planner-6]     node.destroy_node();executor.shutdown(timeout_sec=3)
+[path_planner-6]   File "/tmp/fault-python-build/ee3033_project/ee3033_project/path_planner.py", line 357, in destroy_node
+[path_planner-6]     super().destroy_node()
+[path_planner-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/node.py", line 1685, in destroy_node
+[path_planner-6]     self.destroy_publisher(self._publishers[0])
+[path_planner-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/node.py", line 1565, in destroy_publisher
+[path_planner-6]     publisher.destroy()
+[path_planner-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/publisher.py", line 99, in destroy
+[path_planner-6]     self.__publisher.destroy_when_not_in_use()
+[path_planner-6] KeyboardInterrupt
+[smoother_server-2] [INFO] [1793169477.115412097] [smoother_server]: Cleaning up
+[behavior_server-4] [INFO] [1793169477.116925346] [behavior_server]: Cleaning up
+[smoother_server-2] [INFO] [1793169477.119360237] [smoother_server]: Destroying bond (smoother_server) to lifecycle manager.
+[smoother_server-2] [INFO] [1793169477.121461678] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[smoother_server-2] [INFO] [1793169477.122481817] [smoother_server]: Destroying
+[behavior_server-4] [INFO] [1793169477.146859930] [behavior_server]: Destroying bond (behavior_server) to lifecycle manager.
+[behavior_server-4] [INFO] [1793169477.148840958] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[behavior_server-4] [INFO] [1793169477.162729780] [behavior_server]: Destroying
+[planner_server-3] [INFO] [1793169477.170299194] [planner_server]: Deactivating plugin GridBased of type NavfnPlanner
+[planner_server-3] [INFO] [1793169477.170330152] [planner_server]: Destroying bond (planner_server) to lifecycle manager.
+[bt_navigator-5] [INFO] [1793169477.174804027] [bt_navigator]: Completed Cleaning up
+[bt_navigator-5] [INFO] [1793169477.174926815] [bt_navigator]: Destroying bond (bt_navigator) to lifecycle manager.
+[bt_navigator-5] [INFO] [1793169477.175712002] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[bt_navigator-5] [INFO] [1793169477.177691488] [bt_navigator]: Destroying
+[planner_server-3] [INFO] [1793169477.180438953] [planner_server]: Cleaning up
+[lifecycle_manager-8] [INFO] [1793169477.184562547] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[lifecycle_manager-8] [INFO] [1793169477.247074182] [project_navigation_lifecycle]: Destroying project_navigation_lifecycle
+[planner_server-3] [INFO] [1793169477.248479060] [global_costmap.global_costmap]: Cleaning up
+[planner_server-3] [INFO] [1793169477.251525892] [planner_server]: Cleaning up plugin GridBased of type NavfnPlanner
+[planner_server-3] [INFO] [1793169477.251552849] [planner_server]: Destroying plugin GridBased of type NavfnPlanner
+[planner_server-3] [INFO] [1793169477.255043335] [planner_server]: Destroying bond (planner_server) to lifecycle manager.
+[planner_server-3] [INFO] [1793169477.255259913] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[planner_server-3] [INFO] [1793169477.256633625] [global_costmap.global_costmap]: Destroying
+[planner_server-3] [INFO] [1793169477.259682540] [planner_server]: Destroying
+[controller_server-1] [INFO] [1793169477.261248788] [controller_server]: Destroying bond (controller_server) to lifecycle manager.
+[INFO] [smoother_server-2]: process has finished cleanly [pid 3242]
+[ERROR] [path_planner-6]: process has died [pid 3281, exit code -2, cmd '/tmp/fault-python-install/ee3033_project/lib/ee3033_project/path_planner --ros-args'].
+[controller_server-1] [INFO] [1793169477.271425921] [controller_server]: Cleaning up
+[controller_server-1] [INFO] [1793169477.271561834] [controller_server]: Cleaning up controller: FollowPath of type regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[controller_server-1] [INFO] [1793169477.271617708] [local_costmap.local_costmap]: Cleaning up
+[controller_server-1] [INFO] [1793169477.274267134] [controller_server]: Destroying bond (controller_server) to lifecycle manager.
+[controller_server-1] [INFO] [1793169477.274649332] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[controller_server-1] [INFO] [1793169477.275482850] [local_costmap.local_costmap]: Destroying
+[controller_server-1] [INFO] [1793169477.276996183] [controller_server]: Destroying
+[INFO] [behavior_server-4]: process has finished cleanly [pid 3246]
+[INFO] [bt_navigator-5]: process has finished cleanly [pid 3261]
+[INFO] [lifecycle_manager-8]: process has finished cleanly [pid 3287]
+[INFO] [planner_server-3]: process has finished cleanly [pid 3244]
+[INFO] [controller_server-1]: process has finished cleanly [pid 3240]

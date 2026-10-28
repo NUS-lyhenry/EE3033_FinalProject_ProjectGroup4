@@ -36,11 +36,10 @@ def parameter_plan(values, phase='mapping'):
     return {
         'project_velocity_gate': {'max_linear': linear, 'max_angular': angular},
         'controller_server': {
-            'FollowPath.max_vel_x': linear,
-            'FollowPath.max_speed_xy': linear,
-            'FollowPath.max_vel_theta': angular,
-            'FollowPath.rotate_to_heading_angular_vel': .55 if angular >= .60 else angular * 0.875,
+            'FollowPath.desired_linear_vel': linear, 'FollowPath.max_linear_vel': linear,
+            'FollowPath.rotate_to_heading_angular_vel': angular, 'FollowPath.max_angular_vel': angular,
         },
+        'project_navigation_supervisor': {'goal_timeout': values['goal_timeout']},
         'project_mapper' if phase == 'mapping' else 'project_mission':
             ({'goal_timeout': values['goal_timeout']} if phase == 'mapping' else
              {'goal_timeout': values['goal_timeout'], 'search_linear_speed': linear,

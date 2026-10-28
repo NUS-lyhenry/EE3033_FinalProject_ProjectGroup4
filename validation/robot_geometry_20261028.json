@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-28",
+  "simulation_only": true,
+  "models": {
+    "measured": {
+      "geometry": {
+        "profile": "measured",
+        "model": "conservative_circumscribed_circle",
+        "length": 0.18,
+        "width": 0.115,
+        "body_radius": 0.106801,
+        "padding": 0.01,
+        "footprint_radius": 0.116801,
+        "exact_circumradius": 0.10680004681646914,
+        "dimension_source": "wheel_inclusive_user_measurement",
+        "front_stop_distance": 0.186801,
+        "rotation_clearances": {
+          "cautious": 0.136801,
+          "balanced": 0.126801,
+          "bold": 0.116801
+        },
+        "selection_environment": "EE3033_ROBOT_GEOMETRY"
+      },
+      "gap_base_radius": 0.106801,
+      "gap_reserved_radius": 0.1375,
+      "default_clearance": 0.14
+    },
+    "legacy": {
+      "geometry": {
+        "profile": "legacy",
+        "model": "legacy_conservative_circle",
+        "length": null,
+        "width": 0.2,
+        "body_radius": 0.14,
+        "padding": 0.01,
+        "footprint_radius": 0.15,
+        "exact_circumradius": null,
+        "dimension_source": "legacy_radius_and_estimated_width",
+        "front_stop_distance": 0.22,
+        "rotation_clearances": {
+          "cautious": 0.16,
+          "balanced": 0.15,
+          "bold": 0.14
+        },
+        "selection_environment": "EE3033_ROBOT_GEOMETRY"
+      },
+      "gap_base_radius": 0.14,
+      "gap_reserved_radius": 0.18,
+      "default_clearance": 0.14
+    }
+  },
+  "selection": "Only EE3033_ROBOT_GEOMETRY=measured|legacy at process startup; all other values fail",
+  "validation": {
+    "measured_python": 560,
+    "legacy_python": 560,
+    "focused_geometry_safety_scan": 100
+  },
+  "model_limitations": "Measured dimensions include wheels. A padded circumscribed circle conservatively encloses the rectangle at any yaw; no rectangular swept footprint or hardware dynamics validation is claimed. Legacy remains an explicit unchanged 14cm body-radius stress profile.",
+  "source_sha256": {
+    "src/ee3033_project/ee3033_project/robot_geometry.py": "bd41e5398f56cacae0d0940c9436a0972bc4c9b3bd71f2901f3fd7c77617d5c9",
+    "src/ee3033_project/ee3033_project/motion_safety.py": "b0598558a241f37d269c2929be77928fbdd77eb50026392b041646c46e46ab7a",
+    "src/ee3033_project/ee3033_project/gap.py": "5bf25f183b1bc67e888eb2843e985477b6448a8cf59fdde7fde9f824902229c1",
+    "src/ee3033_project/ee3033_project/reverse_safety.py": "f5a89069dd959f335e901b801ce7aaa9a5cbc3542b457cfa5ec4704bf5b35f33",
+    "src/ee3033_project/ee3033_project/velocity_gate.py": "c6647799633331190b041ac60c3ed13e24f551c6dce05e46b826cdde32173873"
+  }
+}

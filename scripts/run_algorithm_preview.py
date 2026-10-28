@@ -29,7 +29,7 @@ class SimulationConsole(SimulationScenarioControl,Console):
     def snapshot(self):
         data = super().snapshot()
         data.update(simulated=True, preview_interactive=True, preview_backend='main-ros',
-            preview_hint='Current main programs with SLAM, Nav2 and YOLO; only sensors and the chassis are simplified. Original speeds and timeouts are retained.')
+            preview_hint='Project navigation, SLAM and YOLO with simulated sensors and chassis. No physical robot is connected.')
         data.update(self.simulation_snapshot())
         return data
 
@@ -133,7 +133,7 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupt)
     console = SimulationConsole(parameter_overrides=[Parameter(k, value=v) for k, v in dict(
-        port=8765, phase='mapping', allow_motion=True, manage_stages=True,
+        port=8765, phase='mapping', allow_motion=True, manage_stages=True, mapping_resolution=.0125,
         stage_base=False, stage_lidar=False, stage_camera=False, model=args.model,
         map_directory=root+'/maps', session_directory=root+'/results',
         software_version=os.environ.get('PREVIEW_MAIN_COMMIT', 'main'),

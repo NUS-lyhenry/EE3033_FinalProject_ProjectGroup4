@@ -6,6 +6,7 @@ const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
 let modelLabels=null,labelKey='',labelsBusy=false;
+let scanFilter=null,scanFilterDirty=false,scanFilterBusy=false,scanFilterError=null,scanFilterRequest=0;
 let waypointDraft=null;
 let coordinateMethodChosen=false,lastSavedMapId=null;
 let measuring=false,measurement=null;
@@ -180,6 +181,7 @@ function render(){
   $('coverage').title=coverageDetail?`${coverageDetail.missing_cells} unobserved · ${coverageDetail.blocked_cells} blocked · ${coverageDetail.candidate_uncovered_cells} without a viewing position${coverageDetail.map_partial?' · partial map':''}`:'';
   $('waypoints').textContent=m.viewpoints_total?`${m.viewpoints_completed||0} / ${m.viewpoints_total} viewpoints · ${m.failed_viewpoints?.length||0} failed`:'No search plan yet';
   $('robotPose').textContent=s.pose?`Robot (${fmt(s.pose[0])}, ${fmt(s.pose[1])}) · ${fmt(s.pose[2]*180/Math.PI,0)}°`:'Pose unavailable';
+  if($('navigationStatus')){const n=s.navigation||{};$('navigationStatus').textContent=n.stage?`${({IDLE:'Ready',ACCEPTED:'Preparing navigation',DISPATCHING:'Planning route',ALIGNING:'Turning toward route',TRACKING:'Following route',FINAL_ALIGN:'Adjusting final heading',STOPPING:'Stopping',REFRESHING:'Checking another route',CANCELING:'Stopping before recovery',REVERSING:'Backing up safely',CANCELED:'Navigation stopped',SUCCEEDED:'Arrived',FAILED:'Navigation failed'})[n.stage]||'Navigation'} · ${n.reason||''}${n.recovery_count?` · Recovery ${n.recovery_count}/2`:''}${n.failure_reason?` · ${n.failure_reason}`:''}`:'';}
   const fault=s.control_fault||s.workflow_fault||s.stage?.fault;
   $('faultBanner').hidden=!fault;$('faultBanner').textContent=fault||'';
   $('reason').textContent=s.stage?.transitioning?'Changing stage; waiting for shutdown and fresh services…':m.readiness_reason&&m.state==='WAITING'?m.readiness_reason:m.reason||'Load a stage to begin.';
@@ -282,10 +284,11 @@ function render(){
   $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
   $('stageHelp').textContent=currentPage==='workflow'?'Automatic mapping returns and saves a new map. Inspect it, then confirm to prepare the mission.':managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
   $('mappingProgress').hidden=!mapping;
-  $('mappingProgress').textContent=`${m.viewpoints_completed||0} goals reached · ${m.deferred_frontiers||0} deferred · ${m.frontier_retry_round?'Final retry pass':'Explore other areas before one final retry pass'}`;
+  $('mappingProgress').textContent=`${m.viewpoints_completed||0} goals reached · ${m.failed_viewpoints?.length||0} failed areas skipped · Bounded navigation recovery`;
   renderParameters();draw();
 }
 function renderParameters(){
+  renderScanFilter();
   const idle=setupIdle(),fresh=Date.now()-paramTime<8000,mapping=snapshot?.phase==='mapping';
   const policyReady=idle&&fresh&&!!gap&&!parametersBusy&&(mapping||snapshot?.mission?.state==='WAITING');
   document.querySelectorAll('[data-audacity]').forEach(button=>{
@@ -308,6 +311,40 @@ function renderParameters(){
   $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes — press Apply.':trial?.fault||'Temporary until restart. Adjust only while stopped.';
   if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
 }
+function renderScanFilter(){
+  const data=scanFilter||snapshot?.scan_filter;
+  const saved=Number.isFinite(data?.value)?data.value:(Number.isFinite(data?.saved)?data.saved:null);
+  const editable=setupIdle()&&!parametersBusy&&!scanFilterBusy&&data?.editable===true;
+  const input=$('scanFilterRadius');
+  if(!scanFilterDirty&&!scanFilterBusy&&saved!==null)input.value=String(Math.round(saved*1000)/10);
+  input.disabled=!editable;
+  $('saveScanFilter').disabled=!editable||!scanFilterDirty||!input.value.trim()||!input.validity.valid;
+  $('scanFilterSaved').textContent=saved===null?'Saved: unverified':`Saved: ${fmt(saved*100,1)} cm`;
+  const live=scanFilter?.live_value;
+  $('scanFilterLive').textContent=scanFilterError?'Live: unverified':Number.isFinite(live)?`Live: ${fmt(live*100,1)} cm · ${scanFilter.synchronized?'readback matches saved':'readback differs from saved'}`:live===null&&!running()?'Live: no stage loaded':'Live: unavailable';
+  $('scanFilterStatus').textContent=scanFilterBusy?'Saving and checking readback…':scanFilterError||data?.fault||(scanFilterDirty?'Unsaved change — press Save.':data?.message||(data?(data.live_value===null&&!running()?'Saved for next stage.':data.synchronized?'Saved and live readback match.':'Waiting for live readback.'):'Reading filter settings.'));
+}
+async function pollScanFilter(){
+  if(online&&!busy&&!scanFilterBusy&&!snapshot?.stage?.transitioning){
+    const generation=snapshot.control_generation,request=++scanFilterRequest;
+    try{const data=await get('scan_filter');if(generation===snapshot?.control_generation&&request===scanFilterRequest){scanFilter=data;scanFilterError=null;}}
+    catch(e){if(generation===snapshot?.control_generation&&request===scanFilterRequest)scanFilterError=e.message;}
+    renderScanFilter();
+  }
+  setTimeout(pollScanFilter,4000);
+}
+$('scanFilterRadius').oninput=()=>{scanFilterDirty=true;renderScanFilter();};
+$('saveScanFilter').onclick=async()=>{
+  const input=$('scanFilterRadius');if(input.disabled||!input.value.trim()||!input.validity.valid)return;
+  const generation=snapshot.control_generation,request=++scanFilterRequest,radius=Number(input.value)/100;
+  scanFilterBusy=true;scanFilterError=null;renderScanFilter();
+  try{
+    await action('scan_filter',{radius});
+    const actual=await get('scan_filter');
+    if(generation===snapshot?.control_generation&&request===scanFilterRequest){scanFilter=actual;scanFilterDirty=false;scanFilterError=null;}
+  }catch(e){if(generation===snapshot?.control_generation&&request===scanFilterRequest)scanFilterError=e.message;}
+  finally{scanFilterBusy=false;render();}
+};
 async function refreshMaps(preferred){
   const d=await get('maps');maps=d.maps||[];
   const current=$('savedMaps').value,saved=currentSavedMap();
@@ -374,7 +411,7 @@ async function pollParameters(){
 }
 async function poll(){
   try{const s=await get('state');snapshot=s;online=true;
-    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;paramTime=0;trialDirty=false;waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
+    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;scanFilter=null;scanFilterDirty=false;scanFilterError=null;scanFilterRequest++;paramTime=0;trialDirty=false;waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
     if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;$('preferredSigma').value=s.mission_options.preferred_target_sigma??.1;}}
     if(s.map_revision!==mapRevision){mapRevision=s.map_revision;renderMap(await get('map'));}
     render();
@@ -423,13 +460,13 @@ function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),c
 
   function line(points,color,dash=[]){if(!points?.length)return;ctx.beginPath();ctx.setLineDash(dash);points.forEach((p,i)=>{const [x,y]=point(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle=color;ctx.lineWidth=.8;ctx.stroke();ctx.setLineDash([]);}
   function dot(p,color,r=2){if(!p)return;const[x,y]=point(...p);ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
-  line(snapshot.route,'#bca6d8',[1.5,2]);line(snapshot.path,'#52cfaa');const m=snapshot.mission;dot(m.home,'#ce92df',2.3);if(m.target)dot([m.target.x,m.target.y],'#ecba59',2.8);
+  line(snapshot.route,'#bca6d8',[1.5,2]);line(snapshot.travelled_path,'#408ee0');line(snapshot.path,'#52cfaa');line(snapshot.local_path,'#d79727',[1,1]);const m=snapshot.mission;dot(m.home,'#ce92df',2.3);if(m.target)dot([m.target.x,m.target.y],'#ecba59',2.8);
   const estimate=m.target?{...m.target,label:m.target.class,sigma:m.target.sigma??Math.sqrt(m.target.variance),confirmed:true}:snapshot.target_estimate;
   if(estimate){const[x,y]=point(estimate.x,estimate.y),radius=Math.min(estimate.sigma/mapData.resolution,2*Math.hypot(mapData.width,mapData.height));ctx.save();ctx.globalAlpha=estimate.stale ? .4 : 1;ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle='rgba(222,151,45,.12)';ctx.fill();ctx.setLineDash([1.4,1.4]);ctx.strokeStyle='#c17a21';ctx.lineWidth=.7;ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(x,y,2.8,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#80500d';ctx.font='3px sans-serif';ctx.fillText(`${estimate.confirmed?'Accepted':'Est.'} ${estimate.label} · σ ${fmt(estimate.sigma)} m`,Math.max(1,Math.min(x+4,mapData.width-38)),Math.max(4,y-4));ctx.restore();}
   if(currentPage==='calibration'){const c=snapshot.calibration_live;if(c?.plan)line([snapshot.pose,...c.plan.goals.map(g=>g.pose)].filter(Boolean),'#ecba59',[2,2]);if(c?.target){dot(c.target.xy,'#ffba5a',2.8);const [x,y]=point(...c.target.xy);ctx.fillStyle='#50340b';ctx.font='3px sans-serif';ctx.fillText('Bottle',x+3,y-3);}}
   const waypoint=waypointDraft||(m.mapping_mode==='waypoint'?m.waypoint:null);
   if(waypoint){const[x,y]=point(...waypoint),a=-(waypoint[2]-mapData.origin[2]);ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.beginPath();ctx.arc(0,0,1.6,0,Math.PI*2);ctx.moveTo(0,0);ctx.lineTo(7,0);ctx.lineTo(4,-1.5);ctx.moveTo(7,0);ctx.lineTo(4,1.5);ctx.strokeStyle='#ecba59';ctx.lineWidth=.7;ctx.stroke();ctx.restore();}
-  if(snapshot.pose){const[x,y]=point(...snapshot.pose);ctx.save();ctx.translate(x,y);ctx.rotate(-(snapshot.pose[2]-mapData.origin[2]));ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(-2.5,-2);ctx.lineTo(-2.5,2);ctx.closePath();ctx.fillStyle='#5dbaec';ctx.fill();ctx.restore();}
+  if(snapshot.pose){const[x,y]=point(...snapshot.pose);ctx.save();ctx.translate(x,y);ctx.rotate(-(snapshot.pose[2]-mapData.origin[2]));const radius=(snapshot.footprint_radius??.15)/mapData.resolution;ctx.beginPath();ctx.arc(0,0,radius,0,Math.PI*2);ctx.fillStyle='rgba(93,186,236,.18)';ctx.fill();ctx.strokeStyle='#2583bd';ctx.lineWidth=.5;ctx.stroke();const body=snapshot.robot_geometry;ctx.fillStyle='#5dbaec';if(body?.length&&body?.width){const length=body.length/mapData.resolution,width=body.width/mapData.resolution;ctx.fillRect(-length/2,-width/2,length,width);ctx.strokeStyle='#176c9e';ctx.lineWidth=.6;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(length/2,0);ctx.stroke();}else{ctx.beginPath();ctx.moveTo(radius,0);ctx.lineTo(-radius*.55,-radius*.55);ctx.lineTo(-radius*.55,radius*.55);ctx.closePath();ctx.fill();}ctx.restore();}
   const measured=drag?.mode==='measure'?{start:worldPoint(...drag.start),end:worldPoint(...drag.end)}:measurement;
   if(measured){dot(measured.start,'#9a5a10',1.6);if(measured.end){line([measured.start,measured.end],'#9a5a10',[1,1]);dot(measured.end,'#9a5a10',1.6);const a=point(...measured.start),b=point(...measured.end);ctx.fillStyle='#583308';ctx.font='3.3px sans-serif';ctx.fillText(`${fmt(Math.hypot(measured.end[0]-measured.start[0],measured.end[1]-measured.start[1]))} m`,(a[0]+b[0])/2+2,(a[1]+b[1])/2-2);}}
   if(drag&&drag.mode!=='measure'){ctx.beginPath();ctx.moveTo(...drag.start);ctx.lineTo(...drag.end);ctx.strokeStyle='#ecba59';ctx.stroke();}
@@ -441,4 +478,4 @@ $('map').onpointerdown=e=>{const mode=measuring?'measure':(currentPage==='mappin
 $('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
 $('map').onpointerup=()=>{if(!drag)return;if(drag.mode==='measure'){const moved=Math.hypot(drag.end[0]-drag.press[0],drag.end[1]-drag.press[1])*$('map').getBoundingClientRect().width/mapData.width;measurement={start:worldPoint(...drag.start),end:moved>4||drag.continued?worldPoint(...drag.end):null};drag=null;updateMeasurementStatus();draw();return;}const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else if(mode==='calBottle'){$('calBottleX').value=a[0].toFixed(3);$('calBottleY').value=a[1].toFixed(3);action('calibration_target',{x:a[0],y:a[1],map_id:snapshot.selected_map?.id}).catch(()=>{});}else if(mode==='calPose'){$('calPoseX').value=a[0].toFixed(2);$('calPoseY').value=a[1].toFixed(2);$('calPoseYaw').value=yaw.toFixed(0);feedback('Robot pose selected. Press Set robot pose on calibration map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
 $('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);
-poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollLabels,500);cameraTick();
+poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollScanFilter,1000);setTimeout(pollLabels,500);cameraTick();
