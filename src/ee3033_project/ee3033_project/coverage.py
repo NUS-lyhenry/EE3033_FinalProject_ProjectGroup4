@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import math
 import time
 import heapq
+import threading
 import numpy as np
 from scipy.ndimage import distance_transform_edt, label, binary_dilation
 from .core import angle_difference
@@ -51,6 +52,9 @@ class CoveragePlanner:
         self.candidate_threshold_exceeded = False
         self.camera_model = camera_model
         self.path_cache = None
+        self.path_pending = None
+        self.path_generation = 0
+        self.path_lock = threading.Lock()
         self.gap_pass = False
         self.blocked_cells = set()
         self.map_partial = False
@@ -59,47 +63,91 @@ class CoveragePlanner:
         self.native_probes = []
         self.clearance = clearance
 
+    def _invalidate_paths_locked(self):
+        self.path_generation += 1
+        self.path_cache = None
+        self.path_pending = None
+
+    def invalidate_paths(self):
+        """Discard fields when the safe graph changes; never wait on a worker."""
+        if not self.path_lock.acquire(blocking=False):
+            raise TimeoutError('Search path graph is busy')
+        try:
+            self._invalidate_paths_locked()
+        finally:
+            self.path_lock.release()
+
     def travel_field(self, x, y, deadline=None, cancel=None):
-        """Shortest collision-clear grid paths; no Euclidean shortcuts through walls."""
-        if cancel is not None and cancel.is_set():
-            raise RuntimeError('Search planning canceled')
-        if deadline is not None and time.monotonic() >= deadline:
-            raise TimeoutError('Search path planning time limit exceeded')
-        start = self.world_to_cell(x, y)
-        if self.path_cache is not None and self.path_cache[0] == start:
-            return self.path_cache[1:]
-        distances = np.full(self.grid.shape, np.inf)
-        parents = {}
-        if not self.in_bounds(*start) or not self.safe[start]:
-            return distances, parents
-        distances[start] = 0.
-        queue = [(0., start)]
-        count = 0
-        while queue:
-            distance, cell = heapq.heappop(queue)
-            if distance != distances[cell]:
-                continue
-            count += 1
-            if count % 256 == 0:
+        """Return a complete collision-clear field, resuming timed-out work.
+
+        Partial distances are private: tentative Dijkstra values must never be
+        interpreted as settled path costs or unreachable cells. One unfinished
+        start is retained; changing starts replaces it. Native graph updates and
+        cancellation invalidate both unfinished work and the completed cache.
+        """
+        if not self.path_lock.acquire(blocking=False):
+            if cancel is not None and cancel.is_set():
+                raise RuntimeError('Search planning canceled')
+            raise TimeoutError('Search path planning is already in progress')
+        try:
+            def check_budget():
                 if cancel is not None and cancel.is_set():
+                    self._invalidate_paths_locked()
                     raise RuntimeError('Search planning canceled')
                 if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError('Search path planning time limit exceeded')
-            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                other = (cell[0]+dr, cell[1]+dc)
-                candidate = distance+self.resolution
-                if self.in_bounds(*other) and self.safe[other] and candidate < distances[other]:
-                    distances[other] = candidate
-                    parents[other] = cell
-                    heapq.heappush(queue, (candidate, other))
-            for other, length in self.native_links.get(cell, ()):
-                candidate = distance+length
-                if candidate < distances[other]:
-                    distances[other] = candidate
-                    parents[other] = cell
-                    heapq.heappush(queue, (candidate, other))
-        self.path_cache = (start, distances, parents)
-        return distances, parents
+
+            start = self.world_to_cell(x, y)
+            if self.path_pending is not None and (
+                    self.path_pending['start'] != start or
+                    self.path_pending['generation'] != self.path_generation):
+                self.path_pending = None
+            check_budget()
+            if self.path_cache is not None and self.path_cache[0] == start:
+                return self.path_cache[1:]
+            if self.path_pending is None:
+                distances = np.full(self.grid.shape, np.inf)
+                parents = {}
+                if not self.in_bounds(*start) or not self.safe[start]:
+                    return distances, parents
+                distances[start] = 0.
+                self.path_pending = dict(start=start,generation=self.path_generation,
+                    distances=distances,parents=parents,queue=[(0.,start)],count=0)
+            pending = self.path_pending
+            distances,parents,queue = pending['distances'],pending['parents'],pending['queue']
+            count = pending['count']
+            try:
+                while queue:
+                    # Check before pop: a deadline must never remove a vertex
+                    # whose outgoing edges have not yet been expanded.
+                    if count % 256 == 0:
+                        check_budget()
+                    distance, cell = heapq.heappop(queue)
+                    if distance != distances[cell]:
+                        continue
+                    count += 1
+                    for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                        other = (cell[0]+dr,cell[1]+dc)
+                        candidate = distance+self.resolution
+                        if self.in_bounds(*other) and self.safe[other] and candidate < distances[other]:
+                            distances[other] = candidate
+                            parents[other] = cell
+                            heapq.heappush(queue,(candidate,other))
+                    for other,length in self.native_links.get(cell,()):
+                        candidate = distance+length
+                        if candidate < distances[other]:
+                            distances[other] = candidate
+                            parents[other] = cell
+                            heapq.heappush(queue,(candidate,other))
+                check_budget()
+            except TimeoutError:
+                pending['count'] = count
+                raise
+            self.path_cache = (start,distances,parents)
+            self.path_pending = None
+            return distances,parents
+        finally:
+            self.path_lock.release()
 
     def world_to_cell(self, x, y):
         ox, oy, yaw = self.origin
@@ -160,6 +208,7 @@ class CoveragePlanner:
                 raise TimeoutError('Search planning time limit exceeded')
 
         check_budget()
+        self.invalidate_paths()
         self.truncated = False
         self.options = ()
         row, col = self.world_to_cell(start_x, start_y)
@@ -287,9 +336,14 @@ class CoveragePlanner:
                 if not self.in_bounds(*cell) or not self.safe[cell]:
                     return False
         a, b = self.world_to_cell(*points[0]), self.world_to_cell(*points[-1])
-        self.native_links.setdefault(a, []).append((b, length))
-        self.native_links.setdefault(b, []).append((a, length))
-        self.path_cache = None
+        if not self.path_lock.acquire(blocking=False):
+            raise TimeoutError('Search path graph is busy')
+        try:
+            self.native_links.setdefault(a, []).append((b, length))
+            self.native_links.setdefault(b, []).append((a, length))
+            self._invalidate_paths_locked()
+        finally:
+            self.path_lock.release()
         self.reachable |= self.components == component
         self.blocked_cells = {p for p in self.blocked_cells if self.components[p] != component}
         options = list(self.options)
