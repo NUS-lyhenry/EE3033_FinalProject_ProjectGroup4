@@ -4,6 +4,7 @@ import math
 import cv2
 import numpy as np
 from ee3033_project.calibration import mounting_rotation
+from simulation_surfaces import surface_image
 
 
 WALLS = np.array([[[-1.2, -1.0], [1.4, -1.0]], [[1.4, -1.0], [1.4, 1.3]],
@@ -56,16 +57,8 @@ def project(points, translation, rotation):
 def render_camera(pose, texture, present,walls=None,target=None):
     walls=WALLS if walls is None else np.asarray(walls,dtype=float)
     target=TARGET if target is None else np.asarray(target,dtype=float)
-    image = np.zeros((480, 640, 3), dtype=np.uint8)
-    image[:] = (159, 170, 177)
-    image[160:] = (140, 145, 146)
     translation, rotation = camera_pose(pose)
-    # Simple vertical walls and floor, with optical geometry shared with CameraInfo/TF.
-    for a, b in walls:
-        quad = project([[*a, .75], [*b, .75], [*b, 0], [*a, 0]], translation, rotation)
-        if quad is not None:
-            cv2.fillConvexPoly(image, np.clip(quad, -3000, 3000).astype(np.int32), (190, 197, 200))
-            cv2.polylines(image, [np.clip(quad, -3000, 3000).astype(np.int32)], True, (100, 115, 125), 1)
+    image = surface_image(translation, rotation, K, walls)
     delta = target[:2]-translation[:2]
     distance = np.linalg.norm(delta)
     visible = raycast(translation[:2], [math.atan2(delta[1], delta[0])],walls)[0] >= distance-.01

@@ -1,5 +1,6 @@
 import importlib.util
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,7 @@ import pytest
 from ee3033_project.calibration import mounting_rotation
 from ee3033_project.vision_geometry import FloorCamera
 
+sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 spec = importlib.util.spec_from_file_location('simulation_geometry', Path(__file__).parents[1]/'scripts/simulation_geometry.py')
 world = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(world)
