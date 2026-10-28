@@ -94,6 +94,9 @@ class Robot(Node):
         mount=TransformStamped();mount.header.frame_id='base_footprint';mount.child_frame_id='camera_link'
         mount.transform.translation.x=SETUP['camera_x'];mount.transform.translation.z=SETUP['camera_height'];mount.transform.rotation.w=1.
         self.static.sendTransform(mount)
+        laser=TransformStamped();laser.header.frame_id='base_footprint';laser.child_frame_id='laser'
+        laser.transform.rotation.w=1.
+        self.static.sendTransform(laser)
         grid=OccupancyGrid();grid.header.frame_id='map';grid.info.width=grid.info.height=100;grid.info.resolution=.05
         grid.info.origin.position.x=grid.info.origin.position.y=-2.5;grid.info.origin.orientation.w=1.;grid.data=[0]*10000
         self.maps.publish(grid)
@@ -115,6 +118,9 @@ class Robot(Node):
         odom=Odometry();odom.header.frame_id='odom';odom.header.stamp=stamp;odom.child_frame_id='base_footprint'
         odom.pose.pose.position.x,odom.pose.pose.position.y=self.pose[:2];set_yaw(odom.pose.pose.orientation,self.pose[2])
         odom.twist.twist.linear.x=v;odom.twist.twist.angular.z=-w;self.odoms.publish(odom)
+        body=TransformStamped();body.header=odom.header;body.child_frame_id='base_footprint'
+        body.transform.translation.x,body.transform.translation.y=self.pose[:2]
+        set_yaw(body.transform.rotation,self.pose[2]);self.dynamic.sendTransform(body)
         tf=TransformStamped();tf.header.frame_id='map';tf.child_frame_id='odom';tf.header.stamp=copy.deepcopy(stamp)
         # AMCL normally publishes a transform slightly into the future.
         tf.header.stamp.nanosec+=500000000
@@ -242,7 +248,7 @@ class AutomaticCalibrationHTTP(unittest.TestCase):
                         detector.duplicate=False
                         injected_ambiguity=True
                     time.sleep(.1)
-                self.assertTrue(injected_miss,'No moving detector-miss recovery was exercised')
+                self.assertTrue(injected_miss,'No moving detector-miss recovery was exercised: '+str(node.snapshot()))
                 self.assertTrue(injected_ambiguity,'No ambiguous-box recovery was exercised')
                 self.assertTrue(wait(lambda:node.auto_status['state']!='fitting',10))
                 self.assertEqual(node.auto_status['state'],'complete',str(node.snapshot()))

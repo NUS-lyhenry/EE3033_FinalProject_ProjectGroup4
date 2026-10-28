@@ -24,7 +24,7 @@ import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
 from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import OccupancyGrid, Odometry
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateToPose, ComputePathToPose
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -49,6 +49,35 @@ def wait(future, timeout=10.):
     return future.result()
 
 
+def wait_for_checked_route(world, pose, timeout=30.):
+    """Prove the public planner's map, TF and costmap are ready without motion.
+
+    Nav2 lifecycle activation does not cover the separate guarded planner's TF
+    listener. A fixed sleep can therefore spend a recovery before the injected
+    fault even exists. Only terminal planning attempts may be retried here.
+    """
+    deadline=time.monotonic()+timeout
+    client=ActionClient(world,ComputePathToPose,'/compute_path_to_pose')
+    if not client.wait_for_server(timeout_sec=timeout):
+        raise AssertionError('Guarded planner unavailable before fault injection')
+    attempts=0
+    last={}
+    while time.monotonic()<deadline:
+        attempts+=1
+        request=ComputePathToPose.Goal()
+        request.goal=pose
+        handle=wait(client.send_goal_async(request),max(.01,min(5.,deadline-time.monotonic())))
+        last=dict(attempts=attempts,accepted=bool(handle.accepted))
+        if handle.accepted:
+            result=wait(handle.get_result_async(),max(.01,min(8.,deadline-time.monotonic())))
+            path=result.result.path
+            last.update(status=result.status,frame_id=path.header.frame_id,points=len(path.poses))
+            if result.status==4 and path.header.frame_id=='map' and len(path.poses)>=2:
+                return last
+        time.sleep(.1)
+    raise AssertionError('No validated route before fault injection: '+json.dumps(last))
+
+
 class FaultWorld(Node):
     def __init__(self, fault):
         super().__init__('navigation_fault_fixture')
@@ -65,6 +94,7 @@ class FaultWorld(Node):
         self.gate_status = {}
         self.nav_status = {}
         self.recoveries = 0
+        self.navigation_events = []
         self.tf = TransformBroadcaster(self)
         self.static = StaticTransformBroadcaster(self)
         tr = TransformStamped()
@@ -112,6 +142,12 @@ class FaultWorld(Node):
 
     def on_navigation(self, msg):
         self.nav_status = json.loads(msg.data)
+        event=dict(stage=self.nav_status.get('stage'),reason=self.nav_status.get('reason'),
+            recovery_count=self.nav_status.get('recovery_count',0),fault=self.fault_at is not None,
+            elapsed=time.monotonic()-self.first_command if self.first_command is not None else None)
+        if not self.navigation_events or any(event[k]!=self.navigation_events[-1][k]
+                for k in ('stage','reason','recovery_count','fault')):
+            self.navigation_events.append(event)
         self.recoveries = max(self.recoveries, self.nav_status.get('recovery_count', 0))
 
     def tick(self):
@@ -166,7 +202,8 @@ class FaultWorld(Node):
         if self.running:
             self.trace.append(dict(elapsed=now-(self.first_command or now), fault=injected,
                 pose=list(self.xyz), actual=list(self.actual), command=list(self.command),
-                gate=self.gate_status.get('reason'), stage=self.nav_status.get('stage')))
+                gate=self.gate_status.get('reason'), stage=self.nav_status.get('stage'),
+                recovery_count=self.nav_status.get('recovery_count',0)))
 
 
 def main():
@@ -206,12 +243,12 @@ def main():
             time.sleep(.1)
         client = ActionClient(world, NavigateToPose, '/navigate_to_pose')
         assert client.wait_for_server(timeout_sec=10)
-        time.sleep(2.)
-        world.running = True
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = 'map'
         goal.pose.pose.position.x = 1.2
         goal.pose.pose.orientation.w = 1.
+        report['planner_readiness']=wait_for_checked_route(world,goal.pose)
+        world.running = True
         handle = wait(client.send_goal_async(goal))
         assert handle.accepted
         result = wait(handle.get_result_async(), 65.)
@@ -234,6 +271,8 @@ def main():
         report['passed'] = bool(safe)
     except Exception as exc:
         report['error'] = str(exc)
+        report['failure_context']=dict(navigation=world.nav_status,gate=world.gate_status,
+            first_command_seen=world.first_command is not None,fault_injected=world.fault_at is not None)
     finally:
         world.running = False
         time.sleep(.1)
@@ -250,6 +289,7 @@ def main():
         world.destroy_node()
         rclpy.shutdown()
         (directory/'trace.json').write_text(json.dumps(world.trace))
+        (directory/'navigation_events.json').write_text(json.dumps(world.navigation_events,indent=2))
         (directory/'result.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2), flush=True)
     raise SystemExit(0 if report['passed'] else 1)
