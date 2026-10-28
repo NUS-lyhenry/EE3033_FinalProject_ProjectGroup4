@@ -1,0 +1,7 @@
+<library path="ee3033_regulated_path_follower">
+  <class name="ee3033_navigation::RegulatedPathFollower"
+         type="ee3033_navigation::RegulatedPathFollower"
+         base_class_type="nav2_core::Controller">
+    <description>Native Humble RPP with a command-space turn ramp and curvature-preserving speed limits.</description>
+  </class>
+</library>

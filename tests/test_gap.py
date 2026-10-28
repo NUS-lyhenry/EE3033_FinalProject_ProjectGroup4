@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 from ee3033_project import gap
+from ee3033_project.robot_geometry import GEOMETRY_PROFILE,FOOTPRINT_PADDING,ROTATION_CLEARANCES
 
 
 def snapshot(enabled=False, phase='mapping', audacity=gap.DEFAULT_AUDACITY):
@@ -20,11 +21,11 @@ def test_floor_and_reserved_policy_match_both_stages():
         assert gap.describe(off,phase)['enabled'] is False
         assert gap.describe(on,phase)['enabled'] is True
         for name in gap.COSTMAPS:
-            assert off[name]['robot_radius']==.14
-            assert on[name]['robot_radius']==pytest.approx(.18)
+            assert off[name]['robot_radius']==gap.BASE_RADIUS
+            assert on[name]['robot_radius']==pytest.approx(gap.RESERVED_RADIUS)
         consumer='project_mapper' if phase=='mapping' else 'project_mission'
         assert off[consumer]['clearance']==pytest.approx(.14)
-        assert on[consumer]['clearance']==pytest.approx(.18)
+        assert on[consumer]['clearance']==pytest.approx(.14+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
 
 
 def test_installed_yaml_defaults_form_a_synchronized_bold_policy():
@@ -48,6 +49,11 @@ def test_installed_yaml_defaults_form_a_synchronized_bold_policy():
             value=params
             for part in key.split('.'):value=value[part]
             actual[name][key]=value
+    # Source YAML defaults are measured; legacy launch explicitly overrides only
+    # profile geometry/rotation while preserving the same soft clearances.
+    if GEOMETRY_PROFILE=='legacy':
+        for name in gap.COSTMAPS:actual[name]['robot_radius']=gap.BASE_RADIUS
+        actual['project_velocity_gate']['rotation_clearance']=gap.TURNING[gap.DEFAULT_AUDACITY]['stop']
     result=gap.describe(actual,'mission')
     assert result['audacity']=='bold' and result['synchronized']
     assert result['enabled'] is False
@@ -61,7 +67,7 @@ def test_partial_updates_are_never_labelled_verified():
 
 
 @pytest.mark.parametrize('key,value',[('footprint','[[0,0],[1,0],[0,1]]'),
-    ('footprint_padding',0.),('inflation_layer.enabled',False),('inflation_layer.inflation_radius',.15)])
+    ('footprint_padding',0.),('inflation_layer.enabled',False),('inflation_layer.inflation_radius',gap.RESERVED_RADIUS+FOOTPRINT_PADDING-.01)])
 def test_unsupported_geometry_cannot_masquerade_as_policy(key,value):
     result=copy.deepcopy(snapshot())
     result[gap.COSTMAPS[0]][key]=value
@@ -83,12 +89,12 @@ def test_three_levels_preserve_geometry_and_gap_reserve(phase, enabled):
         assert data['audacity']==level and data['enabled'] is enabled
         assert data['synchronized']
         consumer='project_mapper' if phase=='mapping' else 'project_mission'
-        expected=clearance+(.04 if enabled else 0)
+        expected=clearance+(gap.RESERVED_RADIUS-gap.BASE_RADIUS if enabled else 0)
         assert actual[consumer]['clearance']==pytest.approx(expected)
         for name in gap.COSTMAPS:
-            assert actual[name]['robot_radius']==pytest.approx(.18 if enabled else .14)
+            assert actual[name]['robot_radius']==pytest.approx(gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)
             assert actual[name]['footprint_padding']==.01
-        assert data['effective_min_opening']==pytest.approx(2*max(expected,(.19 if enabled else .15)))
+        assert data['effective_min_opening']==pytest.approx(2*max(expected,(gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)+FOOTPRINT_PADDING))
         clearances.append(expected)
     assert clearances[0]>clearances[1]>clearances[2]
 
@@ -105,22 +111,17 @@ def test_level_readback_requires_both_costmaps_to_agree():
     assert not data['synchronized'] and data['audacity'] is None
 
 
-def test_turning_profiles_preserve_cautious_and_grade_higher_levels():
-    cautious,balanced,bold=[gap.parameter_plan(False,'mapping',level) for level in gap.AUDACITY]
-    assert cautious['controller_server']['FollowPath.closed_loop'] is True
-    assert cautious['controller_server']['progress_checker.required_movement_angle']>3.1416
-    assert cautious['project_velocity_gate']['rotation_clearance']==.16
-    for plan in (balanced,bold):
-        assert plan['controller_server']['FollowPath.closed_loop'] is False
-        assert 0<plan['controller_server']['progress_checker.required_movement_angle']<.5
-    assert balanced['controller_server']['FollowPath.max_angular_accel']<bold['controller_server']['FollowPath.max_angular_accel']
-    assert balanced['project_velocity_gate']['rotation_clearance']==.15
-    assert bold['project_velocity_gate']['rotation_clearance']==.14
+def test_audacity_preserves_original_translation_checker_at_every_level():
+    for level in gap.AUDACITY:
+        plan=gap.parameter_plan(False,'mapping',level)
+        assert plan['controller_server']=={}
+    assert gap.PROGRESS_PLUGIN=='nav2_controller::SimpleProgressChecker'
+    assert [gap.TURNING[level]['stop'] for level in gap.AUDACITY]==list(ROTATION_CLEARANCES.values())
 
 
-def test_declared_turning_parameters_cannot_hide_an_old_progress_checker():
+def test_heading_checker_is_not_mislabelled_as_original_progress_policy():
     actual=snapshot(False,'mapping','bold')
-    actual['controller_server']['progress_checker.plugin']='nav2_controller::SimpleProgressChecker'
+    actual['controller_server']['progress_checker.plugin']='nav2_controller::PoseProgressChecker'
     with pytest.raises(ValueError,match='Reload navigation'):gap.describe(actual,'mapping')
 
 

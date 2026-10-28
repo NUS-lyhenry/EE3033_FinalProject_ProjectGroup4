@@ -1,8 +1,10 @@
 """Temporary narrow-passage policy; never changes sensing or the physical floor."""
 import math
 
-BASE_RADIUS = 0.14
-ROBOT_WIDTH = 0.20  # user estimate; physical validation remains required
+from .robot_geometry import (BODY_RADIUS, ROBOT_WIDTH, FOOTPRINT_PADDING,
+                             ROTATION_CLEARANCES, geometry_metadata)
+
+BASE_RADIUS = BODY_RADIUS
 SIDE_RESERVE = 0.08
 RESERVED_RADIUS = max(BASE_RADIUS, ROBOT_WIDTH / 2 + SIDE_RESERVE)
 BASE_CLEARANCE = 0.22
@@ -13,13 +15,8 @@ AUDACITY = {
 }
 DEFAULT_AUDACITY = 'bold'
 DEFAULT_CLEARANCE = AUDACITY[DEFAULT_AUDACITY][1]
-TURNING = {
-    # angle > pi keeps Cautious identical to the original translation checker.
-    'cautious': dict(angle=3.2, closed_loop=True, acceleration=0.8, sample=0.10, stop=0.16),
-    'balanced': dict(angle=0.35, closed_loop=False, acceleration=0.4, sample=0.20, stop=0.15),
-    'bold': dict(angle=0.20, closed_loop=False, acceleration=0.8, sample=0.30, stop=0.14),
-}
-PROGRESS_PLUGIN = 'nav2_controller::PoseProgressChecker'
+TURNING = {level:dict(stop=distance) for level,distance in ROTATION_CLEARANCES.items()}
+PROGRESS_PLUGIN = 'nav2_controller::SimpleProgressChecker'
 COSTMAPS = ('global_costmap/global_costmap', 'local_costmap/local_costmap')
 
 
@@ -40,11 +37,7 @@ def parameter_plan(enabled, phase, audacity=DEFAULT_AUDACITY):
     return {**{name: {'robot_radius': radius} for name in COSTMAPS},
             'project_mapper' if phase == 'mapping' else 'project_mission': {
                 'clearance': AUDACITY[audacity][1] + (radius - BASE_RADIUS)},
-            'controller_server': {
-                'progress_checker.required_movement_angle': turn['angle'],
-                'FollowPath.closed_loop': turn['closed_loop'],
-                'FollowPath.max_angular_accel': turn['acceleration'],
-                'FollowPath.forward_sampling_distance': turn['sample']},
+            'controller_server': {},
             'project_velocity_gate': {'rotation_clearance': turn['stop']}}
 
 
@@ -58,11 +51,11 @@ def describe(actual, phase):
         p = actual[name]
         if (p['footprint'].replace(' ', '') not in ('', '[]')
                 or p['inflation_layer.enabled'] is not True
-                or p['footprint_padding'] < 0.01
+                or p['footprint_padding'] < FOOTPRINT_PADDING
                 or p['inflation_layer.inflation_radius'] < RESERVED_RADIUS + p['footprint_padding']):
             raise ValueError(f'{name}: unsupported footprint/inflation configuration')
     if actual['controller_server']['progress_checker.plugin'] != PROGRESS_PLUGIN:
-        raise ValueError('Reload navigation with the heading-aware progress checker before configuring audacity')
+        raise ValueError('Reload navigation with the original translation progress checker before configuring audacity')
     def matches(enabled, audacity):
         return all(math.isclose(actual[n][k], v, abs_tol=1e-8)
                    for n, entries in parameter_plan(enabled, phase, audacity).items() for k, v in entries.items())
@@ -79,6 +72,7 @@ def describe(actual, phase):
     return {'enabled': enabled, 'audacity': audacity, 'audacity_options': options,
             'synchronized': audacity is not None,
             'estimated_robot_width': ROBOT_WIDTH, 'side_reserve': SIDE_RESERVE,
+            'robot_geometry': geometry_metadata(),
             'nominal_min_opening': 2 * RESERVED_RADIUS,
             'effective_min_opening': next((p['nominal_min_opening'] for p in options
                                             if p['id']==audacity), None),
@@ -111,7 +105,7 @@ def guard_rotation(node, inactive):
             if not inactive():
                 return SetParametersResult(successful=False, reason='Stop before changing turning clearance')
             if (type(p.value) is not float or not math.isfinite(p.value)
-                    or not 0.14 <= p.value <= 0.16):
-                return SetParametersResult(successful=False, reason='turning clearance must be 0.14–0.16 m')
+                    or not min(ROTATION_CLEARANCES.values()) <= p.value <= max(ROTATION_CLEARANCES.values())):
+                return SetParametersResult(successful=False, reason=f'turning clearance must be {min(ROTATION_CLEARANCES.values()):.6f}–{max(ROTATION_CLEARANCES.values()):.6f} m')
         return SetParametersResult(successful=True)
     node.add_on_set_parameters_callback(validate)

@@ -7,6 +7,7 @@ lidar sampling. Nav2's other settings come from the project configuration.
 import json
 import math
 import os
+os.environ.setdefault('EE3033_ROBOT_GEOMETRY','legacy')
 from pathlib import Path
 import signal
 import subprocess
@@ -115,10 +116,13 @@ def main():
                         assert time.monotonic()<deadline,'Inactive '+name;time.sleep(.2)
                 assert planner.wait_for_server(timeout_sec=10)
                 for client in getters.values(): assert client.wait_for_service(timeout_sec=5)
-                for width,enabled,audacity,passable in [
-                        (narrow,False,'cautious',True),(narrow,False,'balanced',True),(narrow,False,'bold',True),
-                        (narrow,True,'bold',False),(.70,True,'balanced',True),
-                        (.20,False,'bold',False),(narrow,False,'cautious',True)]:
+                for width,enabled,audacity,passable,route_clear in [
+                        (narrow,False,'cautious',True,resolution!=.05),
+                        (narrow,False,'balanced',True,resolution!=.05),
+                        (narrow,False,'bold',True,resolution!=.05),
+                        (narrow,True,'bold',False,False),(.70,True,'balanced',True,True),
+                        (.20,False,'bold',False,False),(.50,False,'bold',True,True),
+                        (narrow,False,'cautious',True,resolution!=.05)]:
                     publish_passage(width);post(enabled,audacity)
                     # Wait for inflation to reflect changed footprint and a fresh map.
                     deadline=time.monotonic()+8
@@ -126,8 +130,10 @@ def main():
                         costs={name:center_cost(name) for name in getters}
                         if all((cost<253)==passable for cost in costs.values()): break
                         assert time.monotonic()<deadline,(width,enabled,costs);time.sleep(.15)
-                    assert plan()==passable,(width,enabled,costs)
-                    print(f'PASS native NavFn: grid={resolution} opening={width:.2f} m reserve={enabled} audacity={audacity} passable={passable} costs={costs}',flush=True)
+                    # A safe centre-cell cost alone cannot prove an entire
+                    # 0.30 m footprint fits a 0.30 m raster opening.
+                    assert plan()==route_clear,(width,enabled,costs,route_clear)
+                    print(f'PASS native NavFn: grid={resolution} opening={width:.2f} m reserve={enabled} audacity={audacity} centre_passable={passable} full_footprint_route={route_clear} costs={costs}',flush=True)
                 assert world.count_publishers('/cmd_vel')==0,'Fixture must not connect to chassis output'
                 print('PASS: real global/local inflation and native NavFn ON/OFF; no chassis output',flush=True)
             finally:

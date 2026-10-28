@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-28",
+  "source_revision": "f7da702",
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "environment": "Isolated ROS domain per case; real mission, perception, Nav2 and velocity gate with synthetic detector and chassis.",
+  "cases": {
+    "near": {
+      "passed": false,
+      "state": "FOUND_UNLOCALIZED",
+      "return_verified": true,
+      "reason": "Localization work budget exhausted with no observation move; repeated capture-time map transform future-extrapolation by fractions of a millisecond prevented bearing/origin. This run does not establish that TF timing is the only possible cause.",
+      "localization_active_seconds": 45.038125778999984
+    },
+    "bearing": {
+      "passed": true,
+      "baseline_m": 0.3100188877210547,
+      "sigma_m": 0.09477764745735062,
+      "seconds": 23.211956332999762
+    },
+    "occlusion": {
+      "passed": true,
+      "seconds": 16.25996904500016,
+      "rejected_occluded_and_unknown": true
+    },
+    "crop": {
+      "passed": true,
+      "seconds": 47.904493572999854,
+      "sigma_m": 0.05607819313129441,
+      "reframe_attempts": 2,
+      "valid_floor_observations": 8,
+      "evidence": "runner stdout; container removed on exit"
+    },
+    "near_retest_after_tf_wait": {
+      "passed": true,
+      "synthetic_detector": true,
+      "synthetic_chassis": true,
+      "seconds": 26.23886757199989,
+      "actual_displacement_m": 0.21045646550201946,
+      "sigma_m": 0.07231225488571937,
+      "reframe_attempts": 1,
+      "source_revision": "working tree with capture-frame wait"
+    }
+  },
+  "tf_wait_regression": {
+    "bearing": {
+      "passed": true,
+      "seconds": 22.840075616999457,
+      "sigma_m": 0.09483628528209559
+    },
+    "occlusion": {
+      "passed": true,
+      "seconds": 16.05679422599951
+    },
+    "crop": {
+      "passed": true,
+      "seconds": 48.00489804100016,
+      "sigma_m": 0.056299772562065704
+    }
+  }
+}

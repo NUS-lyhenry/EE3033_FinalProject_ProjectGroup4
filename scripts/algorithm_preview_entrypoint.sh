@@ -2,7 +2,7 @@
 set -eo pipefail
 source /opt/ros/humble/setup.bash
 colcon --log-base /tmp/preview-colcon-logs build --symlink-install \
-    --base-paths /work/src/ee3033_project --packages-select ee3033_project \
+    --base-paths /work/src --packages-up-to ee3033_project \
     --build-base /tmp/preview-build --install-base /tmp/preview-install
 source /tmp/preview-install/setup.bash
 preview_assets=/tmp/ee3033_sim/assets

@@ -7,6 +7,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from ee3033_project.robot_geometry import GEOMETRY_PROFILE, FOOTPRINT_RADIUS, DEFAULT_STOP_DISTANCE
+from ee3033_project.gap import TURNING, DEFAULT_AUDACITY
 
 
 def check_map(context):
@@ -24,6 +26,9 @@ def generate_launch_description():
     include = lambda path, args: IncludeLaunchDescription(
         PythonLaunchDescriptionSource(path), launch_arguments=args.items())
     nav_share = get_package_share_directory('nav2_bringup')
+    geometry_overrides=({'footprint_radius':FOOTPRINT_RADIUS,'reverse_radius':FOOTPRINT_RADIUS,
+        'stop_distance':DEFAULT_STOP_DISTANCE,'rotation_clearance':TURNING[DEFAULT_AUDACITY]['stop']}
+        if GEOMETRY_PROFILE=='legacy' else {})
     return LaunchDescription([
         DeclareLaunchArgument('map', description='On-site map YAML (required)'),
         DeclareLaunchArgument('map_partial', default_value='false'),
@@ -32,6 +37,7 @@ def generate_launch_description():
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('camera', default_value='true'),
+        DeclareLaunchArgument('self_mask_radius', default_value='.08'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
         DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
@@ -48,7 +54,7 @@ def generate_launch_description():
         DeclareLaunchArgument('results_directory', default_value='~/ee3033_results'),
         OpaqueFunction(function=check_map),
         include(os.path.join(share, 'launch', 'hardware.launch.py'), {
-            k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera')}),
+            k: LaunchConfiguration(k) for k in ('base', 'lidar', 'camera', 'self_mask_radius')}),
         include(os.path.join(nav_share, 'launch', 'localization_launch.py'), {
             'map': LaunchConfiguration('map'), 'params_file': LaunchConfiguration('nav_config'),
             'use_sim_time': 'false', 'use_composition': 'False', 'use_respawn': 'False'}),
@@ -64,7 +70,7 @@ def generate_launch_description():
                                                           value_type=str)}]),
         Node(package='ee3033_project', executable='target_filter', output='screen', parameters=[config, {'target_class':target}]),
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
-            config, {'allow_motion': motion, 'navigation_profile': LaunchConfiguration('navigation_profile')}]),
+            config, {'allow_motion': motion, 'navigation_profile': LaunchConfiguration('navigation_profile')},geometry_overrides]),
         Node(package='ee3033_project', executable='mission', output='screen', parameters=[
             config, {'target_class': target, 'allow_motion': motion,
                      'results_directory':LaunchConfiguration('results_directory'),

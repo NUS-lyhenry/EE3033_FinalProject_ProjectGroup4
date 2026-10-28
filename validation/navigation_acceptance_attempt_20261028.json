@@ -1,0 +1,122 @@
+{
+  "status": "FAILED_AND_SUPERSEDED",
+  "reason": "Production fix required: measured length/width metadata correction and physically reachable 28cm doorway planner failure. All evidence retained. 2026-10-28T06:50:32.762611+00:00",
+  "simulation_only": true,
+  "physical_robot_contacted": false,
+  "merged": false,
+  "planned": {
+    "primary_fixed": 60,
+    "primary_random": 60,
+    "legacy_pressure": 20
+  },
+  "completed": {
+    "fixed": 55,
+    "random": 3,
+    "legacy": 0
+  },
+  "fixed_case_outcomes": {
+    "doorway": {
+      "arrived": 5
+    },
+    "seed102_live": {
+      "arrived": 5
+    },
+    "too_narrow": {
+      "navigation_failure": 4,
+      "test_failure": 1
+    },
+    "legacy95": {
+      "arrived": 5
+    },
+    "seed1023": {
+      "arrived": 4,
+      "test_interrupted": 1
+    },
+    "dead_end_exit": {
+      "arrived": 4,
+      "test_failure": 1
+    },
+    "large_initial_heading": {
+      "arrived": 5
+    },
+    "final_heading": {
+      "arrived": 5
+    },
+    "successive_right_angles": {
+      "arrived": 5
+    },
+    "measured_too_narrow": {
+      "safe_unreachable": 4,
+      "test_failure": 1
+    },
+    "unreachable_target": {
+      "safe_unreachable": 5
+    }
+  },
+  "random": {
+    "successful": [
+      "random_01/0_known_navigate"
+    ],
+    "interrupted": [
+      "random_01/1_slam_waypoint",
+      "random_02/0_known_navigate"
+    ],
+    "not_started": 57
+  },
+  "critical_failure": {
+    "case_id": "too_narrow",
+    "physical_door_width_m": 0.28,
+    "physical_radius_m": 0.106801,
+    "padding_m": 0.01,
+    "independent_oracle_reachable": true,
+    "repeated_navigation_failures": 4,
+    "uninitialized_attempts": 1,
+    "stage": "Mapper pre-navigation reachability / waypoint selection",
+    "evidence": "All observed supervisor states IDLE; no native/global validated plan or nonzero motion dispatched. Mapper rejected reachable waypoint."
+  },
+  "initialization_failures": [
+    "dead_end_exit/4_known_waypoint: smoother_server/change_state send response timeout",
+    "measured_too_narrow/3_known_waypoint: controller_server/change_state send response timeout",
+    "too_narrow/3_known_waypoint: bt_navigator/get_state send response timeout"
+  ],
+  "geometry_note": "These runs used correct measured circumscribed radius but length/width metadata was reversed; production later corrected to length .115 width .18 without changing circle radius. They are not final acceptance.",
+  "source_sha256": {
+    "scripts/simulation_robot.py": "2747815f5d8f68222c90fa97da119374a85dd5bc5b3bcd7d47880686249be03c",
+    "scripts/simulation_motion.py": "c679741f9a1012a8a8450e89385a0bb0edf158f516d383469e60c101f0f989f3",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "53c9722978e4a1e785ef5d2a47a53b6f52a31d082c02efe5574db40f2420cd97",
+    "src/ee3033_project/ee3033_project/navigation_supervision.py": "f902ca3cc40d79a786b5be75f613f8f7ff5effb1acab6d1d24a4959dbf072751",
+    "src/ee3033_project/ee3033_project/path_planner.py": "755a097cf8c628d4d51594af58d124ffc25bf145db8d33d10f6e636aa37c2ad5",
+    "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2",
+    "src/ee3033_project/ee3033_project/velocity_gate.py": "c6647799633331190b041ac60c3ed13e24f551c6dce05e46b826cdde32173873",
+    "src/ee3033_project/ee3033_project/motion_safety.py": "b0598558a241f37d269c2929be77928fbdd77eb50026392b041646c46e46ab7a",
+    "src/ee3033_project/ee3033_project/mapper.py": "f324a3cf3e098b95dac721832e09a84225af0f96131a04cb37d1a6078dd29590",
+    "src/ee3033_project/ee3033_project/mission.py": "b00aa54c69be25d8c147106f13726267f93039418999b16018999024cb6e2f71",
+    "src/ee3033_project/ee3033_project/frontiers.py": "174a6d314a47398a18bfe330feaf26f1cdb882676ee32cb2c7acb2e561b26cc0",
+    "src/ee3033_project/ee3033_project/waypoint.py": "22dd3394d93b87f1c5628363a4bdc0abbd69f4031d5b7d998e9cac4c676732b1",
+    "src/ee3033_project/ee3033_project/navigation_costmap.py": "3688e7faf91f49e12478e4f320ce823ce284661cb99f53e2effedcafcd06668f",
+    "src/ee3033_project/ee3033_project/trial.py": "1da9bf40f9922996fb6d7c7671e07cdddaa1eb09839a220000918844ac77d778",
+    "src/ee3033_project/ee3033_project/gap.py": "5bf25f183b1bc67e888eb2843e985477b6448a8cf59fdde7fde9f824902229c1",
+    "src/ee3033_project/ee3033_project/robot_geometry.py": "bd41e5398f56cacae0d0940c9436a0972bc4c9b3bd71f2901f3fd7c77617d5c9",
+    "src/ee3033_project/config/slam.yaml": "fbec54d268c646095fbd8089b003bc809193062d5437f9c6ceec53600078c54a",
+    "src/ee3033_project/launch/navigation.launch.py": "1ff3e5c124d7b995e2de185c85b23fec9483f657ed85cfcc535e7018f43178f9",
+    "src/ee3033_navigation/src/regulated_path_follower.cpp": "8b149873748c5d3b51063a927a14b7ff1862d3c80c9e3635b23a8621498d2359"
+  },
+  "controller_library_sha256": [
+    "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c"
+  ],
+  "total_collision_rejections": 0,
+  "artifact_root": "/Users/lyhenry/Library/CloudStorage/OneDrive-NationalUniversityofSingapore/University/Y3S1/.navigation-acceptance/20261028/final-v2",
+  "pause_report": "pause_final_report.json",
+  "integrity": {
+    "files": 513,
+    "bytes": 133305361,
+    "invalid_or_incomplete_files": []
+  },
+  "isolation": {
+    "docker_network": "none",
+    "docker_ipc": "private",
+    "source_mount_read_only": true,
+    "hardware_access": false
+  },
+  "failures_retained": true
+}

@@ -28,6 +28,7 @@ from .ros_utils import parameters, transform_arrays
 from .model_labels import validate_target
 from .calibration import load_profile, mounting_rotation, floor_point, in_envelope
 from .vision_geometry import FloorCamera, camera_matrix, override_pitch
+from .capture_frame import CaptureFrameGate
 
 
 class Perception(Node):
@@ -63,6 +64,7 @@ class Perception(Node):
         self.listener = TransformListener(self.buffer, self)
         self.lock = threading.Lock()
         self.latest_image = None
+        self.capture_frame_gate = CaptureFrameGate()
         self.camera = None
         self.scans = deque(maxlen=40)
         self.last_processed = None
@@ -210,9 +212,19 @@ class Perception(Node):
             c = profile['camera']
             if (c['width'], c['height'], c['frame_id']) != (image.width, image.height, image.header.frame_id):
                 raise ValueError('Calibration image resolution/frame does not match this camera')
-            x1, _, x2, y2 = box
+            x1, y1, x2, y2 = map(float,box)
+            margin=self.p['pixel_margin']
+            if (not np.isfinite([x1,y1,x2,y2]).all()
+                    or not margin<=x1<x2<=image.width-margin
+                    or not margin<=y1<y2<=image.height-margin
+                    or x2-x1<4 or y2-y1<8):
+                raise ValueError('Target is too small or clipped; seek a better view')
             point = floor_point(profile, [(x1+x2)/2, y2], self.p['max_range'])
             s = profile['setup']
+            distance=math.hypot(point[0]-s['camera_x'],point[1]-s['camera_y'])
+            if distance<self.p['camera_min_range']:
+                raise ValueError('Target contact is outside the reliable camera range')
+            self.projection_in_range=distance<=self.p['camera_max_range']
             if not in_envelope(profile, point[0]-s['camera_x'], point[1]-s['camera_y']):
                 return None
             transform = self.buffer.lookup_transform(self.p['map_frame'], profile['base_frame'], Time.from_msg(image.header.stamp))
@@ -273,6 +285,22 @@ class Perception(Node):
     def process(self):
         with self.lock:
             image, camera, scans = self.latest_image, self.camera, list(self.scans)
+        if (self.capture_frame_gate.pending is None and image is not None
+                and stamp_seconds(image.header.stamp) == self.last_processed):
+            return
+        def capture_transform_ready(frame):
+            if self.p['localization_method'] == 'lidar':
+                return True
+            stamp = stamp_seconds(frame.header.stamp)
+            age = self.get_clock().now().nanoseconds*1e-9-stamp
+            if not 0 <= age <= self.p['max_image_age']:
+                return True  # Preserve the existing stale-frame diagnostics.
+            try:
+                return self.buffer.can_transform(self.p['map_frame'], self.p['base_frame'],
+                                                 Time.from_msg(frame.header.stamp))
+            except (TransformException, ValueError):
+                return True  # The normal detection path records the error.
+        image = self.capture_frame_gate.select(image, capture_transform_ready)
         if image is None:
             return
         stamp = stamp_seconds(image.header.stamp)
@@ -323,6 +351,8 @@ class Perception(Node):
                 if box[1]<self.p['pixel_margin'] or box[3]>image.height-self.p['pixel_margin']:
                     detection['reason_codes'].append('detection_vertical_clipping')
                 if not detection['settled']:detection['reason_codes'].append('capture_motion_unsettled')
+                if self.floor_camera is not None:
+                    detection.update(self.floor_camera.view_requirements(box))
                 point = None
                 self.projection_sigma = self.p['position_sigma']
                 self.geometric_sigma = self.p['position_sigma']
@@ -349,6 +379,7 @@ class Perception(Node):
                         # A cropped horizontal centre can guide a bounded
                         # retreat but is never geometric localization evidence.
                         detection['steering_bearing'] = math.atan2(direction[1], direction[0])
+                        detection['steering_origin']=(rot@self.floor_camera.translation+origin)[:2].tolist()
                         detection['bearing_stage']='map_ray'
                         if not horizontal_valid:
                             raise ValueError('Horizontal clipping; reframe before measuring a bearing')
@@ -410,11 +441,14 @@ class Perception(Node):
                                          'sigma': self.projection_sigma,
                                          'box': box.tolist(), 'source_frame': stamp,
                                          'method': self.p['localization_method']})
+                    detection['projection_valid']=bool(usable)
                     caption = (f'map: ({point[0]:.2f}, {point[1]:.2f}) m' if reliable and usable else
                                f'candidate: ({point[0]:.2f}, {point[1]:.2f}) +/- {self.projection_sigma:.2f} m')
                     cv2.putText(annotated, caption,
                                 (int(box[0]), max(20, int(box[3])+20)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1)
+                else:
+                    detection['projection_valid']=False
                 detections.append(detection)
             out = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
             out.header = image.header

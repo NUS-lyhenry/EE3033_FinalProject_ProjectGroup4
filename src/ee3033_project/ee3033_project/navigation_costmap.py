@@ -31,6 +31,11 @@ class NavigationCostmap:
             self.requested=now
             self.future=self.client.call_async(GetCostmap.Request())
 
+    def fresh(self,now=None):
+        """A service advertisement is not a received navigation envelope."""
+        now=time.monotonic() if now is None else now
+        return self.map is not None and 0<=now-self.stamp<=3.
+
     def allowed(self,x,y):
         msg=self.map
         if msg is None:return False if self.client.service_is_ready() else None

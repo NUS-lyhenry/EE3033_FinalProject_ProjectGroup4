@@ -149,3 +149,57 @@ def test_correct_pitch_recovers_far_contact_that_old_pitch_projects_beyond_range
     old=FloorCamera(640,480,k,np.zeros(5),mounting_rotation(math.radians(14),0.),mount)
     try:assert np.linalg.norm(old.intersection(pixel.ravel())[:2]-mount[:2])>3.
     except ValueError:pass
+
+
+def test_two_collinear_near_retreats_cannot_starve_a_new_lateral_capture():
+    t=BearingIntersection();target=(1.,0.)
+    for origin,stamp in (((0.,0.),10.),((-.3,0.),12.),((-.6,0.),14.)):
+        assert collect(t,origin,stamp,target) is None
+    assert t.reason_code=='bearing_weak_crossing_angle' and len(t.sites)==3
+    first=t.add(view(16.,(-.6,.5),target))
+    assert first is None and t.frame_accepted
+    assert 'bearing_redundant_site_replaced' in t.last_events
+    result=None
+    for stamp in (16.2,16.4,16.6):result=t.add(view(stamp,(-.6,.5),target))
+    assert result is not None
+    assert [result['x'],result['y']]==pytest.approx(target,abs=1e-6)
+    assert len(t.sites)==3 and result['sites']==3
+    assert len(result['source_frames'])==len(set(result['source_frames']))==12
+    kept={p['stamp'] for site in t.sites for p in site}
+    assert set(result['source_frames'])==kept
+    mmse=MapMMSE();mmse.set_map(np.zeros((80,80)),.05,(-2.,-2.,0.))
+    assert mmse.update_factor(result,16.6)
+    assert not mmse.update_factor(result,16.6)
+    assert len(mmse.samples)==1
+
+
+def test_published_factor_sites_cannot_be_evicted_by_a_fourth_view():
+    t=BearingIntersection()
+    collect(t,(0.,0.),10.);assert collect(t,(0.,1.),12.)
+    assert collect(t,(.5,0.),14.)
+    sources=t.last_sources.copy()
+    origins=[site[-1]['origin'].copy() for site in t.sites]
+    assert t.add(view(16.,(.5,1.))) is None
+    assert t.reason_code=='bearing_site_limit'
+    assert t.last_sources==sources and len(t.sites)==3
+    assert all(np.array_equal(a,site[-1]['origin']) for a,site in zip(origins,t.sites))
+
+
+def test_incomplete_unused_site_can_be_replaced_without_losing_factor_evidence():
+    t=BearingIntersection()
+    collect(t,(0.,0.),10.);assert collect(t,(0.,1.),12.)
+    sources=t.last_sources.copy()
+    t.add(view(14.,(.5,0.)))  # one frame at a site unused by the published A/B factor
+    assert len(t.sites)==3
+    t.add(view(15.,(.5,1.)))
+    assert 'bearing_redundant_site_replaced' in t.last_events
+    assert t.last_sources==sources
+    assert sources <= {p['stamp'] for site in t.sites for p in site}
+
+
+def test_parallel_complete_captures_are_not_replaced_by_more_parallel_evidence():
+    t=BearingIntersection();target=(2.,0.)
+    for origin,stamp in (((0.,0.),10.),((-.3,0.),12.),((-.6,0.),14.)):
+        collect(t,origin,stamp,target)
+    assert t.add(view(16.,(-.9,0.),target)) is None
+    assert t.reason_code=='bearing_site_limit' and len(t.sites)==3

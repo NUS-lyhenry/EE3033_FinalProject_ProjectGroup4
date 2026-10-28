@@ -47,6 +47,7 @@ class Workflow(CameraSetup):
             self.p['vision_config'] = str(saved.resolve())
         if self.stage:
             self.stage.navigation_profile = self.p['navigation_profile']
+            self.stage.mapping_resolution = self.p['mapping_resolution']
             self.stage.vision_config = self.p['vision_config']
         self.init_camera_setup()
         self.create_subscription(Twist,'/cmd_vel',self.on_final_command,10)
@@ -112,6 +113,7 @@ class Workflow(CameraSetup):
                     selected_map=self.selected_map,mission_options=self.mission_options,
                     initial_pose_sent=self.initial_pose_sent,perception=self.perception_data,
                     vision_settings=self.vision_settings, navigation_profile=self.p['navigation_profile'],
+                    mapping_resolution=self.p['mapping_resolution'],
                     mission_result=self.result_data,workflow_fault=self.workflow_fault)
 
     def workflow_get(self,path):
@@ -181,7 +183,7 @@ class Workflow(CameraSetup):
                     return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
                 self.control_generation+=1
                 self.result_data=self.target_estimate=None
-                self.route=[];self.path=[]
+                self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
                 self.events.clear()
             return dict(result,message='Searching again on the loaded map; previous attempt saved')
         reset_trial=path=='/api/new_trial'
@@ -281,7 +283,7 @@ class Workflow(CameraSetup):
                     self.status_after=self.get_clock().now().nanoseconds*1e-9
                     self.p['phase']=phase
                     self.state=dict(state='WAITING',reason='Starting '+phase+' services; waiting for fresh status',home=None,target=None)
-                    self.map_data=None;self.map_revision+=1;self.route=[];self.path=[]
+                    self.map_data=None;self.map_revision+=1;self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
                     self.saved_map=None
                     self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None

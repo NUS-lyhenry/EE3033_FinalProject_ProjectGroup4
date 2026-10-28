@@ -1,0 +1,1501 @@
+{
+  "simulation_only": true,
+  "scope": "Single runs during integration; final-source repeated fixed/random acceptance not yet complete",
+  "results": {
+    "legacy95_known": {
+      "case_id": "legacy95",
+      "controller": "rpp",
+      "map_mode": "known",
+      "task": "navigate",
+      "motion": "ideal",
+      "start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "goal": [
+        0.95,
+        0.85,
+        0.7
+      ],
+      "world_start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "world_goal": [
+        0.95,
+        0.85,
+        0.7
+      ],
+      "initial_map_from_odom": null,
+      "oracle_reachable": true,
+      "passed": true,
+      "simulation_only": true,
+      "physical_robot_contacted": false,
+      "ros_domain_id": 123,
+      "source_config_sha256": "c96d4fd70462a5920b27e3966b393c7b33fd5dc806d012602992c9c7443ef6fa",
+      "dependency_timeouts_ms": {
+        "wait_for_service_timeout": 10000,
+        "default_server_timeout": 100
+      },
+      "action_graph_history": [
+        {
+          "/navigate_to_pose": "Action: /navigate_to_pose\nAction clients: 1\n    /navigation_benchmark_fixture\nAction servers: 1\n    /project_navigation_supervisor\n",
+          "/project/nav2_navigate_to_pose": "Action: /project/nav2_navigate_to_pose\nAction clients: 1\n    /bt_navigator\nAction servers: 1\n    /bt_navigator\n",
+          "/compute_path_to_pose": "Action: /compute_path_to_pose\nAction clients: 1\n    /bt_navigator_navigate_to_pose_rclcpp_node\nAction servers: 1\n    /project_path_planner\n",
+          "/project/nav2_compute_path_to_pose": "Action: /project/nav2_compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /project_path_planner\nAction servers: 0\n"
+        },
+        {
+          "/navigate_to_pose": "Action: /navigate_to_pose\nAction clients: 1\n    /navigation_benchmark_fixture\nAction servers: 0\n",
+          "/project/nav2_navigate_to_pose": "Action: /project/nav2_navigate_to_pose\nAction clients: 3\n    /navigation_benchmark_fixture\n    /bt_navigator\n    /project_navigation_supervisor\nAction servers: 1\n    /bt_navigator\n",
+          "/compute_path_to_pose": "Action: /compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /bt_navigator_navigate_to_pose_rclcpp_node\nAction servers: 1\n    /project_path_planner\n",
+          "/project/nav2_compute_path_to_pose": "Action: /project/nav2_compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /project_path_planner\nAction servers: 1\n    /planner_server\n"
+        },
+        {
+          "/navigate_to_pose": "Action: /navigate_to_pose\nAction clients: 1\n    /navigation_benchmark_fixture\nAction servers: 1\n    /project_navigation_supervisor\n",
+          "/project/nav2_navigate_to_pose": "Action: /project/nav2_navigate_to_pose\nAction clients: 3\n    /navigation_benchmark_fixture\n    /bt_navigator\n    /project_navigation_supervisor\nAction servers: 1\n    /bt_navigator\n",
+          "/compute_path_to_pose": "Action: /compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /bt_navigator_navigate_to_pose_rclcpp_node\nAction servers: 1\n    /project_path_planner\n",
+          "/project/nav2_compute_path_to_pose": "Action: /project/nav2_compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /project_path_planner\nAction servers: 1\n    /planner_server\n"
+        }
+      ],
+      "action_graph": {
+        "/navigate_to_pose": "Action: /navigate_to_pose\nAction clients: 1\n    /navigation_benchmark_fixture\nAction servers: 1\n    /project_navigation_supervisor\n",
+        "/project/nav2_navigate_to_pose": "Action: /project/nav2_navigate_to_pose\nAction clients: 3\n    /navigation_benchmark_fixture\n    /bt_navigator\n    /project_navigation_supervisor\nAction servers: 1\n    /bt_navigator\n",
+        "/compute_path_to_pose": "Action: /compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /bt_navigator_navigate_to_pose_rclcpp_node\nAction servers: 1\n    /project_path_planner\n",
+        "/project/nav2_compute_path_to_pose": "Action: /project/nav2_compute_path_to_pose\nAction clients: 2\n    /navigation_benchmark_fixture\n    /project_path_planner\nAction servers: 1\n    /planner_server\n"
+      },
+      "accepted": true,
+      "action_status": 4,
+      "physical_final_pose": [
+        0.8549910271017495,
+        0.7813935412168374,
+        0.5167436349232624
+      ],
+      "final_distance": 0.11719023473799466,
+      "final_heading_error": 0.1832563650767376,
+      "collision_rejections": 0,
+      "outcome": "arrived",
+      "safe_negative": false,
+      "expected_safe_stop": false,
+      "safe_stop": false,
+      "wall_seconds": 20.82458859399958
+    },
+    "successive_right_angles_known": {
+      "case_id": "successive_right_angles",
+      "controller": "rpp",
+      "map_mode": "known",
+      "task": "navigate",
+      "motion": "ideal",
+      "start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "goal": [
+        1.7,
+        1.05,
+        1.5707963267948966
+      ],
+      "world_start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "world_goal": [
+        1.7,
+        1.05,
+        1.5707963267948966
+      ],
+      "initial_map_from_odom": null,
+      "oracle_reachable": true,
+      "passed": true,
+      "simulation_only": true,
+      "physical_robot_contacted": false,
+      "ros_domain_id": 124,
+      "benchmark_pid": 3520,
+      "session_id": "77e8227e557741adae3c60db2d5ba73f",
+      "source_config_sha256": "c96d4fd70462a5920b27e3966b393c7b33fd5dc806d012602992c9c7443ef6fa",
+      "dependency_timeouts_ms": {
+        "wait_for_service_timeout": 10000,
+        "default_server_timeout": 100
+      },
+      "action_graph_history": [
+        {
+          "/navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_navigation_supervisor",
+                "endpoint_gid": "010f7f01ec0dfa6400000000000034030000000000000000",
+                "services": [
+                  {
+                    "name": "/navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/bt_navigator",
+                "endpoint_gid": "010f7f01de0d05ed00000000000036030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_path_planner",
+                "endpoint_gid": "010f7f01e40d0c1300000000000027030000000000000000",
+                "services": [
+                  {
+                    "name": "/compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/planner_server",
+                "endpoint_gid": "010f7f01da0d04fb00000000000052030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          }
+        }
+      ],
+      "action_graph": {
+        "/navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_navigation_supervisor",
+              "endpoint_gid": "010f7f01ec0dfa6400000000000034030000000000000000",
+              "services": [
+                {
+                  "name": "/navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/bt_navigator",
+              "endpoint_gid": "010f7f01de0d05ed00000000000036030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_path_planner",
+              "endpoint_gid": "010f7f01e40d0c1300000000000027030000000000000000",
+              "services": [
+                {
+                  "name": "/compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/planner_server",
+              "endpoint_gid": "010f7f01da0d04fb00000000000052030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        }
+      },
+      "accepted": true,
+      "action_status": 4,
+      "physical_final_pose": [
+        1.627811334911683,
+        0.9560087333669234,
+        1.4165592785037655
+      ],
+      "final_distance": 0.11851397204770123,
+      "final_heading_error": 0.15423704829113105,
+      "collision_rejections": 0,
+      "outcome": "arrived",
+      "safe_negative": false,
+      "expected_safe_stop": false,
+      "safe_stop": false,
+      "wall_seconds": 45.03743565399964
+    },
+    "random00_known": {
+      "case_id": "random_00",
+      "controller": "rpp",
+      "map_mode": "known",
+      "task": "navigate",
+      "motion": "ideal",
+      "start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "world_start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "world_goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "initial_map_from_odom": null,
+      "oracle_reachable": true,
+      "passed": true,
+      "simulation_only": true,
+      "physical_robot_contacted": false,
+      "ros_domain_id": 126,
+      "benchmark_pid": 3928,
+      "session_id": "e03892c001464a8dada4fdbb972a4380",
+      "source_config_sha256": "c96d4fd70462a5920b27e3966b393c7b33fd5dc806d012602992c9c7443ef6fa",
+      "dependency_timeouts_ms": {
+        "wait_for_service_timeout": 10000,
+        "default_server_timeout": 100
+      },
+      "action_graph_history": [
+        {
+          "/navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_navigation_supervisor",
+                "endpoint_gid": "010f7f017c0f8c3a00000000000034030000000000000000",
+                "services": [
+                  {
+                    "name": "/navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/bt_navigator",
+                "endpoint_gid": "010f7f01760f97b700000000000036030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_path_planner",
+                "endpoint_gid": "010f7f01780f548700000000000027030000000000000000",
+                "services": [
+                  {
+                    "name": "/compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/planner_server",
+                "endpoint_gid": "010f7f01720f14f600000000000052030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          }
+        }
+      ],
+      "action_graph": {
+        "/navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_navigation_supervisor",
+              "endpoint_gid": "010f7f017c0f8c3a00000000000034030000000000000000",
+              "services": [
+                {
+                  "name": "/navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/bt_navigator",
+              "endpoint_gid": "010f7f01760f97b700000000000036030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_path_planner",
+              "endpoint_gid": "010f7f01780f548700000000000027030000000000000000",
+              "services": [
+                {
+                  "name": "/compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/planner_server",
+              "endpoint_gid": "010f7f01720f14f600000000000052030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        }
+      },
+      "controller_readback": {
+        "FollowPath.plugin": "ee3033_navigation::RegulatedPathFollower",
+        "FollowPath.desired_linear_vel": 0.12,
+        "FollowPath.max_linear_vel": 0.12,
+        "FollowPath.max_angular_vel": 0.4,
+        "FollowPath.rotate_to_heading_angular_vel": 0.4,
+        "FollowPath.max_angular_accel": 0.8,
+        "FollowPath.lookahead_dist": 0.18,
+        "FollowPath.use_collision_detection": true
+      },
+      "source_sha256": {
+        "scripts/simulation_robot.py": "20f0a5c4e25b34b4dcbc0740dc4f2d1be6f87eecd6dc1dbfad20e2bc3083cdec",
+        "scripts/simulation_motion.py": "c679741f9a1012a8a8450e89385a0bb0edf158f516d383469e60c101f0f989f3",
+        "src/ee3033_project/ee3033_project/navigation_supervisor.py": "350093b2e28b992c0d3b1bca44526d058e0cf0282ac9515d86d1be4b2b38c3f9",
+        "src/ee3033_project/ee3033_project/navigation_supervision.py": "f902ca3cc40d79a786b5be75f613f8f7ff5effb1acab6d1d24a4959dbf072751",
+        "src/ee3033_project/ee3033_project/path_planner.py": "ac72da5af936fa45a093fd5353a4fd9901285617356c79132aedfe51f4220e78",
+        "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2",
+        "src/ee3033_project/ee3033_project/velocity_gate.py": "3aea88cbdce6eecd967b93921786116ec5feba10cbacf0bedfad4ebe348a0dc3",
+        "src/ee3033_project/ee3033_project/motion_safety.py": "9b01ea139d6ac8490371a64c7811f58642a2e2a644857da7ac6710a0f00ccc53",
+        "src/ee3033_navigation/src/regulated_path_follower.cpp": "8ea620e5889e13db249c2769cf900301bc20ec1a7c885990cb2f2d3381971a99"
+      },
+      "controller_library_sha256": "62a41eb3b930b09313607cd82ebc08b24b6d177c0bd85adab6577e257638a07c",
+      "accepted": true,
+      "action_status": 4,
+      "physical_final_pose": [
+        3.2922176322357593,
+        -3.3972884017497065,
+        -0.16163894454540154
+      ],
+      "final_distance": 0.10435882169737196,
+      "final_heading_error": 0.16163894454540154,
+      "collision_rejections": 0,
+      "outcome": "arrived",
+      "safe_negative": false,
+      "expected_safe_stop": false,
+      "safe_stop": false,
+      "wall_seconds": 52.46312853600102
+    },
+    "random00_slam_ui_waypoint": {
+      "case_id": "random_00",
+      "controller": "rpp",
+      "map_mode": "slam",
+      "task": "waypoint",
+      "motion": "ideal",
+      "start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "world_start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "world_goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "initial_map_from_odom": null,
+      "oracle_reachable": true,
+      "passed": true,
+      "simulation_only": true,
+      "physical_robot_contacted": false,
+      "ros_domain_id": 127,
+      "benchmark_pid": 4137,
+      "session_id": "7b2cae7ea67647f8afd5f5d39c5cc4d2",
+      "source_config_sha256": "c96d4fd70462a5920b27e3966b393c7b33fd5dc806d012602992c9c7443ef6fa",
+      "dependency_timeouts_ms": {
+        "wait_for_service_timeout": 10000,
+        "default_server_timeout": 100
+      },
+      "action_graph_history": [
+        {
+          "/navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_navigation_supervisor",
+                "endpoint_gid": "010f7f016110a2f200000000000034030000000000000000",
+                "services": [
+                  {
+                    "name": "/navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/bt_navigator",
+                "endpoint_gid": "010f7f015910e44b00000000000036030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_path_planner",
+                "endpoint_gid": "010f7f015f10c84800000000000027030000000000000000",
+                "services": [
+                  {
+                    "name": "/compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/planner_server",
+                "endpoint_gid": "010f7f014d10034500000000000052030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          }
+        }
+      ],
+      "action_graph": {
+        "/navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_navigation_supervisor",
+              "endpoint_gid": "010f7f016110a2f200000000000034030000000000000000",
+              "services": [
+                {
+                  "name": "/navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/bt_navigator",
+              "endpoint_gid": "010f7f015910e44b00000000000036030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_path_planner",
+              "endpoint_gid": "010f7f015f10c84800000000000027030000000000000000",
+              "services": [
+                {
+                  "name": "/compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/planner_server",
+              "endpoint_gid": "010f7f014d10034500000000000052030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        }
+      },
+      "controller_readback": {
+        "FollowPath.plugin": "ee3033_navigation::RegulatedPathFollower",
+        "FollowPath.desired_linear_vel": 0.12,
+        "FollowPath.max_linear_vel": 0.12,
+        "FollowPath.max_angular_vel": 0.4,
+        "FollowPath.rotate_to_heading_angular_vel": 0.4,
+        "FollowPath.max_angular_accel": 0.8,
+        "FollowPath.lookahead_dist": 0.18,
+        "FollowPath.use_collision_detection": true
+      },
+      "source_sha256": {
+        "scripts/simulation_robot.py": "20f0a5c4e25b34b4dcbc0740dc4f2d1be6f87eecd6dc1dbfad20e2bc3083cdec",
+        "scripts/simulation_motion.py": "c679741f9a1012a8a8450e89385a0bb0edf158f516d383469e60c101f0f989f3",
+        "src/ee3033_project/ee3033_project/navigation_supervisor.py": "350093b2e28b992c0d3b1bca44526d058e0cf0282ac9515d86d1be4b2b38c3f9",
+        "src/ee3033_project/ee3033_project/navigation_supervision.py": "f902ca3cc40d79a786b5be75f613f8f7ff5effb1acab6d1d24a4959dbf072751",
+        "src/ee3033_project/ee3033_project/path_planner.py": "ac72da5af936fa45a093fd5353a4fd9901285617356c79132aedfe51f4220e78",
+        "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2",
+        "src/ee3033_project/ee3033_project/velocity_gate.py": "3aea88cbdce6eecd967b93921786116ec5feba10cbacf0bedfad4ebe348a0dc3",
+        "src/ee3033_project/ee3033_project/motion_safety.py": "9b01ea139d6ac8490371a64c7811f58642a2e2a644857da7ac6710a0f00ccc53",
+        "src/ee3033_navigation/src/regulated_path_follower.cpp": "8ea620e5889e13db249c2769cf900301bc20ec1a7c885990cb2f2d3381971a99"
+      },
+      "controller_library_sha256": "62a41eb3b930b09313607cd82ebc08b24b6d177c0bd85adab6577e257638a07c",
+      "navigation_goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "dispatch_map_from_odom": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "mapper": {
+        "phase": "mapping",
+        "stamp": 1793167617.0666854,
+        "state": "WAYPOINT_REACHED",
+        "reason": "Waypoint position and final facing verified; mapping remains live",
+        "home": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "target": null,
+        "ready": true,
+        "readiness_reason": "Ready",
+        "map_partial": false,
+        "return_verified": false,
+        "return_reason": null,
+        "stationary_check": null,
+        "navigation_recoveries": [],
+        "mapping_mode": "waypoint",
+        "waypoint": [
+          3.3863068395589586,
+          -3.442432446000924,
+          0.0
+        ],
+        "waypoint_verified": true,
+        "saved_map": null,
+        "elapsed_seconds": 75.37190835900037,
+        "viewpoints_completed": 4,
+        "viewpoints_total": 0,
+        "frontier_goals_sent": 5,
+        "deferred_frontiers": 1,
+        "frontier_retry_round": 0,
+        "failed_viewpoints": [
+          [
+            1.4338488602193478,
+            -0.6927731896081055
+          ]
+        ],
+        "observed_fraction": 0.0
+      },
+      "physical_final_pose": [
+        3.3377817338154148,
+        -3.339263941738837,
+        0.010687533349945802
+      ],
+      "final_distance": 0.11401064055209213,
+      "final_heading_error": 0.010687533349945802,
+      "collision_rejections": 0,
+      "outcome": "arrived",
+      "safe_negative": false,
+      "expected_safe_stop": false,
+      "safe_stop": false,
+      "wall_seconds": 81.11228673699952
+    },
+    "random00_slam_automap_and_verified_return": {
+      "case_id": "random_00",
+      "controller": "rpp",
+      "map_mode": "slam",
+      "task": "automap",
+      "motion": "ideal",
+      "start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "world_start": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "world_goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "initial_map_from_odom": null,
+      "oracle_reachable": true,
+      "passed": true,
+      "simulation_only": true,
+      "physical_robot_contacted": false,
+      "ros_domain_id": 130,
+      "benchmark_pid": 4783,
+      "session_id": "f2a7f5fb23844f05b9954693cc24084c",
+      "source_config_sha256": "c96d4fd70462a5920b27e3966b393c7b33fd5dc806d012602992c9c7443ef6fa",
+      "dependency_timeouts_ms": {
+        "wait_for_service_timeout": 10000,
+        "default_server_timeout": 100
+      },
+      "action_graph_history": [
+        {
+          "/navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_navigation_supervisor",
+                "endpoint_gid": "010f7f01dd12f26d00000000000034030000000000000000",
+                "services": [
+                  {
+                    "name": "/navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_navigate_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/bt_navigator",
+                "endpoint_gid": "010f7f01d412993100000000000036030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/NavigateToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/project_path_planner",
+                "endpoint_gid": "010f7f01db12963200000000000027030000000000000000",
+                "services": [
+                  {
+                    "name": "/compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          },
+          "/project/nav2_compute_path_to_pose": {
+            "server_count": 1,
+            "servers": [
+              {
+                "node": "/planner_server",
+                "endpoint_gid": "010f7f01ce12558f00000000000052030000000000000000",
+                "services": [
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                    "types": [
+                      "action_msgs/srv/CancelGoal"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_GetResult"
+                    ]
+                  },
+                  {
+                    "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                    "types": [
+                      "nav2_msgs/action/ComputePathToPose_SendGoal"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "feedback_publishers": 1
+          }
+        }
+      ],
+      "action_graph": {
+        "/navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_navigation_supervisor",
+              "endpoint_gid": "010f7f01dd12f26d00000000000034030000000000000000",
+              "services": [
+                {
+                  "name": "/navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_navigate_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/bt_navigator",
+              "endpoint_gid": "010f7f01d412993100000000000036030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_navigate_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/NavigateToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/project_path_planner",
+              "endpoint_gid": "010f7f01db12963200000000000027030000000000000000",
+              "services": [
+                {
+                  "name": "/compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        },
+        "/project/nav2_compute_path_to_pose": {
+          "server_count": 1,
+          "servers": [
+            {
+              "node": "/planner_server",
+              "endpoint_gid": "010f7f01ce12558f00000000000052030000000000000000",
+              "services": [
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/cancel_goal",
+                  "types": [
+                    "action_msgs/srv/CancelGoal"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/get_result",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_GetResult"
+                  ]
+                },
+                {
+                  "name": "/project/nav2_compute_path_to_pose/_action/send_goal",
+                  "types": [
+                    "nav2_msgs/action/ComputePathToPose_SendGoal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "feedback_publishers": 1
+        }
+      },
+      "controller_readback": {
+        "FollowPath.plugin": "ee3033_navigation::RegulatedPathFollower",
+        "FollowPath.desired_linear_vel": 0.12,
+        "FollowPath.max_linear_vel": 0.12,
+        "FollowPath.max_angular_vel": 0.4,
+        "FollowPath.rotate_to_heading_angular_vel": 0.4,
+        "FollowPath.max_angular_accel": 0.8,
+        "FollowPath.lookahead_dist": 0.18,
+        "FollowPath.use_collision_detection": true
+      },
+      "source_sha256": {
+        "scripts/simulation_robot.py": "20f0a5c4e25b34b4dcbc0740dc4f2d1be6f87eecd6dc1dbfad20e2bc3083cdec",
+        "scripts/simulation_motion.py": "c679741f9a1012a8a8450e89385a0bb0edf158f516d383469e60c101f0f989f3",
+        "src/ee3033_project/ee3033_project/navigation_supervisor.py": "350093b2e28b992c0d3b1bca44526d058e0cf0282ac9515d86d1be4b2b38c3f9",
+        "src/ee3033_project/ee3033_project/navigation_supervision.py": "f902ca3cc40d79a786b5be75f613f8f7ff5effb1acab6d1d24a4959dbf072751",
+        "src/ee3033_project/ee3033_project/path_planner.py": "ac72da5af936fa45a093fd5353a4fd9901285617356c79132aedfe51f4220e78",
+        "src/ee3033_project/ee3033_project/path_validation.py": "9fa7ac409f1701e3e32933c82522e732fa2e9017dd25e4b11ae74a2224c3bcf2",
+        "src/ee3033_project/ee3033_project/velocity_gate.py": "3aea88cbdce6eecd967b93921786116ec5feba10cbacf0bedfad4ebe348a0dc3",
+        "src/ee3033_project/ee3033_project/motion_safety.py": "9b01ea139d6ac8490371a64c7811f58642a2e2a644857da7ac6710a0f00ccc53",
+        "src/ee3033_navigation/src/regulated_path_follower.cpp": "8ea620e5889e13db249c2769cf900301bc20ec1a7c885990cb2f2d3381971a99"
+      },
+      "controller_library_sha256": "62a41eb3b930b09313607cd82ebc08b24b6d177c0bd85adab6577e257638a07c",
+      "navigation_goal": [
+        3.3863068395589586,
+        -3.442432446000924,
+        0.0
+      ],
+      "dispatch_map_from_odom": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "mapper": {
+        "phase": "mapping",
+        "stamp": 1793167916.6151726,
+        "state": "MAPPED",
+        "reason": "Saved new map: /tmp/random00-wrapper-slam-automap/maps/onsite_e0bxjdrp/map.yaml; Home and stationary hold verified",
+        "home": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "target": null,
+        "ready": true,
+        "readiness_reason": "Ready",
+        "map_partial": false,
+        "return_verified": true,
+        "return_reason": "Home and stationary hold verified",
+        "stationary_check": {
+          "verified": true,
+          "duration": 2.0,
+          "samples": 102,
+          "linear_mean": 0.0,
+          "angular_mean": 0.0,
+          "position_span": 0.0,
+          "heading_span": 0.0,
+          "reason": "Stationary window verified",
+          "limits": {
+            "seconds": 2.0,
+            "linear_mean": 0.035,
+            "angular_mean": 0.1,
+            "position_span": 0.05,
+            "heading_span": 0.12
+          }
+        },
+        "navigation_recoveries": [
+          {
+            "goal_id": "f02212e6725942299e051fabb9ffc19b",
+            "attempt": 1,
+            "reason": "Nav2 could not follow the collision-free route"
+          }
+        ],
+        "mapping_mode": "automatic",
+        "waypoint": null,
+        "waypoint_verified": false,
+        "saved_map": "/tmp/random00-wrapper-slam-automap/maps/onsite_e0bxjdrp/map.yaml",
+        "elapsed_seconds": 237.72297863899985,
+        "viewpoints_completed": 8,
+        "viewpoints_total": 0,
+        "frontier_goals_sent": 8,
+        "deferred_frontiers": 0,
+        "frontier_retry_round": 0,
+        "failed_viewpoints": [],
+        "observed_fraction": 0.0
+      },
+      "final_map_from_world": {
+        "translation": [
+          0.003401776314344469,
+          0.0012504589549556465,
+          0.0
+        ],
+        "rotation_xyzw": [
+          0.0,
+          0.0,
+          -0.0002588774894284904,
+          0.9999999664912221
+        ]
+      },
+      "physical_map_coverage": {
+        "physical_reachable_samples": 5508,
+        "sample_resolution": 0.05,
+        "mapped_free_fraction": 1.0,
+        "unknown_fraction": 0.0,
+        "occupied_in_physical_free_fraction": 0.0,
+        "out_of_map_fraction": 0.0
+      },
+      "physical_final_pose": [
+        0.09900358733219373,
+        -0.05858492807560253,
+        -6.128465353729516
+      ],
+      "final_distance": 0.11503870697407388,
+      "final_heading_error": 0.1547199534500703,
+      "collision_rejections": 0,
+      "outcome": "arrived",
+      "safe_negative": false,
+      "expected_safe_stop": false,
+      "safe_stop": false,
+      "wall_seconds": 242.57772818400008
+    }
+  }
+}

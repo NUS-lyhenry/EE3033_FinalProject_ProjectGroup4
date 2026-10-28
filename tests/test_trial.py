@@ -9,10 +9,13 @@ def values(**overrides):
 
 def test_trial_plan_keeps_controller_and_gate_in_sync():
     plan=parameter_plan(values())
-    assert plan['controller_server']['FollowPath.max_vel_x']==plan['project_velocity_gate']['max_linear']
-    assert plan['controller_server']['FollowPath.max_vel_theta']==plan['project_velocity_gate']['max_angular']
-    assert math.isclose(plan['controller_server']['FollowPath.rotate_to_heading_angular_vel'],.35)
+    assert plan['controller_server']['FollowPath.desired_linear_vel']==plan['project_velocity_gate']['max_linear']
+    assert plan['controller_server']['FollowPath.rotate_to_heading_angular_vel']==plan['project_velocity_gate']['max_angular']
+    assert 'FollowPath.max_vel_theta' not in plan['controller_server']
+    assert plan['controller_server']['FollowPath.max_angular_vel']==.4
+    assert plan['controller_server']['FollowPath.max_linear_vel']==.12
     assert plan['project_mapper']=={'goal_timeout':60.}
+    assert plan['project_navigation_supervisor']==plan['project_mapper']
     assert all('clearance' not in key and 'stop_distance' not in key
                for entries in plan.values() for key in entries)
 

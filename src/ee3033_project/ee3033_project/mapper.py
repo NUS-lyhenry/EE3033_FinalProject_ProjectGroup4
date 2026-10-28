@@ -1,5 +1,7 @@
 """Autonomous frontier mapping, return to mapping start, and unique map save."""
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from ament_index_python.packages import get_package_share_directory
 import json
 import math
 import time
@@ -25,7 +27,6 @@ from .trial import guarded_parameters
 from .gap import DEFAULT_CLEARANCE, guard_clearance
 from .waypoint import validate_waypoint,waypoint_goal
 from .core import angle_difference
-from .navigation_progress import NavigationProgress
 from .navigation_costmap import NavigationCostmap
 from .stationary import StationaryWindow
 
@@ -54,15 +55,13 @@ class Mapper(Node):
         self.pending=False
         self.goal_serial=0
         self.odom_pose=None
-        self.nav_progress=NavigationProgress()
         self.navigation_recoveries=[]
+        self.seen_recoveries=set()
         self.return_verified=False
         self.return_reason=None
         self.started=self.goal_time=self.last_decision=self.empty_since=0.0
         self.finished_at=0.0
         self.cancel_deadline=0.0
-        self.save_after_cancel=False
-        self.resume_after_cancel=False
         self.failed=[]
         self.deferred=[]
         self.retry_round=0
@@ -99,6 +98,7 @@ class Mapper(Node):
         self.create_subscription(LaserScan,'/scan_fixed',self.on_scan,qos_profile_sensor_data)
         self.create_subscription(Odometry,'/odom',self.on_odom,qos_profile_sensor_data)
         self.create_subscription(Twist,'/cmd_vel',self.on_command,10)
+        self.create_subscription(String,'/project/navigation_status',self.on_navigation,10)
         self.create_service(Trigger,'/project/start',self.start)
         self.create_service(Trigger,'/project/start_waypoint',self.start_waypoint)
         self.create_service(Trigger,'/project/stop',self.stop)
@@ -139,6 +139,23 @@ class Mapper(Node):
         self.command_zero=all(math.isfinite(v) and abs(v)<=1e-5 for v in values)
         self.command_time=time.monotonic()
         if not self.command_zero:self.stop_window.reset()
+
+    def on_navigation(self,msg):
+        try:
+            status=json.loads(msg.data)
+            if self.state not in self.ACTIVE or self.nav_handle is None:return
+            if not 0<=self.get_clock().now().nanoseconds*1e-9-float(status['stamp'])<=2.:return
+            goal_id=str(status['goal_id']).replace('-','').lower()
+            if goal_id!=bytes(self.nav_handle.goal_id.uuid).hex():return
+            count=status.get('recovery_count',0)
+            if type(count) is not int or not 0<=count<=2:return
+            key=(goal_id,count)
+            if count>0 and key not in self.seen_recoveries:
+                self.seen_recoveries.add(key)
+                self.navigation_recoveries.append(dict(goal_id=key[0],attempt=count,
+                    reason=status.get('last_failure_reason') or status.get('failure_reason') or status.get('reason')))
+        except (ValueError,TypeError,KeyError,AttributeError,OverflowError):
+            pass
 
     def guard_waypoint(self,changes):
         for p in changes:
@@ -210,8 +227,6 @@ class Mapper(Node):
         self.home,self.started,self.failed,self.partial=self.pose(),time.monotonic(),[],False
         self.mode,self.waypoint,self.final_leg='automatic',None,False
         self.finished_at=0.0
-        self.save_after_cancel=False
-        self.resume_after_cancel=False
         self.deferred=[]
         self.retry_round=0
         self.visited=[]
@@ -220,6 +235,7 @@ class Mapper(Node):
         self.return_verified=False
         self.return_reason=None
         self.navigation_recoveries=[]
+        self.seen_recoveries=set()
         self.stop_window.reset()
         self.stationary_check=None
         self.job=None
@@ -234,8 +250,6 @@ class Mapper(Node):
     def stop(self,request,response):
         del request
         self.last_stop_stamp=self.get_clock().now().nanoseconds*1e-9
-        self.save_after_cancel=False
-        self.resume_after_cancel=False
         self.drive_pub.publish(Bool(data=False))
         if self.nav_handle or self.pending:
             self.state='CANCELING'
@@ -259,6 +273,8 @@ class Mapper(Node):
     def send(self,pose):
         if self.pending or self.nav_handle is not None:
             self.fail('Refused overlapping mapping navigation goals');return
+        if not self.navigation_map.fresh():
+            self.fail('Fresh Nav2 costmap unavailable before mapping navigation dispatch');return
         if self.navigation_map.allowed(*pose[:2]) is False:
             # Costmap can change after worker selection; do not command motion
             # toward a newly inflated obstacle or a stale snapshot.
@@ -268,12 +284,25 @@ class Mapper(Node):
         self.goal_serial+=1
         serial=self.goal_serial
         self.goal=pose
-        self.nav_progress.reset()
         self.pending=True
         self.goal_time=time.monotonic()
         goal=NavigateToPose.Goal()
         goal.pose=self.make_pose(pose)
+        if self.state=='RETURNING':
+            # Mapping home uses position plus a verified stationary hold; its
+            # recorded initial yaw must not trigger another alignment attempt.
+            goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/
+                                   'behavior_trees'/'navigate_home.xml')
         self.nav.send_goal_async(goal).add_done_callback(lambda f:self.accepted(f,serial))
+
+    def selection_costmap_mask(self,shape,resolution,origin,now):
+        # A missing service or snapshot cannot authorize the narrow-route
+        # fallback. Every mapping/waypoint candidate uses the same live Nav2
+        # envelope; returning home is checked again by send().
+        if not self.navigation_map.fresh(now):
+            self.reason='Waiting for a fresh Nav2 costmap before selecting a goal'
+            return None
+        return self.navigation_map.mask(shape,resolution,origin)
 
     def accepted(self,future,serial=None):
         if serial is not None and serial!=self.goal_serial:
@@ -289,7 +318,6 @@ class Mapper(Node):
                 self.done(False)
                 return
             self.nav_handle=handle
-            self.nav_progress.reset(time.monotonic())
             handle.get_result_async().add_done_callback(lambda f:self.result(f,serial))
             if self.state not in ('MAPPING','RETURNING','TURNING'):
                 handle.cancel_goal_async()
@@ -307,15 +335,8 @@ class Mapper(Node):
 
     def done(self,success):
         if self.state=='CANCELING':
-            if self.resume_after_cancel:
-                self.resume_after_cancel=False
-                self.state='MAPPING'
-                self.finish_frontier(False)
-            elif self.save_after_cancel:
-                self.save_partial()
-            else:
-                self.state='STOPPED'
-                self.finished_at=time.monotonic()
+            self.state='STOPPED'
+            self.finished_at=time.monotonic()
         elif self.state=='RETURNING':
             pose=self.pose()
             if not success or pose is None or math.hypot(pose[0]-self.home[0],pose[1]-self.home[1])>0.25:
@@ -370,8 +391,7 @@ class Mapper(Node):
             else:
                 self.failed.append(self.goal[:2])
                 self.deferred.append(self.goal[:2])
-                self.reason=('Frontier retry failed; checking other remaining areas' if self.retry_round
-                             else 'Frontier deferred after navigation failure; exploring other areas first')
+                self.reason='Frontier navigation failed; selecting another area'
         self.goal=None
         self.empty_since=0.0
         self.last_decision=time.monotonic()
@@ -379,15 +399,12 @@ class Mapper(Node):
     def save_partial(self):
         # Called only once navigation has finished/canceled. Never restart a node
         # or issue recovery motion; preserve a separate, honestly partial map.
-        self.save_after_cancel=False
-        self.resume_after_cancel=False
         self.partial=True
         self.drive_pub.publish(Bool(data=False))
         self.state,self.reason='SAVING',(self.return_reason or 'Navigation timed out')+'; stopped and saving a partial map'
         self.job=self.worker.submit(save_new_map,self.p['map_directory'])
 
     def fail(self,reason):
-        self.save_after_cancel=self.resume_after_cancel=False
         self.state,self.reason='FAILED',reason
         self.finished_at=time.monotonic()
         self.drive_pub.publish(Bool(data=False))
@@ -400,14 +417,6 @@ class Mapper(Node):
         self.p['clearance']=self.get_parameter('clearance').value
         now=time.monotonic()
         self.navigation_map.poll(now)
-        stalled=None
-        if self.state in ('MAPPING','RETURNING') and self.nav_handle and self.goal and self.odom_pose:
-            pose=self.pose()
-            if pose:
-                distance=math.dist(pose[:2],self.goal[:2])
-                heading=0. if self.state=='RETURNING' else angle_difference(self.goal[2],pose[2])
-                stalled=self.nav_progress.check(now,self.odom_pose,distance,heading,
-                    xy_tolerance=.12,heading_required=self.state!='RETURNING')
         automatic=self.state in self.ACTIVE
         drive=self.state in ('MAPPING','RETURNING','TURNING') and self.nav_handle is not None
         self.auto_pub.publish(Bool(data=automatic))
@@ -419,28 +428,9 @@ class Mapper(Node):
             error=self.error()
             if error:
                 self.fail(error)
-            elif (self.nav_handle or self.pending) and (stalled or now-self.goal_time>self.p['goal_timeout']):
-                self.navigation_recoveries.append(dict(reason=stalled or 'Navigation timed out',goal=self.goal))
-                mapping_timeout=self.state=='MAPPING'
-                turning_timeout=self.state=='TURNING'
-                self.stop(None,Trigger.Response())
-                if turning_timeout:
-                    self.reason='Waypoint turn timed out; stopped without starting another goal'
-                elif mapping_timeout:
-                    # A successor is allowed only after the old action's
-                    # terminal result, including a late goal acceptance.
-                    if self.state=='CANCELING':
-                        self.resume_after_cancel=True
-                        self.reason='Frontier timed out; canceling before exploring another area'
-                    else:
-                        self.state='MAPPING'
-                        self.finish_frontier(False)
-                elif self.state=='CANCELING':
-                    self.partial=True
-                    self.save_after_cancel=True
-                    self.reason='Navigation timed out; canceling before saving a partial map'
-                else:
-                    self.save_partial()
+            elif (self.nav_handle or self.pending) and now-self.goal_time>self.p['goal_timeout']:
+                # The supervisor owns recovery; the mapper retains its outer deadline.
+                self.fail('Mapping navigation time limit exceeded')
             elif self.state=='MAPPING' and not self.nav_handle and not self.pending:
                 if self.job is not None:
                     if self.job.done():
@@ -455,24 +445,12 @@ class Mapper(Node):
                             else:
                                 self.empty_since=self.empty_since or now
                                 if now-self.empty_since>self.p['frontier_settle_seconds']:
-                                    if (self.deferred and self.retry_round==0
-                                            and now-self.started<self.p['max_mapping_seconds']):
-                                        # Replan using the latest map. Release
-                                        # failed-area exclusions once, retaining
-                                        # successfully visited areas and the
-                                        # full failure history for reporting.
-                                        self.deferred=[]
-                                        self.retry_round=1
-                                        self.empty_since=0.0
-                                        self.reason='Other reachable areas explored; retrying deferred frontiers once'
-                                        self.get_logger().info(self.reason)
+                                    if self.mode=='waypoint':
+                                        self.fail('No reachable mapped approach to the waypoint remains; choose another point or map manually')
                                     else:
-                                        if self.mode=='waypoint':
-                                            self.fail('No reachable mapped approach to the waypoint remains; choose another point or map manually')
-                                        else:
-                                            self.partial=self.partial or groups>0 or bool(self.deferred)
-                                            self.state,self.reason='RETURNING','Frontier search finished; returning to mapping start'
-                                            self.send(self.home)
+                                        self.partial=self.partial or groups>0
+                                        self.state,self.reason='RETURNING','Frontier search finished; returning to mapping start'
+                                        self.send(self.home)
                         except Exception as exc:
                             self.fail(str(exc))
                 elif now-self.started>self.p['max_mapping_seconds']:
@@ -482,18 +460,15 @@ class Mapper(Node):
                         self.state,self.reason='RETURNING','Mapping time limit; returning before saving'
                         self.send(self.home)
                 elif now-self.last_decision>self.p['settle_seconds']:
-                    if self.mode=='waypoint':
-                        self.job=self.worker.submit(waypoint_goal,*self.map_geometry(),self.pose(),self.waypoint,
-                            tuple(self.deferred),tuple(self.visited),self.p['clearance'])
-                    else:
-                        data,resolution,origin=self.map_geometry()
-                        if (self.navigation_map.client.service_is_ready()
-                                and (self.navigation_map.map is None or now-self.navigation_map.stamp>3.)):
-                            self.reason='Waiting for a fresh Nav2 costmap before selecting a frontier'
+                    data,resolution,origin=self.map_geometry()
+                    mask=self.selection_costmap_mask(data.shape,resolution,origin,now)
+                    if mask is not None:
+                        if self.mode=='waypoint':
+                            self.job=self.worker.submit(waypoint_goal,data,resolution,origin,self.pose(),self.waypoint,
+                                tuple(self.failed),tuple(self.frontier_views),self.p['clearance'],safe_mask=mask)
                         else:
-                            mask=self.navigation_map.mask(data.shape,resolution,origin)
                             self.job=self.worker.submit(frontier_goal,data,resolution,origin,
-                                self.pose(),tuple(self.deferred),self.p['clearance'],
+                                self.pose(),tuple(self.failed),self.p['clearance'],
                                 safe_mask=mask,visited=tuple(self.frontier_views))
                     self.last_decision=now
         elif self.state=='VERIFYING_HOME':

@@ -156,6 +156,7 @@ def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
     target=SingleTarget();target.candidate=detection(10.,x=20.,y=20.)
     pose=(2.,2.,0.)
+    target.candidate['origin']=list(pose[:2])
     # The north-side point is Nav2-blocked; south is usable.
     goal=target.observation_goal(planner,pose,force_baseline=True,
         allowed=lambda x,y:y<2.)
@@ -166,8 +167,8 @@ def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline
 def test_fast_profile_synchronizes_both_stages_and_search_estimates():
     for phase in ('mapping', 'mission'):
         p = parameter_plan(PROFILES['fast'], phase)
-        assert p['controller_server']['FollowPath.rotate_to_heading_angular_vel'] == .55
-        assert p['project_velocity_gate']['max_angular'] == p['controller_server']['FollowPath.max_vel_theta'] == .60
+        assert p['controller_server']['FollowPath.rotate_to_heading_angular_vel'] == .60
+        assert p['project_velocity_gate']['max_angular'] == p['controller_server']['FollowPath.rotate_to_heading_angular_vel'] == .60
         if phase == 'mission':
             assert p['project_mission']['search_linear_speed'] == .16
 
@@ -207,7 +208,7 @@ def test_camera_settings_reject_nonfinite_values_without_inventing_mount_dimensi
 def test_horizontal_clipping_only_guides_a_mapped_retreat_not_depth():
     planner=CoveragePlanner(np.zeros((40,40)),.1,(0,0,0))
     target=SingleTarget();target.candidate=dict(stamp=10.,label='cup',confidence=.9,
-        box=[0,100,60,350],steering_bearing=0.)
+        box=[0,100,60,350],steering_bearing=0.,steering_origin=[1.,1.])
     goal=target.observation_goal(planner,(1.,1.,0.))
     assert goal and goal[0]<1. and goal[1]==pytest.approx(1.)
     assert math.dist(goal[:2],(1.,1.))==pytest.approx(.3)

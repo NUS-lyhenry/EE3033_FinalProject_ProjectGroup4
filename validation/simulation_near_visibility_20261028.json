@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "date": "2026-10-28",
+  "simulation_only": true,
+  "physical_validation": false,
+  "baseline_commit": "7422e48",
+  "source_sha256": "6f6e6c4f151b9e5bb9477cb25ea3e6006e8c0a5526aa9702ed7f5255218ae5e5",
+  "engine": "Actual YOLO26n, SLAM, Nav2, Mission, Perception and MapMMSE; idealized sensors/chassis",
+  "mapping": {
+    "state": "STOPPED",
+    "elapsed_seconds": 45.93160021999999,
+    "frontier_goals_sent": 2,
+    "failed_viewpoints": []
+  },
+  "mission": {
+    "state": "COMPLETE",
+    "elapsed_seconds": 67.98474878399998,
+    "return_verified": true,
+    "return_distance": 0.12493626698956793,
+    "return_tolerance": 0.2,
+    "stationary_check": {
+      "verified": true,
+      "duration": 2.0,
+      "samples": 102,
+      "linear_mean": 0.0,
+      "angular_mean": 0.0,
+      "position_span": 0.0,
+      "heading_span": 0.0,
+      "reason": "Stationary window verified",
+      "limits": {
+        "seconds": 2.0,
+        "linear_mean": 0.035,
+        "angular_mean": 0.1,
+        "position_span": 0.05,
+        "heading_span": 0.12
+      }
+    },
+    "target": {
+      "x": 0.8474122412004411,
+      "y": 0.6961237158287266,
+      "variance": 0.15036988294084272,
+      "class": "cup",
+      "frame": "map",
+      "covariance": [
+        [
+          0.1267740122416416,
+          0.0016353366780814795
+        ],
+        [
+          0.0016353366780814805,
+          0.15025654420947013
+        ]
+      ],
+      "posterior_mean": [
+        0.8474122412004411,
+        0.6961237158287266
+      ],
+      "projected": false,
+      "estimate_id": "c5356d8160c7:1793154643.185017824",
+      "estimator": "map-constrained MMSE",
+      "map_signature": "c5356d8160c7d70ec064058412c135434194f199b443ed5a3b32f31e41b07000",
+      "sigma": 0.38777555743089676,
+      "quality": "best_available",
+      "preferred_sigma": 0.1,
+      "observation_stamp": 1793154643.1850178,
+      "source": "bearing_intersection",
+      "source_frames": [
+        1793154631.183565,
+        1793154631.387833,
+        1793154631.5862172,
+        1793154631.7866855,
+        1793154632.1873784,
+        1793154632.385983,
+        1793154632.5844698,
+        1793154632.7859786,
+        1793154642.384596,
+        1793154642.5849543,
+        1793154642.788551,
+        1793154643.1850178
+      ],
+      "sites": 2,
+      "crossing_angle": 0.3097268753552971,
+      "baseline": 0.7432344486986611,
+      "geometry_conflict": false,
+      "confidence": 0.9171625375747681,
+      "confirmation_frames": 12
+    },
+    "localization_reason": "Additional view improved uncertainty by less than ten percent",
+    "localization_active_seconds": 5.546105166999979,
+    "localization_travel_seconds": 10.761016855000008,
+    "localization_motion_log": [
+      {
+        "origin": [
+          0.6673843648161243,
+          -0.3386442006037807,
+          0.8586542430655552
+        ],
+        "goal": [
+          0.6673843648161243,
+          -0.3386442006037807,
+          1.3198184549448149
+        ],
+        "translation": false,
+        "reason": "Center locked target"
+      },
+      {
+        "origin": [
+          0.6739607599988796,
+          -0.33623100184177324,
+          1.3098902855571286
+        ],
+        "goal": [
+          1.0750000339001418,
+          0.4250000212341547,
+          1.710531152534058
+        ],
+        "translation": true,
+        "reason": "Change observation position for parallax"
+      }
+    ],
+    "failed_viewpoints": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "limitations": [
+    "Preferred sigma 0.10 m was not reached; reported best_available sigma 0.3878 m.",
+    "Map-frame estimate cannot establish physical target accuracy.",
+    "Initial verification stopped on map-catalogue synchronization race; continued same mapped world through real HTTP workflow. Race fixed in 0f33b55.",
+    "Four initial candidates were rejected before Nav2 dispatch; cold-costmap startup race reproduced separately.",
+    "Runtime began before later near-field observation-budget fixes; those require separate targeted native checks."
+  ]
+}

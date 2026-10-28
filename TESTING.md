@@ -1,5 +1,97 @@
 # Validation record
 
+## Supervised RPP navigation development — 2026-10-28
+
+This supersedes the first-revision restoration below. Fixed and random scene
+acceptance is still in progress; no complete navigation acceptance or merge
+is claimed. Runtime startup failures, algorithm failures and safe negative
+outcomes are recorded separately by `scripts/navigation_benchmark.py`.
+
+The motor-deadband failure is reproduced in native Humble with the physical
+angular acceleration capped at 0.8 rad/s² and angular speed at 0.4 rad/s.
+Evidence: `validation/rpp_deadband_20261028.json`. Previous simple-controller
+passes cannot substitute for the pending full-scene acceptance.
+
+## First-revision navigation restoration — 2026-10-28
+
+The user requested the five navigation/mapping behaviors from `3465a34`.
+Direct DWB, SimpleProgressChecker (0.10 m translation / 18 s), the 0.12 m
+DWB arrival distance, the standard 0.20 rad mapping heading tolerance and
+Nav2 default recovery are restored. Mapping navigation timeout now fails and
+cancels without escape goals or deferred retries. Audacity changes clearance
+and rotation safety distances only; it cannot re-enable heading progress.
+Mission goals also no longer automatically select the optional custom trees.
+
+This is a scoped navigation restoration, not a whole-project checkout rollback.
+Current perception/TF timing, UI, simulation worlds, costmap safety checks and
+stationary return verification remain. The earlier records below describe the
+previous recovery policy and do not validate the restored configuration.
+
+Validated: 447 Python checks; 52 browser checks plus the updated mapping-policy
+UI case; native Console (5), mapping policy (5), common ROS (9), waypoint (6)
+and final single-checker DWB turning/frozen/obstacle/fast cases passed. Live
+ROS parameters confirm the original defaults. The random-scene run was
+interrupted by the user-requested restart, so full mapping is not claimed.
+Evidence: `validation/first_navigation_restore_20261028.json`.
+
+## Final corner recovery, capture-time TF and simulator checks — 2026-10-28
+
+The original legacy seed-95 scene is saved as
+`validation/corner_seed95_legacy_scenario.json` because the upgraded multi-room
+generator deliberately produces a different layout for the same seed. The
+reported corner reproduced repeated zero-translation commands. Parameter-only,
+smoothing and alternate-controller experiments are retained in
+`validation/corner_investigation_20261028.json`; they were not adopted.
+
+Automatic mapping now cancels a stalled action before selecting a short
+map/costmap-checked recovery goal. Near obstacles it seeks open space; in open
+space it can stage a complete safe-grid route toward the stalled goal. A maximum
+of six attempts covers mapping and return. Stop, unknown/out-of-map cells, the
+configured clearance and fresh-costmap requirements remain in force. The native
+legacy-corner run escaped multiple corners and returned within about 0.12 m,
+with a verified stationary hold. It honestly saved **MAPPED_PARTIAL** because
+coverage remained unresolved; it is not evidence of complete exploration.
+
+Capture-time TF was reproduced failing by fractions of a millisecond before the
+matching transform arrived. One bounded nonblocking inference-period retry now
+retains that same image and timestamp. Two near-range native runs passed after
+the change; the final repeat moved about 0.21 m and reported sigma about 0.073 m.
+Bearing-only A/B, occlusion and cropped-target native regressions passed.
+The first remote native run exposed an outdated legacy calibration fixture: its
+mock Perception omitted pixel-margin and camera-range defaults. The fixture was
+updated without weakening production validation; all 6 calibration cases passed.
+
+All **449 Python checks** and **52 browser checks** passed locally, along with
+8 mapping-retry ROS tests, 9 common ROS tests and the native recovery cases
+(unknown/uncertain rear, transient/persistent blockage, corner, frozen chassis
+and cancellation).
+
+A fresh real-YOLO/SLAM/Nav2 workflow produced a MAPPED map and verified home.
+Its default 0.22 m / 10 degree camera mission then returned FOUND_UNLOCALIZED;
+that failure is retained. Updating the physical camera to 0.31 m / 28.6 degrees
+and repeating the mission on that map produced COMPLETE, sigma 0.0998 m against
+the requested 0.10 m, and a verified return. This second attempt is explicitly
+mission-only and does not replace the failed first attempt.
+
+The live 3x3 random-world smoke test passed generation, random/manual target
+placement and physical camera changes checked against actual TF, CameraInfo and
+rendered pixels. Geometry tests cover 103 seeds. Autonomous completion in every
+complex random world is not claimed. Final metrics and source hashes are in
+`validation/final_recovery_20261028.json`. No physical robot was contacted or
+deployed during this verification.
+
+## Near-field/occlusion follow-up — 2026-10-28
+
+After PR #7 merged as 7441622, isolated subagent commits 1643036 (camera LOS)
+and e6dfd59 (near-field reframing) were integrated on fix/near-field-occlusion.
+All 353 Python checks passed, including wall/unknown/corner supercover rejection,
+camera mount offsets, range/FOV constraints, source-anchored bearing hypotheses,
+near/crop recovery hints and preservation of strict projection validity.
+Full ROS/YOLO simulation was not run, consistent with the deploy-first request.
+Deployment was attempted only as a read-only connectivity check; robot SSH at
+10.221.243.174 timed out, so this follow-up has **not been deployed** or physically
+validated. The existing capture release remains the last confirmed deployment.
+
 ## Capture diagnostics and full localization budget — 2026-10-27
 
 Release `capture_20261027_62b14551d2` separates translation/arrival-heading

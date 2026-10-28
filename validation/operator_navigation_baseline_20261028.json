@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-28",
+  "evidence_type": "operator_report",
+  "operator_feedback": "基本通过我的测试了",
+  "release": "mapping5cm_20261028_dcb78f2c6f",
+  "incremental_patch": "mapping-home-goal-checker",
+  "mapper_sha256": "528dd934176c440cc5e52ff7b2ae1eeefd8d2363d77abac6e0971211b8039305",
+  "mapping_resolution_m": 0.05,
+  "default_scan_exclusion_m": 0.08,
+  "operator_scan_exclusion_m": 0.20,
+  "status": "Operator authorizes merging this baseline before further localization changes",
+  "automated_full_acceptance_passed": false,
+  "limitations": [
+    "Operator feedback does not establish every automated regression or a measured localization accuracy",
+    "Previous CI results describe their recorded commits, not this candidate",
+    "The complete SLAM/random regression matrix remains incomplete; failures are retained",
+    "The incremental mapping-home patch has file-hash and behavior-tree verification, without an independently recorded post-patch home motion test"
+  ],
+  "next_features_included": false
+}

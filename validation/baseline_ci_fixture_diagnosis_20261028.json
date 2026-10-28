@@ -1,0 +1,23 @@
+{
+  "candidate": "e093486793f18c25d4a65e7030d31d065cee5fd6",
+  "operator_motion_started": false,
+  "local_ros_simulation_started": false,
+  "failed_ci_runs": [40662290157, 40662295237],
+  "findings": [
+    {
+      "fixture": "integration_navigation_faults",
+      "failure": "localization case recorded one recovery",
+      "cause": "Recorded recovery preceded the first physical-model command and fault injection; guarded planner had not yet received its map TF",
+      "fix": "Require a successful nonempty route through the guarded public planner before arming the fault test",
+      "production_safety_limits_changed": false
+    },
+    {
+      "fixture": "integration_automatic_calibration",
+      "failure": "No moving detector-loss recovery exercised",
+      "cause": "Fixture published odometry messages but omitted odom-to-body TF and the scan-frame mount required by the final sweep checker",
+      "fix": "Publish matching body TF and static laser mount; include final snapshot when the motion injection was never reached",
+      "production_safety_limits_changed": false
+    }
+  ],
+  "validation": "Replacement exact-commit CI required; these diagnoses are not passing test results"
+}

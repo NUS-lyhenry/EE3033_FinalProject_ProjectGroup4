@@ -210,22 +210,43 @@ by mapping/mission; pass `calibration_file:=...` to opt into a legacy profile.
 
 ## Navigation and mapping
 
-Automatic frontier selection, deferred-frontier retries, return and unique map
-saving retain the existing mapper algorithm. Occupied/unknown space still
-bounds reachable goals. The rotation shim/DWB controller now tolerates modest
-path-heading changes before choosing an in-place turn (0.70 rad entry,
-0.35 rad exit). Heading-aware progress, bounded recovery, footprints, lidar
-self-mask, obstacle distances, command deadlines and heartbeat checks remain.
+The default follower subclasses Humble Regulated Pure Pursuit (RPP), without a
+rotation shim. A thin adapter preserves the 0.8 rad/s² command-space turn ramp
+when measured angular velocity remains below a motor deadband. At the final
+heading, actual pose changes and queued-command delay determine when to brake;
+bounded corrections require an actual stationary hold. Actual TF/pose and all
+native collision checks remain authoritative. A single navigation supervisor owns cancellation, progress checks and at
+most two recovery rounds. `/navigate_to_pose` remains the public action; Nav2's
+five internal action endpoints are isolated under `/project/nav2_navigate_to_pose`.
+The planner proxy similarly retains `/compute_path_to_pose` and publishes only
+full-footprint-checked routes on `/plan`; unvalidated Navfn output is recorded
+separately on `/project/native_plan`. Unsafe routes may be replaced by a complete
+known-safe grid route, never by an unchecked straight connector.
+
+The final velocity gate preserves curvature when applying speed limits. The
+wheel-inclusive measured balancing chassis is 0.115 m long (forward) and
+0.18 m wide (across the wheels), conservatively enclosed by
+a 0.106801 m body circle plus 0.01 m padding. A map, TF and laser sweep check
+that entire envelope; blocking any motion component stops the whole command.
+Physical mapping defaults to 0.05 m cells (`mapping_resolution`); the isolated
+algorithm preview explicitly uses 0.0125 m. The global static costmap follows
+the loaded map resolution; the local costmap retains its own configured resolution.
+Existing saved maps retain their original resolution rather than inventing finer measurements. Unknown or
+stale geometry cannot authorize motion. Planning reserves remain separate from
+the physical footprint. `EE3033_ROBOT_GEOMETRY=legacy` explicitly retains the
+previous 0.14 m body model for stress comparisons; simulation, oracle and all
+ROS nodes record the selected profile. The DWB configuration is retained in
+`config/navigation_dwb.yaml` for explicit A/B diagnostics.
 
 Original speed is the default until the faster profile is physically validated:
 
-| Profile | Forward cap | Angular cap | Shim turn speed |
-|---|---:|---:|---:|
-| Original | 0.12 m/s | 0.40 rad/s | 0.35 rad/s |
-| Fast trial | 0.16 m/s | 0.60 rad/s | 0.55 rad/s |
+| Profile | Forward cap | Angular cap |
+|---|---:|---:|
+| Original | 0.12 m/s | 0.40 rad/s |
+| Fast trial | 0.16 m/s | 0.60 rad/s |
 
 Apply either while mapping is stopped or before mission Start. Live changes
-synchronize the gate, DWB/shim and mission cost estimates, verify readback and
+synchronize the gate, RPP and mission cost estimates, verify readback and
 roll back on failure. An unverified rollback locks driving. The selected profile
 is reused across owned stage loads in this console session; a console restart
 defaults to Original unless explicitly configured. Startup Spin limits follow
@@ -234,13 +255,18 @@ sliders do not claim to update an already configured Spin plugin.
 
 Clearance is independent of speed. Cautious/Balanced/Bold use centre-to-boundary
 reserves of 0.22/0.18/0.14 m; Bold remains the default clearance policy. Optional
-gap blocking adds 0.04 m reserve and uses a 0.18 m costmap radius. Without it the
-radius is 0.14 m; both include 0.01 m padding. These are planning estimates, not
+gap blocking uses a 0.17 m costmap radius for the measured chassis and adds
+the same 0.063199 m to the selected reserve. Without it the body radius is
+0.106801 m; both include 0.01 m padding. The legacy profile retains its original
+0.18/0.14 m radii and 0.04 m reserve. These are planning estimates, not
 a physical passage-width guarantee.
 
-Home uses an XY-only goal checker, avoiding an unnecessary final heading turn.
-Search viewpoints retain heading requirements. If `return_heading_required`
-is explicitly enabled, home uses the normal heading-aware checker instead.
+Ordinary, observation and home actions use explicit 0.12 m / 0.20 rad,
+0.10 m / 0.03 rad, and 0.12 m / unrestricted-yaw goal checkers respectively.
+The active behavior trees contain no nested recovery loops. The supervisor
+checks actual pose convergence and owns every recovery successor. Missing
+sensor, transform or localization evidence ends navigation without attempting
+recovery, including if it disappears during a reverse.
 
 Return verification retains the assigned position tolerance and a fresh
 two-second odometry window: mean absolute linear/angular speeds at most
@@ -358,6 +384,26 @@ container has no device mappings or host networking; its ROS domain is isolated
 from the robot. Keep it running to retain demo maps/results, and use
 `docker stop -t 25 ee3033-algorithm-preview` when finished.
 
+The simulation-only **Build a test scene** panel adds **Generate random map**,
+**Random target**, and click/coordinate **Place target** controls. A uint32 random
+seed reproduces a world; the target-placement seed is recorded separately.
+Walls are closed, robot/target positions have clearance, and setup validates a
+connected free-space route. This physical scene is never supplied as the SLAM
+map or target estimate. A new world resets the simulated chassis/odometry and
+loads fresh mapping in WAITING; it never starts motion automatically. Moving a
+target retains the world/map and clears previous mission target evidence.
+Controls reject active motion and Stop prevents a delayed stage from starting.
+Scenario revisions are saved under the simulation output's `scenarios/` folder.
+
+The camera renders **30 × 30 cm ceramic tiles**, 2.5 mm grout, lightly textured
+walls and simple depth-correct shading. In simulation, **Advanced → Simulated
+camera · physical setup** changes the camera itself: height, pitch, yaw, mount
+translation and lens FOV update the image, TF and CameraInfo together while
+stopped. FOV 0 restores the original 450 px focal length; localization reads the
+matching TF/intrinsics. Minimum/maximum usable distance remain measurement
+validity limits. Changes discard previous target evidence. On a real robot the
+same area remains a measured-geometry configuration; it cannot move hardware.
+
 The bootstrap downloads the official `yolo26n.pt` weights, verifies the pinned
 SHA-256 and selects a cup texture from the official Ultralytics COCO128 sample.
 Texture/model provenance is recorded in `/tmp/ee3033_sim/assets/provenance.json`
@@ -441,3 +487,42 @@ centering counts as localization work. No remaining motion/site candidate means
 holding safely and observing until the work budget, rather than ending because
 five actions were sent. Preferred precision, return reserve, Stop and faults
 retain their independent termination rules.
+
+
+### Near-field reframing and camera occlusion
+
+A clipped or below-minimum-range view can select up to two safe 0.18–0.30 m
+observation moves away from the last observed ray (at most 0.6 m total). These
+are Nav2 destinations, not unconditional reverse commands. Strict measurement
+range/crop checks and the independent bearing route remain in force; a range
+hint used to choose a move is never estimator evidence.
+
+Observation candidates must be navigable and camera-visible. Visibility uses
+the mounted camera origin, FOV/range, a conservative grid supercover with a
+4 cm margin, and rejects unknown/out-of-map/occupied sightlines. Without trusted
+depth it checks support across source-visible bearing/depth hypotheses instead
+of treating a made-up one-metre point as the target. Intermediate near-field
+reframing may remain below measurement range, explicitly labelled separately;
+LOS, FOV and maximum range still apply. The 2-D map treats obstacles as opaque
+and cannot prove visibility over low furniture or detect new unmapped occluders.
+
+
+### Mapping corner recovery and capture-time TF
+
+Translation progress requires 0.08 m over 12 s. Heading alignment must reduce
+its error; rotating indefinitely does not satisfy navigation progress. Recovery
+first cancels and confirms the previous action is terminal, verifies stationary
+odometry and zero final commands, refreshes planning, and only then permits a
+second, map-checked reverse attempt. Reverse remains capped at 0.20 m, 0.04 m/s
+and 8 s, including localization uncertainty. Stop prevents every successor.
+A retry never resets the outer action's absolute deadline.
+
+Image processing holds one frame for at most one inference period when its
+capture-time map transform has not arrived. It then retries that same frame,
+retaining the original timestamp and normal stale-frame/TF rejection checks.
+No latest-pose substitute is used for localization.
+
+Random scenes now contain six to nine connected rooms, doorways and loops.
+The generator checks physical clearance and reachability before application.
+Saved scene JSON is the reproducibility record: a seed alone does not preserve
+the layout across generator revisions.

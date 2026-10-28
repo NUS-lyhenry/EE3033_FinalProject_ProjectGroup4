@@ -1,0 +1,420 @@
+{
+  "scope": "Interactive live preview only; not a substitute for frozen-case repeat acceptance",
+  "scene_seed": 102,
+  "target": [
+    2.99,
+    -0.29,
+    1.5707963267948966
+  ],
+  "vm_cpus": 4,
+  "old_preview_before_update": {
+    "mission": {
+      "phase": "mapping",
+      "stamp": 1793168951.2472103,
+      "state": "FAILED",
+      "reason": "Mapping navigation time limit exceeded",
+      "home": [
+        0.08209706670474645,
+        -0.4005109692747298,
+        -1.7793556942107152
+      ],
+      "target": null,
+      "ready": true,
+      "readiness_reason": "Ready",
+      "map_partial": false,
+      "return_verified": false,
+      "return_reason": null,
+      "stationary_check": null,
+      "navigation_recoveries": [],
+      "mapping_mode": "waypoint",
+      "waypoint": [
+        2.99,
+        -0.29,
+        1.5707963267948966
+      ],
+      "waypoint_verified": false,
+      "saved_map": null,
+      "elapsed_seconds": 62.24786028999915,
+      "viewpoints_completed": 0,
+      "viewpoints_total": 0,
+      "frontier_goals_sent": 1,
+      "deferred_frontiers": 0,
+      "frontier_retry_round": 0,
+      "failed_viewpoints": [],
+      "observed_fraction": 0.0
+    },
+    "navigation": null,
+    "pose": [
+      0.5379702518903241,
+      -0.27937775950876004,
+      0.7591393678951465
+    ],
+    "simulation_motion": null,
+    "velocity_gate": {
+      "stamp": 1793168951.0795162,
+      "reason": "passing",
+      "requested": [
+        0.0,
+        0.0
+      ],
+      "output": [
+        0.0,
+        0.0
+      ],
+      "nearest": 0.2477210909128189,
+      "bearing": -1.0332350209355354,
+      "command_age": 0.02121452500068699,
+      "scan_age": 0.09355231800145702,
+      "heartbeat_age": 0.03244492799967702
+    },
+    "robot_geometry": null
+  },
+  "initial_new_version_failure": {
+    "mission": {
+      "phase": "mapping",
+      "stamp": 1793169143.2196763,
+      "state": "FAILED",
+      "reason": "SLAM map-to-base transform missing/stale",
+      "home": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "target": null,
+      "ready": true,
+      "readiness_reason": "Ready",
+      "map_partial": false,
+      "return_verified": false,
+      "return_reason": null,
+      "stationary_check": null,
+      "navigation_recoveries": [
+        {
+          "goal_id": "1a0204e8bc2d4a8c94a1847b4ebba57c",
+          "attempt": 1,
+          "reason": "Nav2 could not follow the collision-free route"
+        }
+      ],
+      "mapping_mode": "waypoint",
+      "waypoint": [
+        2.99,
+        -0.29,
+        1.5707963267948966
+      ],
+      "waypoint_verified": false,
+      "saved_map": null,
+      "elapsed_seconds": 15.831959688999632,
+      "viewpoints_completed": 0,
+      "viewpoints_total": 0,
+      "frontier_goals_sent": 2,
+      "deferred_frontiers": 1,
+      "frontier_retry_round": 0,
+      "failed_viewpoints": [
+        [
+          0.4360557600006071,
+          0.13685244940344665
+        ]
+      ],
+      "observed_fraction": 0.0
+    },
+    "navigation": {
+      "stage": "CANCELED",
+      "reason": "Navigation stopped by owner",
+      "recovery_count": 1,
+      "goal_id": "1a0204e8bc2d4a8c94a1847b4ebba57c",
+      "failure_reason": "Navigation stopped by owner",
+      "armed": true,
+      "sequence": 2,
+      "goal_started_stamp": 1793169064.3363063,
+      "distance": 1.5300689432298211,
+      "heading_error": -0.5809656233237064,
+      "velocity_gate_reason": "passing",
+      "odom_age": 0.028035137000188115,
+      "gate_age": 0.11331289500049024,
+      "last_failure_reason": "Navigation stopped by owner",
+      "stationary_check": {
+        "verified": true,
+        "duration": 0.5,
+        "samples": 4,
+        "linear_mean": 0.0,
+        "angular_mean": 0.0,
+        "position_span": 0.0,
+        "heading_span": 0.0,
+        "reason": "Stationary window verified",
+        "limits": {
+          "seconds": 0.5,
+          "linear_mean": 0.035,
+          "angular_mean": 0.1,
+          "position_span": 0.01,
+          "heading_span": 0.02
+        }
+      },
+      "stamp": 1793169143.2751975
+    },
+    "pose": [
+      0.2572783559191862,
+      0.05155522201456374,
+      0.33627486088693215
+    ],
+    "simulation_motion": {
+      "stamp": 1793169143.2162557,
+      "ground_truth": [
+        0.25727835591918624,
+        0.05155522201456371,
+        0.3362748608869317
+      ],
+      "command": [
+        0.0,
+        0.0
+      ],
+      "actual_velocity": [
+        0.0,
+        0.0
+      ],
+      "collision_rejected": false,
+      "collision_rejections": 0,
+      "clearance": 0.6301516518430279,
+      "radius": 0.106801,
+      "elapsed_step": 0.07739758299976529,
+      "elapsed_wall": 163.44681900700016,
+      "profile": {
+        "command_delay": 0.0,
+        "linear_deadband": 0.0,
+        "angular_deadband": 0.0,
+        "frozen": false
+      },
+      "evaluation_only": true
+    },
+    "velocity_gate": {
+      "stamp": 1793169142.8796322,
+      "reason": "passing",
+      "requested": [
+        0.0,
+        0.0
+      ],
+      "output": [
+        0.0,
+        0.0
+      ],
+      "speed_scale": 1.0,
+      "safety_reason": null,
+      "output_arc": [],
+      "output_arc_frame": null,
+      "footprint_radius": 0.116801,
+      "robot_geometry": {
+        "profile": "measured",
+        "model": "conservative_circumscribed_circle",
+        "length": 0.18,
+        "width": 0.115,
+        "body_radius": 0.106801,
+        "padding": 0.01,
+        "footprint_radius": 0.116801,
+        "exact_circumradius": 0.10680004681646914,
+        "dimension_source": "wheel_inclusive_user_measurement",
+        "front_stop_distance": 0.186801,
+        "rotation_clearances": {
+          "cautious": 0.136801,
+          "balanced": 0.126801,
+          "bold": 0.116801
+        },
+        "selection_environment": "EE3033_ROBOT_GEOMETRY"
+      },
+      "nearest": null,
+      "bearing": null,
+      "command_age": 0.034065591999024036,
+      "scan_age": 0.03948918399873946,
+      "heartbeat_age": 0.05922815099984291
+    },
+    "robot_geometry": {
+      "profile": "measured",
+      "model": "conservative_circumscribed_circle",
+      "length": 0.18,
+      "width": 0.115,
+      "body_radius": 0.106801,
+      "padding": 0.01,
+      "footprint_radius": 0.116801,
+      "exact_circumradius": 0.10680004681646914,
+      "dimension_source": "wheel_inclusive_user_measurement",
+      "front_stop_distance": 0.186801,
+      "rotation_clearances": {
+        "cautious": 0.136801,
+        "balanced": 0.126801,
+        "bold": 0.116801
+      },
+      "selection_environment": "EE3033_ROBOT_GEOMETRY"
+    }
+  },
+  "failure_context": "Three batch workers, near-range fixture, live SLAM and two old previews shared four CPUs; control-loop missed rates and stale TF were recorded. Zero physical collision rejections.",
+  "intervention": "Stopped old preview containers without changing navigation tolerances. Retried from the resulting intermediate pose; no manual repositioning.",
+  "retry": {
+    "mission": {
+      "phase": "mapping",
+      "stamp": 1793169478.5204334,
+      "state": "WAYPOINT_REACHED",
+      "reason": "Waypoint position and final facing verified; mapping remains live",
+      "home": [
+        0.2572783559191862,
+        0.05155522201456374,
+        0.33627486088693215
+      ],
+      "target": null,
+      "ready": true,
+      "readiness_reason": "Ready",
+      "map_partial": false,
+      "return_verified": false,
+      "return_reason": null,
+      "stationary_check": null,
+      "navigation_recoveries": [
+        {
+          "goal_id": "1a0204e8bc2d4a8c94a1847b4ebba57c",
+          "attempt": 1,
+          "reason": "Navigation stopped by owner"
+        }
+      ],
+      "mapping_mode": "waypoint",
+      "waypoint": [
+        2.99,
+        -0.29,
+        1.5707963267948966
+      ],
+      "waypoint_verified": true,
+      "saved_map": null,
+      "elapsed_seconds": 36.99328428000081,
+      "viewpoints_completed": 2,
+      "viewpoints_total": 0,
+      "frontier_goals_sent": 2,
+      "deferred_frontiers": 0,
+      "frontier_retry_round": 0,
+      "failed_viewpoints": [],
+      "observed_fraction": 0.0
+    },
+    "navigation": {
+      "stage": "SUCCEEDED",
+      "reason": "Navigation goal reached",
+      "recovery_count": 0,
+      "goal_id": "dc184db9c1f241bc8755e75d580afb45",
+      "failure_reason": null,
+      "armed": true,
+      "sequence": 4,
+      "goal_started_stamp": 1793169162.3231902,
+      "distance": 0.11658361346248604,
+      "heading_error": 0.0,
+      "velocity_gate_reason": "passing",
+      "odom_age": 0.01121178600078565,
+      "gate_age": 0.3115380350009218,
+      "stationary_check": {
+        "verified": true,
+        "duration": 0.5,
+        "samples": 21,
+        "linear_mean": 0.0,
+        "angular_mean": 0.02067712830104997,
+        "position_span": 0.0,
+        "heading_span": 0.0,
+        "reason": "Stationary window verified",
+        "limits": {
+          "seconds": 0.5,
+          "linear_mean": 0.035,
+          "angular_mean": 0.1,
+          "position_span": 0.01,
+          "heading_span": 0.02
+        }
+      },
+      "stamp": 1793169478.4755607
+    },
+    "pose": [
+      2.8960705474501607,
+      -0.22094207596765014,
+      1.4237467358837723
+    ],
+    "simulation_motion": {
+      "stamp": 1793169478.5192008,
+      "ground_truth": [
+        2.8951164125954127,
+        -0.2298555596421113,
+        1.4202567358837714
+      ],
+      "command": [
+        0.0,
+        0.0
+      ],
+      "actual_velocity": [
+        0.0,
+        0.0
+      ],
+      "collision_rejected": false,
+      "collision_rejections": 0,
+      "clearance": 0.5692373770541697,
+      "radius": 0.106801,
+      "elapsed_step": 0.019730076999621815,
+      "elapsed_wall": 498.7497309070004,
+      "profile": {
+        "command_delay": 0.0,
+        "linear_deadband": 0.0,
+        "angular_deadband": 0.0,
+        "frozen": false
+      },
+      "evaluation_only": true
+    },
+    "velocity_gate": {
+      "stamp": 1793169478.4792726,
+      "reason": "passing",
+      "requested": [
+        0.0,
+        0.0
+      ],
+      "output": [
+        0.0,
+        0.0
+      ],
+      "speed_scale": 1.0,
+      "safety_reason": null,
+      "output_arc": [],
+      "output_arc_frame": null,
+      "footprint_radius": 0.116801,
+      "robot_geometry": {
+        "profile": "measured",
+        "model": "conservative_circumscribed_circle",
+        "length": 0.18,
+        "width": 0.115,
+        "body_radius": 0.106801,
+        "padding": 0.01,
+        "footprint_radius": 0.116801,
+        "exact_circumradius": 0.10680004681646914,
+        "dimension_source": "wheel_inclusive_user_measurement",
+        "front_stop_distance": 0.186801,
+        "rotation_clearances": {
+          "cautious": 0.136801,
+          "balanced": 0.126801,
+          "bold": 0.116801
+        },
+        "selection_environment": "EE3033_ROBOT_GEOMETRY"
+      },
+      "nearest": null,
+      "bearing": null,
+      "command_age": 0.0342533809998713,
+      "scan_age": 0.03638777999913145,
+      "heartbeat_age": 0.059523762998651364
+    },
+    "robot_geometry": {
+      "profile": "measured",
+      "model": "conservative_circumscribed_circle",
+      "length": 0.18,
+      "width": 0.115,
+      "body_radius": 0.106801,
+      "padding": 0.01,
+      "footprint_radius": 0.116801,
+      "exact_circumradius": 0.10680004681646914,
+      "dimension_source": "wheel_inclusive_user_measurement",
+      "front_stop_distance": 0.186801,
+      "rotation_clearances": {
+        "cautious": 0.136801,
+        "balanced": 0.126801,
+        "bold": 0.116801
+      },
+      "selection_environment": "EE3033_ROBOT_GEOMETRY"
+    }
+  },
+  "retry_position_error": 0.11658361346248604,
+  "retry_heading_error": 0.1470495909111242,
+  "controller_library_sha256": "0709befee7c5ef7d7891a395ff2ac2e76d295fc5ad8bb1ebda2203ae4a34f27c",
+  "status": "Retry reached and stopped; initial resource-related failure retained. Final source acceptance remains pending."
+}

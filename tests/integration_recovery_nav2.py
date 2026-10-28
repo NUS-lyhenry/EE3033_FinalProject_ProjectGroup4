@@ -6,6 +6,7 @@ gate output, without a /cmd_vel publisher or physical drivers.
 """
 import math
 import os
+os.environ.setdefault('EE3033_ROBOT_GEOMETRY','legacy')
 from pathlib import Path
 import signal
 import subprocess
@@ -77,9 +78,14 @@ def main():
         raise SystemExit('Use an isolated ROS_DOMAIN_ID, e.g. 101')
     root=Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='group4_recovery_') as tmp:
-        config=yaml.safe_load((root/'src/ee3033_project/config/navigation.yaml').read_text())
+        config=yaml.safe_load((root/'src/ee3033_project/config/navigation_dwb.yaml').read_text())
         # Only shorten the synthetic frozen-chassis case. Production keeps 18 s.
         config['controller_server']['ros__parameters']['progress_checker']['movement_time_allowance']=1.5
+        # This is an explicit optional-tree regression, not the restored default.
+        config['controller_server']['ros__parameters']['progress_checker'].update(
+            plugin='nav2_controller::PoseProgressChecker',required_movement_angle=.2)
+        config['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml']=str(
+            root/'src/ee3033_project/behavior_trees/navigate_with_bounded_recovery.xml')
         for name in ('local_costmap','global_costmap'):
             p=config[name][name]['ros__parameters']
             p['plugins']=['static_layer','inflation_layer']
@@ -87,7 +93,7 @@ def main():
         path=Path(tmp)/'nav.yaml';path.write_text(yaml.safe_dump(config))
         with open('/tmp/group4_recovery_nav2.log','w') as log:
             proc=subprocess.Popen(['ros2','launch','ee3033_project','navigation.launch.py',
-                'nav_config:='+str(path)],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+                'nav_config:='+str(path),'supervised_navigation:=false'],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             rclpy.init()
             chassis=RecoveryChassis()
             gate=VelocityGate(parameter_overrides=[Parameter('allow_motion',value=True),

@@ -30,7 +30,7 @@ jobs:
   native-navigation:
     runs-on: ubuntu-22.04
     container: ros:humble-ros-base-jammy
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
       OMP_NUM_THREADS: '1'
@@ -45,10 +45,19 @@ jobs:
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --symlink-install --packages-select ee3033_project
+          colcon build --symlink-install --packages-up-to ee3033_project
           source install/setup.bash
           ROS_DOMAIN_ID=99 python3 tests/integration_hardware_launch.py
           ROS_DOMAIN_ID=94 python3 tests/integration_console.py
+          ROS_DOMAIN_ID=95 ROS_LOCALHOST_ONLY=1 python3 tests/integration_navigation_supervisor.py
+          ROS_DOMAIN_ID=95 ROS_LOCALHOST_ONLY=1 python3 tests/integration_navigation_review.py
+          for fault in laser localization frozen unknown_rear stop; do
+            ROS_DOMAIN_ID=124 ROS_LOCALHOST_ONLY=1 python3 tests/integration_navigation_faults.py --fault "$fault" --output "/tmp/navigation-faults-ci/$fault"
+          done
+          ROS_DOMAIN_ID=95 ROS_LOCALHOST_ONLY=1 python3 tests/integration_path_planner.py
+          ROS_DOMAIN_ID=95 ROS_LOCALHOST_ONLY=1 python3 tests/integration_motion_safety.py
+          ROS_DOMAIN_ID=95 ROS_LOCALHOST_ONLY=1 python3 tests/integration_rpp_deadband.py --plugin wrapper --accelerations .8 --output /tmp/rpp-wrapper-ci.json
+          ROS_DOMAIN_ID=95 ROS_LOCALHOST_ONLY=1 python3 tests/integration_observation_settling.py --output /tmp/observation-settling-ci.json
           ROS_DOMAIN_ID=88 python3 tests/integration_ros.py
           ROS_DOMAIN_ID=107 python3 tests/integration_adaptive_search.py
           ROS_DOMAIN_ID=109 python3 tests/integration_visual_search.py
@@ -71,4 +80,7 @@ jobs:
             /tmp/group4_turning_nav2.log
             /tmp/group4_recovery_nav2.log
             /tmp/group4_gap_nav2.log
+            /tmp/rpp-wrapper-ci.json
+            /tmp/observation-settling-ci.json
+            /tmp/navigation-faults-ci/
           if-no-files-found: ignore

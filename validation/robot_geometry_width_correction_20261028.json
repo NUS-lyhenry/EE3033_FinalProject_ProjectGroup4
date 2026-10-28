@@ -1,0 +1,27 @@
+{
+  "correction": "User clarified width across wheels is 18 cm and forward length is 11.5 cm. Earlier length/width metadata was swapped.",
+  "geometry": {
+    "profile": "measured",
+    "model": "conservative_circumscribed_circle",
+    "length": 0.115,
+    "width": 0.18,
+    "body_radius": 0.106801,
+    "padding": 0.01,
+    "footprint_radius": 0.116801,
+    "exact_circumradius": 0.10680004681646914,
+    "dimension_source": "wheel_inclusive_user_measurement",
+    "front_stop_distance": 0.186801,
+    "rotation_clearances": {
+      "cautious": 0.136801,
+      "balanced": 0.126801,
+      "bold": 0.116801
+    },
+    "selection_environment": "EE3033_ROBOT_GEOMETRY"
+  },
+  "optional_reserved_radius": 0.16999999999999998,
+  "circle_and_padding_unchanged": true,
+  "source_sha256": "ac0a4040515248916ed7b5b4d377aa464a0d67fe032becce7a521e695fd94e47",
+  "verification": "596 Python checks passed after correction; independent physical-boundary checks verify unchanged .116801 m hard footprint and .17 m optional lateral reserve.",
+  "interactive_preview": "User trial was SEARCHING when checked; correction is saved in source and awaits an idle reload, without interrupting the current search.",
+  "historical_evidence": "Earlier reports retain their original dimension metadata and source hashes; they are not silently rewritten."
+}

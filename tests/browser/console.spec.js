@@ -98,6 +98,15 @@ async function fixture(page,{phase='mapping',active=false}={}){
       json={success:true,values:trial,synchronized:true,profile:body.profile};
     }else if(path==='/api/vision'){
       state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
+    }else if(path==='/api/simulation_camera'){
+      state.simulation_camera={...body,revision:(state.simulation_camera.revision||0)+1};
+      json={success:true,camera:state.simulation_camera,message:'Physical simulated camera updated'};
+    }else if(path==='/api/simulation_scenario'){
+      const scene=state.simulation_scenario;
+      scene.revision++;
+      if(body.action==='set_target')scene.target=[body.x,body.y,0];
+      if(body.seed!=null)scene.seed=body.seed;
+      json={success:true,scenario:scene,message:'Simulation scene updated'};
     }else if(path==='/api/teleop')json={success:true};
     else return route.fulfill({status:404,json:{error:'Unknown test endpoint'}});
     return route.fulfill({json:JSON.parse(JSON.stringify(json))});
@@ -194,13 +203,27 @@ test('camera setup is a preparation page and shows saved profile reuse',async({p
   expect(f.errors).toEqual([]);
 });
 
-test('mapping shows deferred areas and the final retry pass',async({page})=>{
+test('mapping reports excluded failures and bounded navigation recovery',async({page})=>{
   const f=await fixture(page,{active:true});
-  Object.assign(f.state.mission,{viewpoints_completed:2,deferred_frontiers:1,frontier_retry_round:0});
-  await expect(page.locator('#mappingProgress')).toContainText('2 goals reached · 1 deferred');
-  await expect(page.locator('#mappingProgress')).toContainText('Explore other areas');
-  f.state.mission.frontier_retry_round=1;
-  await expect(page.locator('#mappingProgress')).toContainText('Final retry pass');
+  Object.assign(f.state.mission,{viewpoints_completed:2,failed_viewpoints:[[1,1]]});
+  await expect(page.locator('#mappingProgress')).toContainText('2 goals reached · 1 failed areas skipped');
+  await expect(page.locator('#mappingProgress')).toContainText('Bounded navigation recovery');
+  await expect(page.locator('#mappingProgress')).not.toContainText('retry pass');
+  expect(f.errors).toEqual([]);
+});
+
+test('map distinguishes global route, local prediction, travelled path and recovery state',async({page})=>{
+  const f=await fixture(page,{active:true});
+  Object.assign(f.state,{path:[[1,1],[2,1]],local_path:[[1,1],[1.1,1.05]],
+    travelled_path:[[.7,1],[1,1]],footprint_radius:.116801,
+    robot_geometry:{profile:'measured',length:.115,width:.18},
+    navigation:{stage:'REVERSING',reason:'Known rear corridor verified',recovery_count:1}});
+  await expect(page.locator('#navigationStatus')).toContainText('Backing up safely');
+  await expect(page.locator('#navigationStatus')).toContainText('Recovery 1/2');
+  for(const name of ['Global path','Local prediction','Travelled']){
+    await expect(page.locator('.legend').getByText(name,{exact:true})).toBeVisible();
+  }
+  await expect(page.locator('#stop')).toBeEnabled();
   expect(f.errors).toEqual([]);
 });
 
@@ -602,4 +625,86 @@ test('TF pitch override is saved as a boolean with radians',async({page})=>{
   await expect.poll(()=>f.calls.some(c=>c.path==='/api/vision')).toBe(true);
   const body=f.calls.find(c=>c.path==='/api/vision').body;
   expect(body.use_pitch_override).toBe(true);expect(body.camera_pitch).toBeCloseTo(28.6*Math.PI/180,8);
+});
+
+function enableScenario(f){
+  Object.assign(f.state,{preview_backend:'main-ros',simulation_can_apply:true,
+    simulation_camera:{camera_height:.22,camera_pitch:10*Math.PI/180,camera_yaw:0,camera_x:.05,camera_y:0,horizontal_fov:0,camera_min_range:.35,camera_max_range:2,revision:0},
+    simulation_scenario:{revision:1,seed:42,bounds:[0,0,6,4],start:[1,1,0],target:[4,2,0],
+      walls:[[[0,0],[6,0]],[[6,0],[6,4]],[[6,4],[0,4]],[[0,4],[0,0]],[[3,1],[3,3]]]}});
+}
+
+test('simulation scene supports seeded random maps and click target placement',async({page})=>{
+  const f=await fixture(page);enableScenario(f);await view(page,'workflow');
+  await expect(page.locator('#simulationPanel')).toBeVisible();
+  await expect(page.locator('#simulationGeometryHelp')).toContainText('0.22 m high, 10.0° downward');
+  await expect(page.locator('#simulationGeometryHelp')).toContainText('move the simulated camera itself');
+  await page.locator('#simulationSeed').fill('123');
+  await page.getByRole('button',{name:'Generate random map',exact:true}).click();
+  await expect.poll(()=>f.calls.find(c=>c.path==='/api/simulation_scenario')?.body).toEqual({action:'random_map',seed:123});
+  await page.getByRole('button',{name:'Random target',exact:true}).click();
+  await expect.poll(()=>f.calls.filter(c=>c.path==='/api/simulation_scenario').at(-1)?.body).toEqual({action:'random_target',seed:123});
+  const scene=page.locator('#simulationScene'),box=await scene.boundingBox();
+  await scene.click({position:{x:box.width/2,y:box.height/2}});
+  const x=Number(await page.locator('#simulationTargetX').inputValue()),y=Number(await page.locator('#simulationTargetY').inputValue());
+  expect(x).toBeCloseTo(3,1);expect(y).toBeCloseTo(2,1);
+  await page.getByRole('button',{name:'Place target',exact:true}).click();
+  await expect.poll(()=>f.calls.filter(c=>c.path==='/api/simulation_scenario').at(-1)?.body).toEqual({action:'set_target',x,y});
+  expect(f.errors).toEqual([]);
+});
+
+test('simulation editor stays hidden on hardware and locked during a run',async({page})=>{
+  const f=await fixture(page);enableScenario(f);f.state.simulated=false;
+  await expect(page.locator('#simulationPanel')).toBeHidden();
+  f.state.simulated=true;f.state.mission.state='MAPPING';f.state.simulation_can_apply=false;
+  await expect(page.locator('#simulationPanel')).toBeVisible();
+  await expect(page.locator('#simulationRandomMap')).toBeDisabled();
+  await expect(page.locator('#simulationPlaceTarget')).toBeDisabled();
+  await page.locator('#simulationScene').click();
+  expect(f.calls.filter(c=>c.path==='/api/simulation_scenario')).toEqual([]);
+});
+
+test('simulation target coordinate entry validates input and shows server rejection',async({page})=>{
+  const f=await fixture(page);enableScenario(f);
+  await expect(page.locator('#simulationPlaceTarget')).toBeEnabled();
+  await page.locator('#simulationTargetX').fill('');
+  await page.getByRole('button',{name:'Place target',exact:true}).click();
+  await expect(page.locator('#feedback')).toContainText('Enter finite target coordinates');
+  expect(f.calls.filter(c=>c.path==='/api/simulation_scenario')).toEqual([]);
+  await page.route('**/api/simulation_scenario',route=>route.fulfill({status:400,json:{error:'Target is too close to a wall'}}));
+  await page.locator('#simulationTargetX').fill('3');
+  await page.getByRole('button',{name:'Place target',exact:true}).click();
+  await expect(page.locator('#feedback')).toContainText('too close to a wall');
+  await expect(page.locator('#simulationPlaceTarget')).toBeEnabled();
+});
+
+test('simulation editor fits a mobile screen and retains Stop',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  const f=await fixture(page);enableScenario(f);await view(page,'workflow');
+  await expect(page.locator('#simulationPanel')).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.locator('#simulationPlaceTarget').scrollIntoViewIfNeeded();
+  await expect(page.locator('#stop')).toBeInViewport();
+  expect(f.errors).toEqual([]);
+});
+
+test('simulated camera form changes physical mount and lens through its isolated API',async({page})=>{
+  const f=await fixture(page);enableScenario(f);await view(page,'workflow');
+  await page.locator('#advancedTools > summary').click();
+  await expect(page.locator('#visionHeight')).toHaveValue('0.220');
+  await expect(page.locator('#visionPitch')).toHaveValue('10.000');
+  await expect(page.locator('#visionPitchOverride')).toBeHidden();
+  await page.locator('#visionHeight').fill('0.31');
+  await page.locator('#visionPitch').fill('28.6');
+  await page.locator('#visionFov').fill('60');
+  await page.getByRole('button',{name:'Apply simulated camera',exact:true}).click();
+  await expect.poll(()=>f.calls.some(c=>c.path==='/api/simulation_camera')).toBe(true);
+  const body=f.calls.find(c=>c.path==='/api/simulation_camera').body;
+  expect(body.camera_height).toBe(.31);expect(body.camera_pitch).toBeCloseTo(28.6*Math.PI/180,8);
+  expect(body.horizontal_fov).toBeCloseTo(Math.PI/3,8);expect(body).not.toHaveProperty('use_pitch_override');
+  expect(f.calls.filter(c=>c.path==='/api/vision')).toEqual([]);
+  await expect(page.locator('#simulationGeometryHelp')).toContainText('0.31 m high, 28.6° downward');
+  f.state.mission.state='SEARCHING';f.state.simulation_can_apply=false;
+  await expect(page.locator('#saveVision')).toBeDisabled();
+  expect(f.errors).toEqual([]);
 });

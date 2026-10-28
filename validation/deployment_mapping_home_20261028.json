@@ -1,0 +1,14 @@
+{
+  "patch": "mapping-home-goal-checker",
+  "file": "src/ee3033_project/ee3033_project/mapper.py",
+  "old_sha256": "5ac1c41caef991ea9c755777a9146d84360c61f2673f6fd09cc038a6db53d953",
+  "new_sha256": "528dd934176c440cc5e52ff7b2ae1eeefd8d2363d77abac6e0971211b8039305",
+  "verification": "Syntax and exact delta only; no simulation, restart or autonomous motion",
+  "effective": "Next mapping process launch",
+  "robot": "balance6",
+  "release": "mapping5cm_20261028_dcb78f2c6f",
+  "live_state_evidence": "/private/tmp/ee3033-current-state.json",
+  "observed_failure": "Mapping returned near home then failed final heading convergence twice; mapper did not assign navigate_home.xml",
+  "runtime_test": "Not performed; current operator mission preserved; next mapping launch imports patched mapper",
+  "acceptance_passed": false
+}

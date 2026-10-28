@@ -26,6 +26,36 @@ class BearingIntersection:
         self.last_events.append(code)
         return None
 
+    def replacement_site(self, sample):
+        """Replace only unused, incomplete or geometrically redundant captures.
+
+        Frames already represented by a published joint factor are protected.
+        A fourth physical position may replace an unproductive near-field
+        capture, while the active A/B/C fit still contains at most three sites.
+        """
+        def geometry(sites):
+            angles=[math.atan2(np.mean([math.sin(p['angle']) for p in site]),
+                               np.mean([math.cos(p['angle']) for p in site])) for site in sites]
+            origins=[np.mean([p['origin'] for p in site],axis=0) for site in sites]
+            crossing=max((abs(math.sin(a-b)) for a in angles for b in angles),default=0.)
+            baseline=max((np.linalg.norm(a-b) for a in origins for b in origins),default=0.)
+            return crossing,float(baseline)
+        current_crossing,_=geometry(self.sites)
+        choices=[]
+        for index,site in enumerate(self.sites):
+            if any(p['stamp'] in self.last_sources for p in site):
+                continue
+            proposed=self.sites[:index]+self.sites[index+1:]+[[sample]]
+            crossing,baseline=geometry(proposed)
+            incomplete=len(site)<self.frames
+            if not incomplete and crossing<=current_crossing+1e-6:
+                continue
+            # Prefer useful parallax, then baseline. On ties discard the least
+            # complete/noisiest/oldest unused capture, retaining stronger A.
+            quality=max(p['sigma'] for p in site)
+            choices.append(((crossing,baseline,-len(site),quality,-site[-1]['stamp']),index))
+        return max(choices)[1] if choices else None
+
     def add(self, d):
         self.last_events=[]
         self.frame_accepted=False
@@ -68,7 +98,11 @@ class BearingIntersection:
         site = next((s for s in self.sites if np.linalg.norm(s[-1]['origin']-origin) < .08), None)
         if site is None:
             if len(self.sites) >= self.max_sites:
-                return self.reject('bearing_site_limit','Three distinct capture positions are already in use')
+                replacement=self.replacement_site(sample)
+                if replacement is None:
+                    return self.reject('bearing_site_limit','All capture sites are protected or offer better geometry')
+                del self.sites[replacement]
+                self.last_events.append('bearing_redundant_site_replaced')
             self.sites.append([sample])
         else:
             # Each frame already passed capture-time motion, centering and

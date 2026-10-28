@@ -1,0 +1,29 @@
+{
+  "rows": [
+    {
+      "test": "integration_navigation_supervisor.py",
+      "checks": 8,
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "test": "integration_navigation_review.py",
+      "checks": 3,
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "test": "integration_path_planner.py",
+      "checks": 9,
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "test": "integration_motion_safety.py",
+      "checks": 6,
+      "returncode": 0,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

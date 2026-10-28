@@ -2,6 +2,8 @@
 import math
 import time
 from .core import angle_difference
+from .near_view import requires_reframing, retreat_goal
+from .visibility import observation_visibility
 
 
 class SingleTarget:
@@ -25,6 +27,10 @@ class SingleTarget:
         self.recovery_started = None
         self.turn_sites = []
         self.last_goal_reason = None
+        self.last_goal_action = None
+        self.reframe_positions = []
+        self.reframe_attempts = 0
+        self.reframe_distance = 0.
 
     def turns_at(self, pose):
         site=next((s for s in self.turn_sites if math.dist(s['origin'],pose[:2])<.18),None)
@@ -143,18 +149,31 @@ class SingleTarget:
         d = self.candidate
         if d is None:
             return None
+        self.last_goal_action=None
+        near=requires_reframing(d) or ('bearing' not in d and 'steering_bearing' in d)
+        if near:
+            # Framing recovery is not an A/B/C capture station: a cropped
+            # view can contain no usable measurement at all. Keep its bounded
+            # route history separate so two retreats still permit valid A/B.
+            if not any(math.dist(pose[:2],p)<.12 for p in self.reframe_positions):
+                self.reframe_positions.append(tuple(pose[:2]))
+            if self.reframe_attempts<2 and self.reframe_distance<.6-1e-6:
+                goal,reason=retreat_goal(planner,pose,d,self.visited,self.reframe_positions,
+                    allowed,deadline,cancel)
+                self.last_goal_reason=reason
+                if goal is not None:
+                    self.reframe_attempts+=1
+                    self.reframe_distance+=math.dist(goal[:2],pose[:2])
+                    self.visited.add(planner.world_to_cell(*goal[:2]))
+                    self.last_goal_action='retreat'
+                    return goal
+            else:self.last_goal_reason='Bounded near-field retreat budget used'
+            # A still-invalid cropped view must not consume a capture site.
+            # A valid independent horizontal bearing may proceed even when
+            # floor contact remains vertically clipped or below minimum range.
+            if not d.get('bearing_valid',False):
+                return None
         if 'bearing' not in d:
-            hint = d.get('steering_bearing')
-            if hint is not None and math.isfinite(hint):
-                x, y = pose[0]-.3*math.cos(hint), pose[1]-.3*math.sin(hint)
-                cell = planner.world_to_cell(x, y)
-                distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
-                if (planner.in_bounds(*cell) and planner.safe[cell]
-                        and math.isfinite(distances[cell]) and cell not in self.visited
-                        and (allowed is None or allowed(x,y) is not False)):
-                    self.visited.add(cell)
-                    self.last_goal_reason='Retreat to recover a horizontally clipped target'
-                    return (x, y, hint-(planner.camera_model.yaw if planner.camera_model else 0.))
             return None
         camera_yaw = planner.camera_model.yaw if planner.camera_model else 0.
         desired = d['bearing']-camera_yaw
@@ -167,10 +186,14 @@ class SingleTarget:
             # A repeated correction is not a reason to abandon the baseline.
         # Retain up to three distinct capture positions across local moves.
         if not any(math.dist(pose[:2], p) < .12 for p in self.positions):
+            if len(self.positions)>=3:
+                self.last_goal_reason='Three observation positions already used'
+                return None
             self.positions.append(tuple(pose[:2]))
         if len(self.positions) >= 3:
             return None
-        if not all(k in d and math.isfinite(d[k]) for k in ('x', 'y')):
+        if (d.get('projection_valid') is False or d.get('range_state') in ('too_near','too_far')
+                or not all(k in d and math.isfinite(d[k]) for k in ('x', 'y'))):
             return self.bearing_baseline(planner,pose,deadline,cancel,allowed)
         tx, ty = d['x'], d['y']
         distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
@@ -191,13 +214,6 @@ class SingleTarget:
                 x, y = planner.cell_to_world(*cell)
                 if allowed is not None and allowed(x,y) is False:
                     continue
-                # Reject an approach if a mapped obstacle hides the target.
-                target = planner.world_to_cell(tx, ty)
-                count = max(abs(target[0]-cell[0]), abs(target[1]-cell[1]), 1)
-                line = [(round(cell[0]+(target[0]-cell[0])*i/count),
-                         round(cell[1]+(target[1]-cell[1])*i/count)) for i in range(count+1)]
-                if any(not planner.in_bounds(*p) or not planner.free[p] for p in line):
-                    continue
                 yaw = math.atan2(ty-y, tx-x)
                 if planner.camera_model is not None:
                     yaw -= planner.camera_model.yaw
@@ -206,6 +222,10 @@ class SingleTarget:
                                  -math.sin(yaw)*dx+math.cos(yaw)*dy]]
                     if not planner.camera_model.contains_floor(relative)[0]:
                         continue
+                visibility=observation_visibility(planner,(x,y,yaw),target=(tx,ty),
+                    camera_model=planner.camera_model,require_floor=planner.camera_model is not None,
+                    deadline=deadline,cancel=cancel)
+                if not visibility.visible:continue
                 # A goal already inside Nav2's arrival tolerance changes no
                 # observation. Do not spend the approach budget repeating it.
                 if math.hypot(x-pose[0], y-pose[1]) < .12 and abs(angle_difference(yaw, pose[2])) < .2:
@@ -238,9 +258,22 @@ class SingleTarget:
                     or not math.isfinite(distances[cell]) or cell in self.visited
                     or any(math.dist((x,y),p)<.25 for p in self.positions)
                     or (allowed is not None and allowed(x,y) is False)):continue
+            source=d.get('origin')
+            if source is None:
+                self.last_goal_reason='Baseline requires the last image camera origin'
+                continue
+            nominal=(planner.camera_model.min_range+planner.camera_model.max_range)/2 if planner.camera_model else 1.
+            # This midpoint chooses heading only. Visibility evaluates the full
+            # depth wedge anchored at the last image's real camera origin.
+            tx=source[0]+nominal*math.cos(d['bearing']);ty=source[1]+nominal*math.sin(d['bearing'])
+            yaw=math.atan2(ty-y,tx-x)-camera_yaw
+            visibility=observation_visibility(planner,(x,y,yaw),source_origin=source,
+                bearing=d['bearing'],camera_model=planner.camera_model,deadline=deadline,cancel=cancel)
+            if not visibility.visible:
+                self.last_goal_reason='Baseline visibility rejected: '+visibility.reason
+                continue
             self.visited.add(cell)
-            tx=pose[0]+math.cos(d['bearing']);ty=pose[1]+math.sin(d['bearing'])
             self.last_goal_reason='Depth-free lateral baseline' if radius != -.3 else 'Reframe by moving away'
-            return (x,y,math.atan2(ty-y,tx-x)-camera_yaw)
+            return (x,y,yaw)
         self.last_goal_reason='No map-safe connected baseline candidate'
         return None
