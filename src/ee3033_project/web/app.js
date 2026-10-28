@@ -84,6 +84,9 @@ function renderSimulation(){
     $('simulationTargetX').value=fmt(scene.target[0],3);$('simulationTargetY').value=fmt(scene.target[1],3);
   }
   $('simulationSeedStatus').textContent=scene.seed==null?'Default scene':`Seed ${scene.seed}`;
+  const physical=s.simulation_camera;
+  $('simulationGeometryHelp').hidden=!physical;
+  if(physical)$('simulationGeometryHelp').textContent=`Simulated camera: ${fmt(physical.height_m,2)} m high, ${fmt(physical.pitch_deg,1)}° downward. Camera mounting settings below change the estimator after saving and reloading the mission; they do not move this camera. Height 0 reads TF; pitch requires Override TF pitch only or a measured height.`;
   $('simulationSceneStatus').textContent=!editable?(s.simulation_scenario_reason||'Stop the current run before editing the scene.'):
     simulationDraft?'Target selected. Press Place target to apply it.':'Click the scene or enter coordinates, then press Place target.';
   $('simulationScene').style.cursor=editable?'crosshair':'default';drawSimulation();

@@ -8,6 +8,7 @@ import argparse
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -22,6 +23,7 @@ from rclpy.parameter import Parameter
 from ee3033_project.console import Console
 from simulation_robot import SimulatedRobot
 from simulation_control import SimulationScenarioControl
+from simulation_geometry import CAMERA_OFFSET, PITCH
 
 
 class SimulationConsole(SimulationScenarioControl,Console):
@@ -30,6 +32,8 @@ class SimulationConsole(SimulationScenarioControl,Console):
         data.update(simulated=True, preview_interactive=True, preview_backend='main-ros',
             preview_hint='Current main programs with SLAM, Nav2 and YOLO; only sensors and the chassis are simplified. Original speeds and timeouts are retained.')
         data.update(self.simulation_snapshot())
+        data['simulation_camera']=dict(height_m=float(CAMERA_OFFSET[2]),
+            forward_m=float(CAMERA_OFFSET[0]),pitch_deg=math.degrees(PITCH))
         return data
 
     def workflow_get(self, path):

@@ -38,7 +38,7 @@ def node(fresh=False):
                max_yaw_variance=.2,return_heading_required=True),
         goal_serial=0,nav_progress=NS(reset=lambda:None),index=0,route=[1],
         set_state=lambda state,reason:None,failures=[],failed_options=set(),seen=set())
-    for name in ('defer_for_costmap','retry_costmap_wait','send_goal','readiness_error'):
+    for name in ('defer_for_costmap','retry_costmap_wait','send_goal','readiness_error','goal_requires_translation'):
         setattr(n,name,MethodType(MISSION[name],n))
     n.cancel=lambda state,reason:finished.append((state,reason))
     return n,sent,fail,finished
