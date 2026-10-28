@@ -43,6 +43,7 @@ from .frame_journal import FrameJournal
 
 
 class Mission(Node):
+    pending_navigation = None
     ACTIVE = {'PLANNING', 'SEARCHING', 'OBSERVING', 'CANCELING', 'RETURNING', 'VERIFYING', 'ACQUIRING', 'LOCALIZING', 'RECOVERING'}
 
     def __init__(self, **kwargs):
@@ -167,6 +168,7 @@ class Mission(Node):
         self.nav = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.path_nav = ActionClient(self, ComputePathToPose, '/compute_path_to_pose')
         self.navigation_map = NavigationCostmap(self)
+        self.pending_navigation = None
         self.enable_pub = self.create_publisher(Bool, '/project/drive_enabled', LATCHED)
         self.search_pub = self.create_publisher(Bool, '/project/search_active', LATCHED)
         self.status_pub = self.create_publisher(String, '/project/mission_status', LATCHED)
@@ -308,6 +310,8 @@ class Mission(Node):
         now = time.monotonic()
         if self.map is None:
             return 'No saved map received'
+        if self.state not in self.ACTIVE and not self.navigation_map.fresh(now):
+            return 'Waiting for a fresh Nav2 navigation costmap'
         if now-self.scan_time > self.p['sensor_timeout']:
             return 'Lidar stream missing or stale'
         if now-self.odom_time > self.p['sensor_timeout']:
@@ -360,6 +364,7 @@ class Mission(Node):
             response.message = error
             return response
         self.p['clearance'] = self.get_parameter('clearance').value
+        self.pending_navigation = None
         self.home, self.target = self.pose(), None
         self.target_details = None
         self.best_target = None
@@ -441,12 +446,36 @@ class Mission(Node):
         set_yaw(pose.pose.orientation, yaw)
         return pose
 
+    def defer_for_costmap(self, action, *args):
+        """Wait for evidence of safety, without labelling a viewpoint blocked."""
+        if self.navigation_map.fresh():
+            return False
+        if self.pending_navigation is None:
+            self.pending_navigation = (time.monotonic(), action, args)
+            self.reason = 'Waiting for a fresh Nav2 navigation costmap'
+            self.heartbeat(False, self.target_detected)
+            self.publish_status()
+        return True
+
+    def retry_costmap_wait(self, now):
+        pending = self.pending_navigation
+        if pending is None:
+            return
+        started, action, args = pending
+        if now-started > self.p['sensor_timeout']:
+            self.cancel('FAILED', 'Nav2 navigation costmap unavailable or stale')
+        elif self.navigation_map.fresh(now):
+            self.pending_navigation = None
+            getattr(self, action)(*args)
+
     def send_goal(self, pose, kind, retry=False):
         if self.goal_pending or self.goal_handle is not None:
             self.finish('FAILED', 'Refused overlapping navigation goals')
             return
         if not self.nav.server_is_ready():
             self.finish('FAILED', 'Nav2 action server disappeared')
+            return
+        if kind!='home' and self.defer_for_costmap('send_goal', pose, kind, retry):
             return
         if kind!='home' and self.navigation_map.allowed(pose.pose.position.x,pose.pose.position.y) is False:
             self.goal_kind=kind
@@ -591,6 +620,8 @@ class Mission(Node):
             self.search_stop_reason = 'Configured observable coverage reached'
             self.begin_return()
             return
+        if self.defer_for_costmap('next_viewpoint'):
+            return
         current = self.pose()
         if current is None:
             self.finish('FAILED', 'No valid pose for search replanning')
@@ -686,6 +717,8 @@ class Mission(Node):
 
     def dispatch_viewpoint(self, choice):
         if self.target_detected or self.plan_cancel.is_set():
+            return
+        if self.defer_for_costmap('dispatch_viewpoint', choice):
             return
         if choice is None:
             if self.deferred_options:
@@ -806,6 +839,7 @@ class Mission(Node):
                 self.target['confirmation_frames'] = d['frames']
 
     def cancel(self, next_state, reason):
+        self.pending_navigation = None
         self.heartbeat(False, False)
         self.cancel_next = next_state
         if self.goal_pending or self.goal_handle is not None:
@@ -847,7 +881,7 @@ class Mission(Node):
 
     def update_localization_clock(self, state=None):
         state=state or self.state
-        engaged=self.acquisition.started is not None
+        engaged=self.acquisition.started is not None and self.pending_navigation is None
         aligning=getattr(self.nav_progress,'phase',None)=='heading'
         traveling=engaged and state=='ACQUIRING' and self.goal_translation and not aligning
         working=engaged and (state=='LOCALIZING' or (state=='ACQUIRING' and (not self.goal_translation or aligning)))
@@ -903,6 +937,7 @@ class Mission(Node):
         self.send_goal(self.make_pose(self.home[0], self.home[1], yaw), 'home')
 
     def finish(self, state, reason):
+        self.pending_navigation = None
         self.plan_cancel.set()
         self.heartbeat(False, False)
         self.finished_at = time.monotonic()
@@ -1026,6 +1061,8 @@ class Mission(Node):
                         self.finish_localization(error)
                     else:
                         self.cancel('FAILED', error)
+                elif self.pending_navigation is not None:
+                    self.retry_costmap_wait(now)
                 elif self.state=='RECOVERING':
                     if now>=self.recovery_after:
                         pose,kind=self.recovery_goal
