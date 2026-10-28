@@ -53,7 +53,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: progress_checker
-    goal_checker_plugins: [goal_checker]
+    goal_checker_plugins: [goal_checker, home_goal_checker, observation_goal_checker, approach_goal_checker]
     controller_plugins: [FollowPath]
     progress_checker:
       plugin: nav2_controller::SimpleProgressChecker
@@ -66,7 +66,7 @@ controller_server:
       stateful: true
     observation_goal_checker:
       plugin: nav2_controller::SimpleGoalChecker
-      xy_goal_tolerance: 0.12
+      xy_goal_tolerance: 0.10
       yaw_goal_tolerance: 0.03
       stateful: true
     home_goal_checker:
@@ -74,6 +74,11 @@ controller_server:
       xy_goal_tolerance: 0.12
       yaw_goal_tolerance: 3.141592653589793
       stateful: true
+    approach_goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.025
+      yaw_goal_tolerance: 0.10
+      stateful: false
     FollowPath:
       plugin: dwb_core::DWBLocalPlanner
       min_vel_x: 0.0

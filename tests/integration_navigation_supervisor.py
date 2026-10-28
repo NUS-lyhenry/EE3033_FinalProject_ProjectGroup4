@@ -31,7 +31,7 @@ def until(predicate, seconds=8):
     raise AssertionError('Timed out waiting for supervisor fixture')
 
 
-def result(future,seconds=8):
+def result(future,seconds=20):
     until(future.done,seconds)
     return future.result()
 
@@ -133,8 +133,8 @@ class SupervisorTests(unittest.TestCase):
         rclpy.init()
         self.fixture=Fixture()
         self.supervisor=NavigationSupervisor(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
-            goal_timeout=6.,translation_window=.35,translation_distance=.08,
-            heading_window=.2,stationary_seconds=.06,stationary_timeout=.8,
+            goal_timeout=20.,translation_window=.35,translation_distance=.08,
+            heading_window=.2,stationary_seconds=2.,stationary_timeout=5.,
             sensor_timeout=.2,enable_grace=.5).items()])
         self.executor=MultiThreadedExecutor(num_threads=8)
         for node in (self.fixture,self.supervisor):self.executor.add_node(node)

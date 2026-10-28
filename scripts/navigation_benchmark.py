@@ -248,14 +248,14 @@ def run_case(args):
             time.sleep(.2)
         else:raise TimeoutError('Mapping/TF/costmap readiness timeout')
         readiness_clients=[]
-        for action in ('/navigate_to_pose','/project/nav2_navigate_to_pose','/compute_path_to_pose','/project/nav2_compute_path_to_pose'):
+        for action in ('/navigate_to_pose','/project/nav2_navigate_to_pose','/compute_path_to_pose','/project/nav2_compute_path_to_pose','/project/evaluate_path_to_pose'):
             kind=NavigateToPose if 'navigate' in action else ComputePathToPose
             probe=ActionClient(fixture,kind,action,callback_group=service_group);readiness_clients.append(probe)
             if not probe.wait_for_server(timeout_sec=20):raise TimeoutError(f'{action} server not ready')
         time.sleep(.5)
         graph_deadline=time.monotonic()+12.
         record['action_graph_history']=[]
-        action_names=('/navigate_to_pose','/project/nav2_navigate_to_pose','/compute_path_to_pose','/project/nav2_compute_path_to_pose')
+        action_names=('/navigate_to_pose','/project/nav2_navigate_to_pose','/compute_path_to_pose','/project/nav2_compute_path_to_pose','/project/evaluate_path_to_pose')
         while True:
             graph_snapshot=action_graph_snapshot(fixture,action_names)
             record['action_graph']=graph_snapshot

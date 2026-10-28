@@ -108,6 +108,7 @@ class TargetFilter(Node):
                         and (not self.p['target_class'] or d.get('label') == self.p['target_class'])]
             updated=False
             selected=None
+            bearing_accepted=False
             if self.tracker.factor and now-self.tracker.factor['stamp'] > self.p['max_observation_age']:
                 self.tracker.reset()
                 codes.append('mmse_intersection_expired_recollecting')
@@ -122,6 +123,7 @@ class TargetFilter(Node):
                     event['selected']=dict(selected)
                     candidates=[o for o in candidates if o.get('box')==selected.get('box')]
                     factor=self.intersection.add(selected)
+                    bearing_accepted=self.intersection.frame_accepted
                     event['intersection']=dict(attempted=True,accepted=factor is not None,
                         frame_accepted=self.intersection.frame_accepted,reason=self.intersection.reason,
                         reason_code=self.intersection.reason_code)
@@ -155,6 +157,10 @@ class TargetFilter(Node):
                     updated=self.tracker.update(floor,now)
                     if not updated:codes.append(mmse_rejection_reason(self.tracker,floor,now))
                 else:codes.append('no_usable_floor_measurement')
+                if not updated and bearing_accepted:
+                    event['mmse']['attempted']=True
+                    updated=self.tracker.update_bearing(selected,now)
+                    if not updated:codes.append('mmse_bearing_likelihood_rejected')
             elif not updated and candidates:
                 codes.append('mmse_floor_evidence_replaced_by_intersection')
             if not updated:self.tracker.miss(stamp,data.get('deferred') is True)
@@ -163,7 +169,7 @@ class TargetFilter(Node):
             event['mmse'].update(updated=updated,stable=bool(estimate and estimate['stable']),
                 source=estimate.get('source','floor_projection') if estimate else None,
                 prior_conflict=bool(estimate and estimate.get('prior_conflict')),
-                samples=len(self.tracker.samples),confirmation_streak=self.tracker.streak)
+                samples=estimate.get('samples',0) if estimate else 0,confirmation_streak=self.tracker.streak)
             if estimate and estimate.get('prior_conflict'):codes.append('mmse_map_prior_conflict')
             elif updated and not estimate['stable']:codes.append('mmse_collecting_confirmation')
             elif updated:codes.append('mmse_stable_estimate')

@@ -5,7 +5,7 @@ test('live uncertain estimates update without becoming reported targets',async({
   const f=await fixture(page,{phase:'mission'});
   f.state.target_estimate={x:2,y:1.5,sigma:.65,label:'bottle',samples:5,age:.2,stale:false,confirmed:false};
   await expect(page.locator('#targetEstimateStatus')).toContainText('Estimated bottle: (2.00, 1.50)');
-  await expect(page.locator('#confidence')).toContainText('Estimated bottle · σ 0.65 m');
+  await expect(page.locator('#confidence')).toContainText('Estimated bottle · position σ 0.65 m');
   await expect(page.locator('#resultTarget')).toHaveText('Awaiting target');
   f.state.target_estimate={...f.state.target_estimate,x:2.3,sigma:.4,samples:8};
   await expect(page.locator('#targetEstimateStatus')).toContainText('(2.30, 1.50)');
@@ -39,10 +39,11 @@ async function fixture(page,{phase='mapping',active=false}={}){
   const state={simulated:true,read_only:false,phase,allow_motion:true,token:'test-only',control_generation:0,
     mission:{phase,state:active?(phase==='mapping'?'MAPPING':'SEARCHING'):'WAITING',reason:'SIMULATED UI TEST · no robot motion',home:null,target:null,ready:true,return_verified:false},
     stage:{managed:true,running:true,phase,transitioning:false},assessment:{elapsed_seconds:65,started:10,finished:null,running:true,timing_valid:true,includes_mapping:true,maps:[]},
-    mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2,preferred_target_sigma:.1},
+    mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90},
     map_revision:1,pose:[1,1,0],route:[],path:[],health:Object.fromEntries(['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(k=>[k,{ok:true,age:.1}])),
     events:[],camera_source:null,battery:{voltage:11.87,fresh:true,age:.1},control_fault:null,initial_pose_sent:false};
   let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60};const calls=[];
+  let attitude={success:true,mode:'fixed',topic:'/project/body_attitude',pivot:[0,0,.033],reference:null,sample:{age:.1,frame:'base_link'},ready:true,editable:true,reason:'',requires_reload:false};
   const cells=Array.from({length:2400},(_,i)=>i<60||i>=2340||i%60===0||i%60===59?100:0);
   const map={width:60,height:40,resolution:.1,origin:[0,0,0],cells};
   let stageDelay=null;
@@ -72,7 +73,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
         state.mission={phase:body.phase,state:'WAITING',reason:'SIMULATED stage ready',home:null,target:null,ready:body.phase==='mapping',return_verified:false};
         state.initial_pose_sent=false;
         if(body.phase==='calibration')state.selected_map=maps.find(m=>m.id===body.map_id);
-        if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance,preferred_target_sigma:body.preferred_target_sigma};state.health.AMCL.ok=false;}
+        if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance,preferred_target_sigma:body.preferred_target_sigma,enable_ab_maneuver:body.enable_ab_maneuver,acquisition_seconds:body.acquisition_seconds};state.health.AMCL.ok=false;}
       }
     }else if(path==='/api/calibration_target'){state.calibration_live.target={xy:[body.x,body.y]};state.calibration_live.plan={goals:[],reverse_extent_m:.8};}
     else if(path==='/api/initial_pose'){state.initial_pose_sent=true;state.health.AMCL.ok=true;state.mission.ready=true;}
@@ -98,6 +99,10 @@ async function fixture(page,{phase='mapping',active=false}={}){
       json={success:true,values:trial,synchronized:true,profile:body.profile};
     }else if(path==='/api/vision'){
       state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
+    }else if(path==='/api/attitude'){
+      if(method==='POST'&&body.action==='configure')attitude={...attitude,...body,reason:'Settings saved for next mission load',requires_reload:true};
+      if(method==='POST'&&body.action==='reference')attitude={...attitude,reference:{valid:true,roll:0.5,pitch:1.2,samples:10,span:[.1,.1]},reason:'Controller reference saved',requires_reload:true};
+      json=attitude;
     }else if(path==='/api/simulation_camera'){
       state.simulation_camera={...body,revision:(state.simulation_camera.revision||0)+1};
       json={success:true,camera:state.simulation_camera,message:'Physical simulated camera updated'};
@@ -177,11 +182,12 @@ test('workflow can load a reviewed saved map after restart without rebuilding or
 test('localization work and waypoint travel use separate displayed timers',async({page})=>{
   const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
   f.state.mission={...f.state.mission,state:'LOCALIZING',target_detected:true,
-    localization_active_seconds:8.2,localization_travel_seconds:61.4,
+    localization_elapsed_seconds:68.2,localization_work_seconds:8.2,localization_active_seconds:8.2,
+    localization_travel_seconds:61.4,acquisition_seconds:90,
     localization_stage:'B: collecting settled bearing frames',
     bearing_progress:{sites:[{ready:true,frames:4},{ready:false,frames:2}]}};
-  await expect(page.locator('#localizationProgress')).toContainText('8.2 / 45 s');
-  await expect(page.locator('#localizationProgress')).toContainText('Travel between views: 61.4 s');
+  await expect(page.locator('#localizationProgress')).toContainText('68.2 / 90 s wall time (includes travel)');
+  await expect(page.locator('#localizationProgress')).toContainText('work 8.2 s · travel 61.4 s');
   await expect(page.locator('#localizationProgress')).toContainText('A: ready · B: 2/4 frames');
   expect(f.errors).toEqual([]);
 });
@@ -246,7 +252,7 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await view(page,'navigation');
   await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mission');
-  const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15,preferred_target_sigma:.1});
+  const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90});
   await expect(page.locator('#mappingControls')).toBeHidden();await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#poseX').fill('1');await page.locator('#poseY').fill('1');await page.locator('#poseYaw').fill('90');
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -264,6 +270,46 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await view(page,'results');
   const download=page.waitForEvent('download');await page.locator('#exportResult').click();expect((await download).suggestedFilename()).toBe('assessment.json');
   expect(f.errors).toEqual([]);await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'test-results/simulated-basic-workflow.png',fullPage:true});
+});
+
+test('advanced mission options submit the opt-in maneuver and acquisition window',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
+  await page.locator('#missionAdvanced').evaluate(el=>el.open=true);
+  await page.locator('#enableAbManeuver').check();await page.locator('#acquisitionSeconds').fill('120');
+  await expect(page.locator('#loadMission')).toContainText('Apply settings');
+  await page.locator('#loadMission').click();
+  const body=f.calls.filter(c=>c.path==='/api/stage').at(-1).body;
+  expect(body.enable_ab_maneuver).toBe(true);expect(body.acquisition_seconds).toBe(120);
+  expect(f.state.mission_options.enable_ab_maneuver).toBe(true);
+  expect(f.errors).toEqual([]);
+});
+
+test('position confidence stays separate from detector confidence and reports estimate freshness',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.mission={...f.state.mission,state:'COMPLETE',return_verified:true,target:{x:2,y:1,class:'cup',confidence:.84,
+    position_confidence:.91,confidence_radius_m:.2,sigma:.12,quality:'approximate',stale:true,age:2.5,preferred_sigma:.1},reason:'Returned inside assigned tolerance'};
+  await expect(page.locator('#confidence')).toContainText('84% detector confidence');
+  await expect(page.locator('#resultPositionConfidence')).toHaveText('91% within 0.20 m · stale · 2.5 s old');
+  await expect(page.locator('#resultTarget')).toContainText('approximate estimate');
+  await expect(page.locator('#resultOutcome')).toHaveText('Complete · estimated confidence 91% within 0.20 m');
+  await expect(page.locator('#resultReason')).toContainText('Returned inside assigned tolerance');
+  expect(f.errors).toEqual([]);
+});
+
+test('attitude settings save a controller mode and capture a reference without submitting angles',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'navigation');
+  await page.locator('#attitudeMode').selectOption('controller');
+  await expect(page.locator('#attitudeX')).toHaveValue('-0.01');
+  await page.locator('#saveAttitude').click();
+  await expect.poll(()=>f.calls.some(c=>c.path==='/api/attitude'&&c.body.action==='configure')).toBe(true);
+  const configure=f.calls.find(c=>c.path==='/api/attitude'&&c.body.action==='configure');
+  expect(configure.body.pivot[0]).toBe(-.01);
+  await page.locator('#referenceAttitude').click();
+  await expect.poll(()=>f.calls.some(c=>c.path==='/api/attitude'&&c.body.action==='reference')).toBe(true);
+  expect(f.calls.find(c=>c.path==='/api/attitude'&&c.body.action==='reference').body).toEqual({action:'reference'});
+  await expect(page.locator('#attitudeStatus')).toContainText('Reference captured');
+  expect(f.errors).toEqual([]);
 });
 
 for(const phase of ['mapping','mission'])test(`active ${phase} locks setup and manual intervention`,async({page})=>{
@@ -522,7 +568,7 @@ test('default workflow can apply a changed target without starting the mission',
   await expect(page.locator('#loadMission')).toBeHidden();
   expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body).toEqual({
     phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'bottle',
-    localization_method:'hybrid',return_tolerance:.2,preferred_target_sigma:.1});
+    localization_method:'hybrid',return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90});
   expect(new URL(page.url()).hash).toBe('#/workflow');
   await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -614,6 +660,9 @@ test('found without coordinates and incomplete search have distinct return outco
   f.state.mission={...f.state.mission,state:'SEARCH_INCOMPLETE',target_detected:false,reason:'Wall-side region remains blocked'};
   await expect(page.locator('#resultOutcome')).toHaveText('Search incomplete');
   await expect(page.locator('#resultReason')).toContainText('Wall-side region');
+  f.state.mission={...f.state.mission,state:'STOPPED',internal_error:'Safety stop: navigation fault'};
+  await expect(page.locator('#resultOutcome')).toHaveText('Stopped · safety error');
+  await expect(page.locator('#resultReason')).toContainText('Safety stop');
 });
 
 test('TF pitch override is saved as a boolean with radians',async({page})=>{

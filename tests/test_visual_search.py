@@ -102,7 +102,7 @@ def detection(stamp, **kwargs):
 
 
 def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during_acquisition():
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     assert not target.update([detection(10.)], 10., 9.)
     assert not target.update([detection(10.)], 10., 9.)
     assert target.update([detection(10.25)], 10.25, 9.)
@@ -115,9 +115,9 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
     target.advance_clock(1.,working=True)
     target.advance_clock(16.,working=False,traveling=True)
     target.advance_clock(76.,working=True)
-    assert not target.expired(76.)  # the minute of navigation is excluded
+    assert not target.expired(76.)  # 75 of the shared 90 wall-clock seconds used
     target.advance_clock(106.)
-    assert target.expired(46.)
+    assert target.expired(91.)  # navigation consumes the same absolute budget
     target.reset()
     assert not target.update([detection(20., x=1., y=1.)], 20., 19.)
     assert not target.update([detection(20.25, x=2., y=1.)], 20.25, 19.)
@@ -125,7 +125,7 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
 
 def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10., x=2., y=1., sigma=.3)
     goal = target.observation_goal(planner, (1., 1., 0.))
     assert goal and planner.safe[planner.world_to_cell(*goal[:2])]
@@ -138,7 +138,7 @@ def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
 
 def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline():
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=detection(10.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=detection(10.)
     pose=(2.,2.,.5)
     first=target.observation_goal(planner,pose)
     assert first[:2]==pose[:2]
@@ -154,7 +154,7 @@ def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline()
 
 def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline():
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=detection(10.,x=20.,y=20.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=detection(10.,x=20.,y=20.)
     pose=(2.,2.,0.)
     target.candidate['origin']=list(pose[:2])
     # The north-side point is Nav2-blocked; south is usable.
@@ -175,7 +175,7 @@ def test_fast_profile_synchronizes_both_stages_and_search_estimates():
 
 def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
     planner = CoveragePlanner(np.zeros((60, 60)), .05, (0, 0, 0))
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10., x=2., y=1., sigma=.12, close_view=False)
     pose = (1.4, 1., 0.)
     goal = target.observation_goal(planner, pose)
@@ -186,7 +186,7 @@ def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
 
 
 def test_centered_bearing_only_target_does_not_spend_a_step_on_a_noop():
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10.)
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
     # An already centered target should acquire parallax, not another turn.
@@ -207,7 +207,7 @@ def test_camera_settings_reject_nonfinite_values_without_inventing_mount_dimensi
 
 def test_horizontal_clipping_only_guides_a_mapped_retreat_not_depth():
     planner=CoveragePlanner(np.zeros((40,40)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=dict(stamp=10.,label='cup',confidence=.9,
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=dict(stamp=10.,label='cup',confidence=.9,
         box=[0,100,60,350],steering_bearing=0.,steering_origin=[1.,1.])
     goal=target.observation_goal(planner,(1.,1.,0.))
     assert goal and goal[0]<1. and goal[1]==pytest.approx(1.)

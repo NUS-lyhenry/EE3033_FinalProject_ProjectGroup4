@@ -80,7 +80,9 @@ class StopVerification(unittest.TestCase):
                 check=mission.summary()['stationary_check']
                 self.assertTrue(check['verified']);self.assertGreaterEqual(check['duration'],1.999)
                 self.assertGreater(check['samples'],10)
-            if expected=='FAILED':self.assertIn('verification',mission.reason)
+            if mode!='operator_stop' and expected=='STOPPED':
+                self.assertIn('verification',mission.reason)
+                self.assertIsNotNone(mission.internal_error)
             print('PASS stop verification:',mode,mission.state,mission.stationary_check)
         finally:
             executor.shutdown(timeout_sec=3);thread.join(timeout=3)
@@ -88,14 +90,14 @@ class StopVerification(unittest.TestCase):
             rclpy.shutdown()
 
     def test_balancing_spikes_with_bounded_pose_can_complete(self):self.run_case('noisy','COMPLETE')
-    def test_sustained_translation_cannot_complete(self):self.run_case('linear','FAILED')
-    def test_sustained_yaw_cannot_complete(self):self.run_case('angular','FAILED')
-    def test_creeping_below_speed_limit_cannot_complete(self):self.run_case('creeping','FAILED')
-    def test_slow_turn_below_speed_limit_cannot_complete(self):self.run_case('slow_turn','FAILED')
-    def test_nonzero_final_commands_cannot_complete(self):self.run_case('nonzero_commands','FAILED')
-    def test_stale_zero_commands_cannot_complete(self):self.run_case('stale_commands','FAILED')
-    def test_odom_gaps_cannot_complete(self):self.run_case('odom_gaps','FAILED')
-    def test_invalid_odometry_pose_cannot_complete(self):self.run_case('invalid_pose','FAILED')
+    def test_sustained_translation_cannot_complete(self):self.run_case('linear','STOPPED')
+    def test_sustained_yaw_cannot_complete(self):self.run_case('angular','STOPPED')
+    def test_creeping_below_speed_limit_cannot_complete(self):self.run_case('creeping','STOPPED')
+    def test_slow_turn_below_speed_limit_cannot_complete(self):self.run_case('slow_turn','STOPPED')
+    def test_nonzero_final_commands_cannot_complete(self):self.run_case('nonzero_commands','STOPPED')
+    def test_stale_zero_commands_cannot_complete(self):self.run_case('stale_commands','STOPPED')
+    def test_odom_gaps_cannot_complete(self):self.run_case('odom_gaps','STOPPED')
+    def test_invalid_odometry_pose_cannot_complete(self):self.run_case('invalid_pose','STOPPED')
     def test_operator_stop_during_verification_stays_stopped(self):self.run_case('operator_stop','STOPPED')
 
 

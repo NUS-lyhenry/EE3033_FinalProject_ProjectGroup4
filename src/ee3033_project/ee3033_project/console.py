@@ -46,9 +46,10 @@ from .console_workflow import Workflow
 from .model_labels import ModelLabels
 from .waypoint import validate_waypoint
 from .console_scan import ScanFilterSettings
+from .console_attitude import AttitudeSettings
 
 
-class Console(ScanFilterSettings, Workflow, Node):
+class Console(AttitudeSettings, ScanFilterSettings, Workflow, Node):
     def __init__(self, **kwargs):
         super().__init__('project_console', **kwargs)
         self.p = parameters(self, {'port': 8765, 'phase': 'mission', 'allow_motion': False,
@@ -109,6 +110,7 @@ class Console(ScanFilterSettings, Workflow, Node):
                 ('get_parameters',GetParameters),('set_parameters_atomically',SetParametersAtomically)]}
         self.init_workflow()
         self.init_scan_filter()
+        self.init_attitude()
         self.gate_status = None
         self.create_subscription(String, '/project/velocity_gate_status', self.on_gate_status, 10)
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
@@ -163,10 +165,11 @@ class Console(ScanFilterSettings, Workflow, Node):
                     return self.reply(200,node.snapshot())
                 if path=='/api/labels':
                     return self.reply(200,node.model_labels.read())
-                if path in ('/api/trial','/api/gap','/api/scan_filter'):
+                if path in ('/api/trial','/api/gap','/api/scan_filter','/api/attitude'):
                     try:
                         with node.control_lock:
-                            data = (node.scan_filter_settings() if path=='/api/scan_filter' else
+                            data = (node.attitude_settings() if path=='/api/attitude' else
+                                    node.scan_filter_settings() if path=='/api/scan_filter' else
                                     node.trial_settings() if path=='/api/trial' else node.gap_settings())
                         return self.reply(200,data)
                     except (RuntimeError,ValueError) as exc:
@@ -273,10 +276,11 @@ class Console(ScanFilterSettings, Workflow, Node):
     def displayed_target_estimate(self):
         target=self.state.get('target')
         if target and target.get('estimator')=='map-constrained MMSE':
+            age=max(0.,self.get_clock().now().nanoseconds*1e-9-target['observation_stamp'])
             return dict(target,label=target['class'],method=target['estimator'],
-                        stamp=target['observation_stamp'],confirmed=True,stable=True,
-                        age=max(0.,self.get_clock().now().nanoseconds*1e-9-target['observation_stamp']),
-                        samples=target.get('confirmation_frames',4),stale=False,frame_id='map')
+                        stamp=target['observation_stamp'],confirmed=True,
+                        stable=target.get('measurement_stable',target.get('quality')=='preferred_precision'),
+                        age=age,samples=target.get('confirmation_frames',4),stale=age>2.,frame_id='map')
         if not self.target_estimate:return None
         data=self.target_estimate
         age=self.get_clock().now().nanoseconds*1e-9-data['stamp']
@@ -397,6 +401,7 @@ class Console(ScanFilterSettings, Workflow, Node):
                     'footprint_radius':FOOTPRINT_RADIUS,'robot_geometry':geometry_metadata(),
                     'navigation':self.navigation_status,
                     'scan_filter':self.scan_filter_snapshot(),
+                    'attitude':self.attitude_snapshot(),
                     'simulation_motion':self.simulation_motion if hasattr(self,'simulation_robot') else None,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
@@ -587,6 +592,8 @@ class Console(ScanFilterSettings, Workflow, Node):
         request_generation=self.control_generation if expected_generation is None else expected_generation
         if not isinstance(body,dict):
             raise ValueError('Request must be a JSON object')
+        if path=='/api/attitude':
+            return self.attitude_settings(body,request_generation)
         if path=='/api/scan_filter':
             return self.scan_filter_settings(body,request_generation)
         if path == '/api/calibration_target':

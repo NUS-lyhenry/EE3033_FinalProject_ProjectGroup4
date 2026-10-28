@@ -222,6 +222,13 @@ The planner proxy similarly retains `/compute_path_to_pose` and publishes only
 full-footprint-checked routes on `/plan`; unvalidated Navfn output is recorded
 separately on `/project/native_plan`. Unsafe routes may be replaced by a complete
 known-safe grid route, never by an unchecked straight connector.
+Observation-point ranking uses `/project/evaluate_path_to_pose`, with the same
+queue, cancellation and collision validation, but does not publish its trial
+routes on `/plan`. The green route therefore represents navigation planning.
+Every navigation terminal result requires fresh zero commands and a two-second
+stationary hold. Bounded balancing is allowed; sustained drift still locks
+navigation with the specific failed check. Mission treats a supervisor lock or
+rejected navigation request as a stop, rather than consuming every viewpoint.
 
 The final velocity gate preserves curvature when applying speed limits. The
 wheel-inclusive measured balancing chassis is 0.115 m long (forward) and
