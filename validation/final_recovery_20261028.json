@@ -30,6 +30,11 @@
         "frozen chassis",
         "cancel during recovery"
       ]
+    },
+    "calibration_compatibility": {
+      "passed": true,
+      "tests": 6,
+      "fixture_correction": "Mock Perception now includes production pixel_margin and camera range defaults."
     }
   },
   "legacy_corner": {

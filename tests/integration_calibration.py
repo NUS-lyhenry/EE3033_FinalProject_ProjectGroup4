@@ -50,6 +50,7 @@ class MissionProjection(unittest.TestCase):
         base_from_laser.transform.translation.z, base_from_laser.transform.rotation.w = .1, 1.
         return SimpleNamespace(calibration=profile, p=dict(localization_method='ground_plane',
             camera_optical_frame='unused', map_frame='map', max_range=3., max_scan_delta=.25,
+            pixel_margin=8., camera_min_range=.35, camera_max_range=2.,
             min_lidar_points=2, cluster_gap=.12, max_cluster_width=.5),
             buffer=SimpleNamespace(lookup_transform=lambda *args: t,
                                    lookup_transform_full=lambda *args: base_from_laser))

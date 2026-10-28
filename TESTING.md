@@ -23,6 +23,10 @@ matching transform arrived. One bounded nonblocking inference-period retry now
 retains that same image and timestamp. Two near-range native runs passed after
 the change; the final repeat moved about 0.21 m and reported sigma about 0.073 m.
 Bearing-only A/B, occlusion and cropped-target native regressions passed.
+The first remote native run exposed an outdated legacy calibration fixture: its
+mock Perception omitted pixel-margin and camera-range defaults. The fixture was
+updated without weakening production validation; all 6 calibration cases passed.
+
 All **449 Python checks** and **52 browser checks** passed locally, along with
 8 mapping-retry ROS tests, 9 common ROS tests and the native recovery cases
 (unknown/uncertain rear, transient/persistent blockage, corner, frozen chassis
