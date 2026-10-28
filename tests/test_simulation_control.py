@@ -15,11 +15,13 @@ scripts=Path(__file__).parents[1]/'scripts'
 sys.path.insert(0,str(scripts))
 from simulation_control import SimulationScenarioControl
 from simulation_scenarios import default_scenario,validate_scenario
+from simulation_camera import default_camera_settings,validate_camera_settings
 
 
 class Robot:
     def __init__(self):
         self.pose=[.7,-.5,.2];self.commands=True;self.calls=[];self.moving=False
+        self.camera=default_camera_settings()
     def stationary(self):return not self.moving
     def pause_commands(self):self.commands=False;self.calls.append('pause')
     def resume_commands(self):self.commands=True;self.calls.append('resume')
@@ -27,6 +29,11 @@ class Robot:
         assert not self.commands
         self.scene=validate_scenario(scene);self.calls.append(('apply',reset_pose))
         if reset_pose:self.pose=list(scene['start'])
+    def camera_settings(self):return dict(self.camera)
+    def apply_camera(self,settings):
+        assert not self.commands
+        self.camera=validate_camera_settings(settings);self.calls.append('apply_camera')
+        return dict(self.camera)
 
 
 class Stage:
@@ -168,3 +175,46 @@ def test_raycast_and_render_use_the_same_explicit_world_instead_of_captured_defa
     absent=world.render_camera(pose,texture,False,walls,[.95,.85,0.])
     moved=world.render_camera(pose,texture,True,walls,[-.7,.85,0.])
     assert not np.array_equal(visible,absent) and np.array_equal(moved,absent)
+
+
+def test_physical_camera_mapping_updates_keep_map_pose_and_use_tf_in_estimator(tmp_path):
+    c=Console(tmp_path);pose=list(c.simulation_robot.pose);before_map=copy.deepcopy(c.map_data)
+    settings=dict(default_camera_settings(),camera_height=.31,camera_pitch=math.radians(28.6),
+        camera_yaw=.1,camera_x=.07,camera_y=.01,horizontal_fov=1.25,camera_min_range=.6,camera_max_range=1.2)
+    result=c.camera_command(settings,expected_generation=0)
+    assert result['success'] and result['camera']['camera_height']==.31
+    assert result['camera']['camera_pitch']==settings['camera_pitch'] and result['camera']['revision']==1
+    assert c.stage.calls==[] and c.map_data==before_map and c.simulation_robot.pose==pose
+    saved=json.loads(Path(c.p['vision_config']).read_text())['project_perception']['ros__parameters']
+    assert saved['camera_height']==saved['horizontal_fov']==0. and saved['use_pitch_override'] is False
+    assert saved['camera_min_range']==.6 and saved['camera_max_range']==1.2
+    scene=json.loads((tmp_path/'scenarios/current.json').read_text())
+    assert scene['camera']['camera_height']==.31
+    assert c.simulation_snapshot()['simulation_camera']['camera_height']==.31
+
+
+def test_physical_camera_change_restarts_mission_to_clear_old_target_evidence(tmp_path):
+    c=Console(tmp_path,phase='mission');c.state.update(state='COMPLETE',target={'x':999.})
+    c.selected_map=dict(id='saved/map.yaml',path='/fixture/saved/map.yaml',quality='mapped')
+    result=c.camera_command(dict(default_camera_settings(),camera_height=.31))
+    assert result['success'] and c.stage.calls==['stop',('launch','mission','/fixture/saved/map.yaml')]
+    assert c.state['target'] is None and c.target_estimate is None and c.result_data is None
+    assert c.record.snapshot()['includes_mapping'] is False and not c.initial_pose_sent
+
+
+def test_saved_physical_camera_is_restored_and_not_reset_by_random_map(tmp_path):
+    c=Console(tmp_path)
+    c.camera_command(dict(default_camera_settings(),camera_height=.31,camera_pitch=.49))
+    c.scenario_command(dict(action='random_map',seed=8))
+    restored=Console(tmp_path)
+    assert restored.camera_get()['camera']['camera_height']==.31
+    assert restored.camera_get()['camera']['camera_pitch']==.49
+    assert restored.vision_settings['camera_height']==0.
+
+
+def test_active_physical_camera_change_is_rejected_before_world_or_stage_changes(tmp_path):
+    c=Console(tmp_path);c.state['state']='SEARCHING';c.simulation_robot.calls.clear()
+    with pytest.raises(ValueError,match='Stop'):
+        c.camera_command(dict(default_camera_settings(),camera_height=.31))
+    assert c.stage.calls==[] and c.simulation_robot.calls==[]
+    assert c.camera_get()['camera']['camera_height']==.22

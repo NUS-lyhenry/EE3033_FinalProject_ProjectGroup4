@@ -23,7 +23,6 @@ from rclpy.parameter import Parameter
 from ee3033_project.console import Console
 from simulation_robot import SimulatedRobot
 from simulation_control import SimulationScenarioControl
-from simulation_geometry import CAMERA_OFFSET, PITCH
 
 
 class SimulationConsole(SimulationScenarioControl,Console):
@@ -32,14 +31,13 @@ class SimulationConsole(SimulationScenarioControl,Console):
         data.update(simulated=True, preview_interactive=True, preview_backend='main-ros',
             preview_hint='Current main programs with SLAM, Nav2 and YOLO; only sensors and the chassis are simplified. Original speeds and timeouts are retained.')
         data.update(self.simulation_snapshot())
-        data['simulation_camera']=dict(height_m=float(CAMERA_OFFSET[2]),
-            forward_m=float(CAMERA_OFFSET[0]),pitch_deg=math.degrees(PITCH))
         return data
 
     def workflow_get(self, path):
         data = super().workflow_get(path)
         if path == '/api/result':
             data.update(simulated=True, simulation_notice='Real main algorithms with simulated sensors/kinematics; not physical test evidence.')
+            data.update(self.simulation_snapshot())
         return data
 
 
@@ -60,8 +58,9 @@ def proxy(console, public_port):
             if origin and origin not in (f'http://127.0.0.1:{public_port}', f'http://localhost:{public_port}'):
                 self.send_error(403)
                 return
-            if urlparse(self.path).path=='/api/simulation_scenario':
-                return self.scenario(length)
+            scenario_path=urlparse(self.path).path
+            if scenario_path in ('/api/simulation_scenario','/api/simulation_camera'):
+                return self.scenario(length,scenario_path)
             headers = {k: v for k, v in self.headers.items() if k.lower() not in ('host', 'origin', 'connection')}
             if origin:
                 headers['Origin'] = f'http://127.0.0.1:{console_port}'
@@ -82,7 +81,7 @@ def proxy(console, public_port):
             finally:
                 client.close()
 
-        def scenario(self,length):
+        def scenario(self,length,path):
             def reply(code,data):
                 body=json.dumps(data,allow_nan=False).encode()
                 self.send_response(code)
@@ -90,7 +89,7 @@ def proxy(console, public_port):
                             ('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')]:
                     self.send_header(k,v)
                 self.end_headers();self.wfile.write(body)
-            if self.command=='GET':return reply(200,console.scenario_get())
+            if self.command=='GET':return reply(200,console.camera_get() if path=='/api/simulation_camera' else console.scenario_get())
             if not secrets.compare_digest(self.headers.get('X-Project-Token',''),console.token):
                 return reply(403,dict(error='Missing simulation console session token'))
             try:
@@ -99,7 +98,8 @@ def proxy(console, public_port):
                     generation=self.headers.get('X-Control-Generation')
                     if generation!=str(console.control_generation):
                         raise ValueError('Control context changed; refresh before changing the scenario')
-                    result=console.scenario_command(body,expected_generation=int(generation))
+                    action=console.camera_command if path=='/api/simulation_camera' else console.scenario_command
+                    result=action(body,expected_generation=int(generation))
                 return reply(200,result)
             except (ValueError,TypeError,KeyError) as exc:return reply(400,dict(error=str(exc)))
             except (OSError,RuntimeError) as exc:return reply(503,dict(error=str(exc)))
