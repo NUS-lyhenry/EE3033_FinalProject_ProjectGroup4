@@ -17,8 +17,9 @@ from std_msgs.msg import String
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from ee3033_project.ros_utils import LATCHED, set_yaw
-from simulation_geometry import CAMERA_OFFSET, K, PITCH, clearance, raycast, render_camera
+from simulation_geometry import clearance, raycast, render_camera
 from simulation_scenarios import default_scenario,validate_scenario
+from simulation_camera import default_camera_settings,validate_camera_settings,camera_intrinsics
 
 
 class SimulatedRobot(Node):
@@ -31,6 +32,9 @@ class SimulatedRobot(Node):
         self.phase = 'mapping'
         self.world_lock=threading.RLock()
         self.accept_commands=True
+        self.camera=default_camera_settings()
+        self.camera_k=camera_intrinsics(self.camera)
+        self.camera_k.setflags(write=False)
         self.scene_status_after=-math.inf
         self.scene=validate_scenario(scenario or default_scenario())
         self.walls=np.asarray(self.scene['walls'],dtype=float)
@@ -41,19 +45,8 @@ class SimulatedRobot(Node):
             raise ValueError('A real target photograph is required for camera rendering')
         self.bridge = CvBridge()
         self.tf = TransformBroadcaster(self)
-        static = StaticTransformBroadcaster(self)
-        transforms = []
-        for child, xyz, rotation in [('preview_laser', [0., 0., .12], [0., 0., 0.]),
-                                      ('camera_link', CAMERA_OFFSET, [0., PITCH, 0.])]:
-            t = TransformStamped()
-            t.header.frame_id, t.child_frame_id = 'base_footprint', child
-            t.header.stamp = self.get_clock().now().to_msg()
-            t.transform.translation.x, t.transform.translation.y, t.transform.translation.z = map(float, xyz)
-            q = Rotation.from_euler('xyz', rotation).as_quat()
-            t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w = map(float, q)
-            transforms.append(t)
-        self.static = static
-        static.sendTransform(transforms)
+        self.static = StaticTransformBroadcaster(self)
+        self.publish_camera_transforms(self.camera)
         self.scan = self.create_publisher(LaserScan, '/scan', qos_profile_sensor_data)
         self.odom = self.create_publisher(Odometry, '/odom', qos_profile_sensor_data)
         from sensor_msgs.msg import Image
@@ -64,6 +57,36 @@ class SimulatedRobot(Node):
         self.create_timer(.02, self.tick)
         self.create_timer(.1, self.scan_tick)
         self.create_timer(.2, self.camera_tick)
+
+    def camera_settings(self):
+        with self.world_lock:return dict(self.camera)
+
+    def publish_camera_transforms(self,camera):
+        # Re-emit every transform owned by this static publisher. Updating the
+        # camera must never drop the laser transform for late subscribers.
+        transforms=[]
+        mount=[camera['camera_x'],camera['camera_y'],camera['camera_height']]
+        for child,xyz,euler in [('preview_laser',[0.,0.,.12],[0.,0.,0.]),
+                ('camera_link',mount,[0.,camera['camera_pitch'],camera['camera_yaw']])]:
+            t=TransformStamped()
+            t.header.frame_id,t.child_frame_id='base_footprint',child
+            t.header.stamp=self.get_clock().now().to_msg()
+            t.transform.translation.x,t.transform.translation.y,t.transform.translation.z=map(float,xyz)
+            q=Rotation.from_euler('xyz',euler).as_quat()
+            t.transform.rotation.x,t.transform.rotation.y,t.transform.rotation.z,t.transform.rotation.w=map(float,q)
+            transforms.append(t)
+        self.static.sendTransform(transforms)
+
+    def apply_camera(self,settings):
+        camera=validate_camera_settings(settings)
+        k=camera_intrinsics(camera)
+        k.setflags(write=False)
+        with self.world_lock:
+            if self.accept_commands:
+                raise RuntimeError('Pause simulated motion before replacing the camera')
+            self.publish_camera_transforms(camera)
+            self.camera,self.camera_k=dict(camera),k
+            return dict(camera)
 
     def on_command(self, msg):
         with self.world_lock:
@@ -156,8 +179,12 @@ class SimulatedRobot(Node):
         self.scan.publish(msg)
 
     def camera_tick(self):
-        with self.world_lock:
-            frame = render_camera(self.pose, self.texture, self.phase == 'mission',self.walls,self.target)
+        # Keep rendered pixels and their CameraInfo in one camera generation,
+        # including publication, while a concurrent form save changes the mount.
+        with self.world_lock:self.publish_camera()
+
+    def publish_camera(self):
+        frame = render_camera(self.pose, self.texture, self.phase == 'mission',self.walls,self.target,self.camera)
         image = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
         image.header.stamp = self.get_clock().now().to_msg()
         image.header.frame_id = 'project_camera_optical'
@@ -165,6 +192,6 @@ class SimulatedRobot(Node):
         info.header = image.header
         info.width, info.height = 640, 480
         info.distortion_model = 'plumb_bob'
-        info.k, info.d = K.ravel().tolist(), [0.]*5
+        info.k, info.d = self.camera_k.ravel().tolist(), [0.]*5
         self.info.publish(info)
         self.image.publish(image)
