@@ -7,6 +7,7 @@ let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
 let modelLabels=null,labelKey='',labelsBusy=false;
 let scanFilter=null,scanFilterDirty=false,scanFilterBusy=false,scanFilterError=null,scanFilterRequest=0;
+let attitude=null,attitudeDirty=false,attitudeBusy=false;
 let waypointDraft=null;
 let coordinateMethodChosen=false,lastSavedMapId=null;
 let measuring=false,measurement=null;
@@ -167,11 +168,12 @@ function render(){
   $('timerNote').textContent=a.interrupted?'Interrupted · timing invalid':a.finished!=null?'Finished':a.running?(a.timing_valid?'Both stages · running':'Search only · mapping not timed'):'Starts when mapping loads';
   const estimate=m.target?{...m.target,label:m.target.class,sigma:m.target.sigma??Math.sqrt(m.target.variance),confirmed:true}:s.target_estimate,shownTarget=estimate;
   $('target').textContent=shownTarget?`${fmt(shownTarget.x)}, ${fmt(shownTarget.y)} m`:'—, — m';
-  $('confidence').textContent=m.target?`${m.target.class||s.mission_options?.target_class||'Target'} · ${m.target.confidence!=null?Math.round(m.target.confidence*100)+'% confidence':'confirmed'}${Number.isFinite(m.target.variance)?' · σ '+fmt(Math.sqrt(m.target.variance))+' m':''}`:estimate?`Estimated ${estimate.label} · σ ${fmt(estimate.sigma)} m · ${estimate.samples} observations${estimate.stale?' · last seen '+fmt(estimate.age,1)+' s ago':''}`:'Waiting for estimated or confirmed coordinates';
+  $('confidence').textContent=m.target?`${m.target.class||s.mission_options?.target_class||'Target'} · ${m.target.confidence!=null?Math.round(m.target.confidence*100)+'% detector confidence':'detected'}${Number.isFinite(m.target.variance)?' · position σ '+fmt(Math.sqrt(m.target.variance))+' m':''}`:estimate?`Estimated ${estimate.label} · position σ ${fmt(estimate.sigma)} m · ${estimate.samples} observations${estimate.stale?' · last seen '+fmt(estimate.age,1)+' s ago':''}`:'Waiting for estimated or confirmed coordinates';
   $('targetEstimateStatus').textContent=estimate?`Estimated ${estimate.label}: (${fmt(estimate.x)}, ${fmt(estimate.y)}) m · σ ${fmt(estimate.sigma)} m · ${estimate.stale?'last seen '+fmt(estimate.age,1)+' s ago':'updating'} · ${estimate.confirmed?'accepted':estimate.prior_conflict?'map / observation conflict; cannot accept':estimate.stable?'stable MMSE estimate':'collecting stable MMSE observations'}`:s.perception?.detected_candidates?'Target visible; position unavailable.':'No estimated target position yet.';
   $('measureMap').disabled=!mapData;
   updateMeasurementStatus();
   if(m.target?.quality==='best_available')$('confidence').textContent+=' · Best stable estimate; preferred precision not reached';
+  else if(m.target?.quality==='approximate')$('confidence').textContent+=' · Approximate position estimate';
   const distance=m.return_distance??(s.pose&&m.home?Math.hypot(s.pose[0]-m.home[0],s.pose[1]-m.home[1]):null);
   $('distance').textContent=distance!=null?`${fmt(distance)} m`:'— m';
   $('returnStatus').textContent=m.return_verified?'Home position verified':m.home?`Required tolerance ${fmt(m.return_tolerance??s.mission_options?.return_tolerance??.2)} m`:'Home is recorded at mission Start';
@@ -203,8 +205,11 @@ function render(){
   const labelReady=modelLabels?.ready===true&&modelLabels.labels.includes($('targetClass').value);
   const targetChanged=s.phase==='mission'&&$('targetClass').value!==s.mission_options?.target_class;
   const mmseReady=s.mission_options?.preferred_target_sigma!=null||m.preferred_target_sigma!=null;
-  const settingsChanged=targetChanged||s.phase==='mission'&&(mmseReady&&Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2));
-  const validSettings=$('preferredSigma').checkValidity()&&$('preferredSigma').value!==''&&$('returnTolerance').checkValidity()&&$('returnTolerance').value!=='';
+  const abReady=s.mission_options?.enable_ab_maneuver!=null,acquisitionReady=s.mission_options?.acquisition_seconds!=null;
+  const abChanged=abReady&&$('enableAbManeuver').checked!==s.mission_options.enable_ab_maneuver;
+  const acquisitionChanged=acquisitionReady&&Number($('acquisitionSeconds').value)!==s.mission_options.acquisition_seconds;
+  const settingsChanged=targetChanged||s.phase==='mission'&&(mmseReady&&Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2)||abChanged||acquisitionChanged);
+  const validSettings=$('preferredSigma').checkValidity()&&$('preferredSigma').value!==''&&$('returnTolerance').checkValidity()&&$('returnTolerance').value!==''&&$('acquisitionSeconds').checkValidity()&&$('acquisitionSeconds').value!=='';
   const searchEnded=['COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'].includes(m.state);
   $('loadMission').hidden=!managed||(currentPage==='workflow'&&!settingsChanged&&!searchEnded);
   $('loadMission').textContent=settingsChanged?'Apply settings & reload mission':searchEnded?'Reload map & set start pose':'Load selected map for mission';
@@ -224,6 +229,9 @@ function render(){
   ['poseX','poseY','poseYaw'].forEach(id=>$(id).disabled=!poseAllowed);
   $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
   ['targetClass','localizationMethod','returnTolerance','preferredSigma'].forEach(id=>$(id).disabled=!idle);
+  $('acquisitionSeconds').disabled=!idle||!acquisitionReady;
+  $('enableAbManeuver').disabled=!idle||!abReady;
+  $('missionAdvanced').title=!abReady||!acquisitionReady?'Robot software update required for advanced mission options':'';
   $('preferredSigma').disabled=!idle||!mmseReady;
   $('preferredSigmaHelp').textContent=mmseReady?'Soft goal, not guaranteed error. After bounded refinement, the best stable estimate can still be accepted.':'Robot software update required to apply MMSE precision settings.';
   $('targetClass').disabled=!idle||!modelLabels?.ready;
@@ -236,7 +244,9 @@ function render(){
   $('localizationProgress').hidden=s.phase!=='mission'||!m.target_detected;
   const sites=m.bearing_progress?.sites||[];
   const viewProgress=sites.map((v,i)=>`${'ABC'[i]||'View'}: ${v.ready?'ready':`${v.frames||0}/4 frames`}`).join(' · ');
-  $('localizationProgress').textContent=`Precision work: ${fmt(m.localization_active_seconds??0,1)} / ${fmt(m.localization_budget_seconds??45,0)} s · Travel between views: ${fmt(m.localization_travel_seconds??0,1)} s${m.localization_stage?' · '+m.localization_stage:''}${viewProgress?' · '+viewProgress:''}`;
+  const acquisitionElapsed=Number.isFinite(m.localization_elapsed_seconds)?fmt(m.localization_elapsed_seconds,1):'—';
+  const acquisitionBudget=m.acquisition_seconds??s.mission_options?.acquisition_seconds??90;
+  $('localizationProgress').textContent=`Target acquisition: ${acquisitionElapsed} / ${fmt(acquisitionBudget,0)} s wall time (includes travel) · work ${fmt(m.localization_work_seconds??m.localization_active_seconds??0,1)} s · travel ${fmt(m.localization_travel_seconds??0,1)} s${m.localization_stage?' · '+m.localization_stage:''}${viewProgress?' · '+viewProgress:''}`;
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
   setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
   setPill('missionBadge',mapping?'Awaiting map':m.state==='COMPLETE'?'Complete':active?'In progress':'Setup',m.state==='COMPLETE'?'good':'');
@@ -244,12 +254,21 @@ function render(){
   ['stepMap','stepPose','stepSearch','stepReturn'].forEach((id,i)=>{$(id).className=i===currentStep?'current':i<currentStep?'done':'';});
   if(m.state==='COMPLETE'&&m.return_verified)$('stepReturn').className='done';
   $('resultTarget').textContent=m.target?`(${fmt(m.target.x)}, ${fmt(m.target.y)}) m`:'Awaiting target';
-  if(m.target?.quality==='best_available')$('resultTarget').textContent+=' · approximate estimate';
+  if(['best_available','approximate'].includes(m.target?.quality))$('resultTarget').textContent+=' · approximate estimate';
+  const positionConfidence=m.target?.position_confidence,confidenceRadius=m.target?.confidence_radius_m??.2;
+  const targetAge=Number.isFinite(m.target?.age)?m.target.age:estimate?.age;
+  const targetStale=m.target?.stale===true||estimate?.stale===true;
+  $('resultPositionConfidence').textContent=Number.isFinite(positionConfidence)&&positionConfidence>=0&&positionConfidence<=1
+    ?`${Math.round(positionConfidence*100)}% within ${fmt(confidenceRadius)} m${targetStale?' · stale':''}${Number.isFinite(targetAge)?` · ${fmt(targetAge,1)} s old`:''}`:'Unavailable';
   $('resultReturn').textContent=m.return_verified?`Verified · ${fmt(distance)} m`:m.state==='RETURNING'?'Returning…':'Pending';
   $('resultStop').textContent=m.return_verified?'Verified stationary':m.state==='VERIFYING'?`Checking ${fmt(m.stationary_check?.duration??0,1)} / ${fmt(m.stationary_required_seconds??2,1)} s…`:m.state==='FAILED'&&m.stationary_check?'Not verified':'Pending';
-  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?'Complete':m.state==='FOUND_UNLOCALIZED'?'Target found · position unavailable':m.state==='SEARCH_INCOMPLETE'?'Search incomplete':m.state==='NOT_FOUND'?'Search completed · target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?'Stopped':'Trial not complete';
-  $('resultReason').textContent=(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
-  if(m.target?.quality==='best_available')$('resultReason').textContent+=` · Best stable estimate: uncertainty σ ${fmt(m.target.sigma??Math.sqrt(m.target.variance))} m; preferred ${fmt(m.target.preferred_sigma)} m.`;
+  const estimatedQuality=['best_available','approximate'].includes(m.target?.quality);
+  const estimatedOutcome=estimatedQuality&&Number.isFinite(positionConfidence)&&positionConfidence>=0&&positionConfidence<=1
+    ?`Complete · estimated confidence ${Math.round(positionConfidence*100)}% within ${fmt(confidenceRadius)} m`:'Complete';
+  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?estimatedOutcome:m.state==='FOUND_UNLOCALIZED'?'Target found · position unavailable':m.state==='SEARCH_INCOMPLETE'?'Search incomplete':m.state==='NOT_FOUND'?'Search completed · target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?(m.internal_error||m.safety_error||m.safety_errors?.length?'Stopped · safety error':'Stopped'):'Trial not complete';
+  $('resultReason').textContent=(m.state==='STOPPED'&&(m.internal_error||m.reason))||(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
+  if(['best_available','approximate'].includes(m.target?.quality))$('resultReason').textContent+=` · Approximate estimate: uncertainty σ ${fmt(m.target.sigma??Math.sqrt(m.target.variance))} m; preferred ${fmt(m.target.preferred_sigma)} m.`;
+  else if(Number.isFinite(m.target?.sigma))$('resultReason').textContent+=` · Position σ ${fmt(m.target.sigma)} m.`;
   const p=s.perception;
   if(currentPage==='workflow'){
     document.querySelector('.metrics').hidden=mapping;
@@ -310,6 +329,7 @@ function renderParameters(){
   $('applyTrial').disabled=!idle||!fresh||!trial||!trialDirty||parametersBusy;
   $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes — press Apply.':trial?.fault||'Temporary until restart. Adjust only while stopped.';
   if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
+  renderAttitude();
 }
 function renderScanFilter(){
   const data=scanFilter||snapshot?.scan_filter;
@@ -323,6 +343,43 @@ function renderScanFilter(){
   const live=scanFilter?.live_value;
   $('scanFilterLive').textContent=scanFilterError?'Live: unverified':Number.isFinite(live)?`Live: ${fmt(live*100,1)} cm · ${scanFilter.synchronized?'readback matches saved':'readback differs from saved'}`:live===null&&!running()?'Live: no stage loaded':'Live: unavailable';
   $('scanFilterStatus').textContent=scanFilterBusy?'Saving and checking readback…':scanFilterError||data?.fault||(scanFilterDirty?'Unsaved change — press Save.':data?.message||(data?(data.live_value===null&&!running()?'Saved for next stage.':data.synchronized?'Saved and live readback match.':'Waiting for live readback.'):'Reading filter settings.'));
+}
+function renderAttitude(){
+  const a=attitude||snapshot?.attitude||{},mode=$('attitudeMode').value;
+  if(!attitudeDirty&&!attitudeBusy){
+    if(a.mode)$('attitudeMode').value=a.mode;
+    if(Array.isArray(a.pivot))[$('attitudeX').value,$('attitudeY').value,$('attitudeZ').value]=a.pivot.map(v=>String(v));
+  }
+  const editable=setupIdle()&&a.editable===true&&!attitudeBusy;
+  $('attitudeMode').disabled=!editable;
+  ['attitudeX','attitudeY','attitudeZ'].forEach(id=>$(id).disabled=!editable||(mode==='controller'&&id==='attitudeX'));
+  if(mode==='controller'&&!attitudeDirty)$('attitudeX').value='-0.01';
+  $('saveAttitude').disabled=!editable||!attitudeDirty;
+  $('referenceAttitude').disabled=!editable||mode!=='controller';
+  const ref=a.reference;
+  const refText=a.mode==='fixed'?'Controller reference not required in fixed mode':ref?.valid?`Reference captured · roll ${fmt(ref.roll*180/Math.PI,1)}° · pitch ${fmt(ref.pitch*180/Math.PI,1)}° · ${ref.samples} samples`:'No valid controller reference';
+  const sample=a.mode==='controller'?(a.sample?`Live ${a.sample.frame||'attitude'} · ${fmt(a.sample.age,2)} s old`:'No live attitude sample'):'';
+  $('attitudeStatus').textContent=attitudeBusy?'Saving and checking attitude settings…':`${a.reason?a.reason+' · ':''}${a.mode||'Not configured'} · ${refText}${sample?' · '+sample:''}${a.requires_reload?' · reload mission stage to apply':''}`;
+}
+['attitudeMode','attitudeX','attitudeY','attitudeZ'].forEach(id=>$(id).addEventListener(id==='attitudeMode'?'change':'input',()=>{attitudeDirty=true;if(id==='attitudeMode'&&$('attitudeMode').value==='controller')$('attitudeX').value='-0.01';renderAttitude();}));
+$('saveAttitude').onclick=async()=>{
+  const mode=$('attitudeMode').value;
+  const pivot=mode==='controller'?[-.01,Number($('attitudeY').value),Number($('attitudeZ').value)]:[$('attitudeX').value,$('attitudeY').value,$('attitudeZ').value].map(Number);
+  if(!pivot.every(Number.isFinite)){feedback('Enter finite pivot coordinates.',true);return;}
+  attitudeBusy=true;renderAttitude();
+  try{attitude=await action('attitude',{action:'configure',mode,pivot});attitudeDirty=false;}
+  catch(_){}
+  finally{attitudeBusy=false;renderAttitude();}
+};
+$('referenceAttitude').onclick=async()=>{
+  attitudeBusy=true;renderAttitude();
+  try{attitude=await action('attitude',{action:'reference'});attitudeDirty=false;}
+  catch(_){}
+  finally{attitudeBusy=false;renderAttitude();}
+};
+async function pollAttitude(){
+  if(online&&!busy&&!attitudeBusy){const generation=snapshot?.control_generation;try{const a=await get('attitude');if(generation===snapshot?.control_generation){attitude=a;if(!attitudeDirty)attitudeDirty=false;}}catch(e){attitude={reason:e.message,editable:false,ready:false};}renderAttitude();}
+  setTimeout(pollAttitude,4000);
 }
 async function pollScanFilter(){
   if(online&&!busy&&!scanFilterBusy&&!snapshot?.stage?.transitioning){
@@ -358,7 +415,7 @@ async function refreshMaps(preferred){
   if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}
   $('savedMaps').replaceChildren(...options);if(selected)$('savedMaps').value=selected;render();
 }
-async function loadStage(phase){const body={phase};if(phase==='mission')Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value),preferred_target_sigma:Number($('preferredSigma').value)});const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
+async function loadStage(phase){const body={phase};if(phase==='mission'){Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value),preferred_target_sigma:Number($('preferredSigma').value)});if(snapshot?.mission_options?.enable_ab_maneuver!=null&&snapshot?.mission_options?.acquisition_seconds!=null)Object.assign(body,{enable_ab_maneuver:$('enableAbManeuver').checked,acquisition_seconds:Number($('acquisitionSeconds').value)});}const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
 $('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
 $('useSavedMap').onclick=()=>loadStage('mission').catch(()=>{});
 $('start').onclick=async()=>{const serial=++workflowSerial;try{
@@ -382,7 +439,7 @@ $('retrySearch').onclick=()=>action('retry_search').catch(()=>{});
 $('newTrial').onclick=()=>action('new_trial').then(()=>showPage('workflow')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
 $('loadCalibration').onclick=()=>action('stage',{phase:'calibration',map_id:chosenMap()?.reviewed?chosenMap().id:undefined}).then(()=>showPage('calibration')).catch(()=>{});
 $('targetClass').onchange=render;
-['preferredSigma','returnTolerance'].forEach(id=>$(id).oninput=render);
+['preferredSigma','returnTolerance','acquisitionSeconds'].forEach(id=>$(id).oninput=render);$('enableAbManeuver').onchange=render;
 $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
@@ -412,7 +469,7 @@ async function pollParameters(){
 async function poll(){
   try{const s=await get('state');snapshot=s;online=true;
     if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;scanFilter=null;scanFilterDirty=false;scanFilterError=null;scanFilterRequest++;paramTime=0;trialDirty=false;waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
-    if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;$('preferredSigma').value=s.mission_options.preferred_target_sigma??.1;}}
+    if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;$('preferredSigma').value=s.mission_options.preferred_target_sigma??.1;$('enableAbManeuver').checked=s.mission_options.enable_ab_maneuver===true;$('acquisitionSeconds').value=String(s.mission_options.acquisition_seconds??90);}}
     if(s.map_revision!==mapRevision){mapRevision=s.map_revision;renderMap(await get('map'));}
     render();
   }catch(e){online=false;releaseDrive();if(snapshot)render();else{$('connection').textContent='Disconnected';$('connectionBanner').hidden=false;}feedback(e.message,true);}
@@ -478,4 +535,4 @@ $('map').onpointerdown=e=>{const mode=measuring?'measure':(currentPage==='mappin
 $('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
 $('map').onpointerup=()=>{if(!drag)return;if(drag.mode==='measure'){const moved=Math.hypot(drag.end[0]-drag.press[0],drag.end[1]-drag.press[1])*$('map').getBoundingClientRect().width/mapData.width;measurement={start:worldPoint(...drag.start),end:moved>4||drag.continued?worldPoint(...drag.end):null};drag=null;updateMeasurementStatus();draw();return;}const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else if(mode==='calBottle'){$('calBottleX').value=a[0].toFixed(3);$('calBottleY').value=a[1].toFixed(3);action('calibration_target',{x:a[0],y:a[1],map_id:snapshot.selected_map?.id}).catch(()=>{});}else if(mode==='calPose'){$('calPoseX').value=a[0].toFixed(2);$('calPoseY').value=a[1].toFixed(2);$('calPoseYaw').value=yaw.toFixed(0);feedback('Robot pose selected. Press Set robot pose on calibration map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
 $('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);
-poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollScanFilter,1000);setTimeout(pollLabels,500);cameraTick();
+poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollScanFilter,1000);setTimeout(pollAttitude,1300);setTimeout(pollLabels,500);cameraTick();

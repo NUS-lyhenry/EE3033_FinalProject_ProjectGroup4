@@ -16,7 +16,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, Vector3Stamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from cv_bridge import CvBridge
@@ -29,6 +29,8 @@ from .model_labels import validate_target
 from .calibration import load_profile, mounting_rotation, floor_point, in_envelope
 from .vision_geometry import FloorCamera, camera_matrix, override_pitch
 from .capture_frame import CaptureFrameGate
+from .attitude_geometry import (ATTITUDE_TOPIC, AttitudeBuffer, load_config,
+                               reference_valid, compensated_mount)
 
 
 class Perception(Node):
@@ -53,10 +55,14 @@ class Perception(Node):
             'observation_window': .6, 'observation_linear_mean': .05,
             'observation_angular_mean': .12, 'observation_position_span': .04,
             'observation_heading_span': .10,
+            'attitude_config': '',
         })
         if self.p['localization_method'] not in ('lidar', 'ground_plane', 'hybrid'):
             raise ValueError('localization_method must be lidar, ground_plane or hybrid')
         self.calibration = load_profile(self.p['calibration_file']) if self.p['calibration_file'] else None
+        self.attitude_config = load_config(self.p['attitude_config'])
+        self.attitude_buffer = AttitudeBuffer()
+        self.attitude_check = {'mode': self.attitude_config['mode'], 'valid': self.attitude_config['mode'] == 'fixed'}
         self.model = self.load_detector()
         validate_target(self.model.names,self.p['target_class'])
         self.bridge = CvBridge()
@@ -91,6 +97,9 @@ class Perception(Node):
                                      qos_profile_sensor_data, callback_group=group)
         self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_pose, 10, callback_group=group)
         self.create_subscription(Odometry, '/odom', self.on_odometry, qos_profile_sensor_data, callback_group=group)
+        if self.attitude_config['mode'] == 'controller':
+            self.create_subscription(Vector3Stamped, ATTITUDE_TOPIC, self.on_attitude,
+                                     qos_profile_sensor_data, callback_group=group)
         self.image_pub = self.create_publisher(Image, '/project/detection_image',
                                                 qos_profile_sensor_data)
         self.obs_pub = self.create_publisher(String, '/project/target_observations', 10)
@@ -120,6 +129,36 @@ class Perception(Node):
     def on_scan(self, msg):
         with self.lock:
             self.scans.append(msg)
+
+    def on_attitude(self, msg):
+        with self.lock:
+            self.attitude_buffer.add(stamp_seconds(msg.header.stamp), msg.vector.x,
+                                     msg.vector.y, msg.header.frame_id)
+
+    def capture_attitude(self, stamp):
+        config = self.attitude_config
+        self.attitude_check = dict(mode=config['mode'], valid=config['mode'] == 'fixed',
+                                   topic=ATTITUDE_TOPIC, capture_stamp=stamp)
+        if config['mode'] == 'fixed':
+            return None
+        try:
+            if not reference_valid(config, self.p):
+                raise ValueError('attitude_reference_missing_or_mount_changed')
+            with self.lock:
+                self.attitude_buffer.latest(self.get_clock().now().nanoseconds*1e-9)
+                sample = self.attitude_buffer.at(stamp)
+            self.attitude_check.update(sample, valid=True)
+            return sample
+        except ValueError as exc:
+            self.attitude_check.update(valid=False, reason=str(exc))
+            raise
+
+    def attitude_ready(self, stamp):
+        try:
+            self.capture_attitude(stamp)
+            return True
+        except ValueError:
+            return False
 
     def on_pose(self, msg):
         c = msg.pose.covariance
@@ -154,7 +193,8 @@ class Perception(Node):
             detector_confidence_threshold=self.p['confidence'],motion_check=self.motion_check,
             odometry_age=self.last_odometry_age,detections=list(detections)[:16],
             detection_count=len(detections),detections_truncated=len(detections)>16,
-            reason_codes=list(reason_codes),error=error)
+            reason_codes=list(reason_codes),error=error,
+            attitude=getattr(self, 'attitude_check', None))
 
     def camera_geometry(self, image, camera):
         if not image.header.frame_id:
@@ -191,9 +231,24 @@ class Perception(Node):
                 if self.p.get('use_pitch_override', False):
                     rotation = override_pitch(rotation, self.p['camera_pitch'])
                     source += ' + explicit pitch override (unverified)'
+        sample = self.capture_attitude(stamp_seconds(image.header.stamp))
+        pivot = None
+        if sample is not None:
+            reference = self.attitude_config['reference']
+            pivot = self.attitude_config['pivot']
+            rotation, translation = compensated_mount(reference['rotation'],
+                reference['translation'], pivot, (reference['roll'], reference['pitch']),
+                (sample['roll'], sample['pitch']))
+            source += ' + capture-time controller roll/pitch and measured wheel pivot'
         geometry = FloorCamera(image.width, image.height, k, d, rotation, translation, source,
             self.p['camera_min_range'], self.p['camera_max_range'], self.p['pixel_margin'],
             self.p['pixel_sigma'], self.p['height_sigma'], self.p['pitch_sigma'])
+        if pivot is not None:
+            # Controller interpolation does not remove mounting uncertainty.
+            # Add a timing term and roll sensitivity, rotating the lever too.
+            geometry.attitude_pivot = list(pivot)
+            geometry.roll_sigma = self.p['pitch_sigma']
+            geometry.pitch_sigma = math.hypot(geometry.pitch_sigma, sample['rate']*.02)
         if profile:
             geometry.min_range = max(geometry.min_range, profile['range_m'][0]-.05)
             geometry.max_range = min(geometry.max_range, profile['range_m'][1]+.05)
@@ -207,7 +262,8 @@ class Perception(Node):
             self.last_warning = time.monotonic()
 
     def locate(self, box, image, camera, scans):
-        if self.p['localization_method'] in ('ground_plane', 'hybrid') and self.calibration is not None:
+        if (self.p['localization_method'] in ('ground_plane', 'hybrid') and self.calibration is not None
+                and getattr(self, 'attitude_config', {'mode': 'fixed'})['mode'] == 'fixed'):
             profile = self.calibration
             c = profile['camera']
             if (c['width'], c['height'], c['frame_id']) != (image.width, image.height, image.header.frame_id):
@@ -297,7 +353,7 @@ class Perception(Node):
                 return True  # Preserve the existing stale-frame diagnostics.
             try:
                 return self.buffer.can_transform(self.p['map_frame'], self.p['base_frame'],
-                                                 Time.from_msg(frame.header.stamp))
+                                                 Time.from_msg(frame.header.stamp)) and self.attitude_ready(stamp)
             except (TransformException, ValueError):
                 return True  # The normal detection path records the error.
         image = self.capture_frame_gate.select(image, capture_transform_ready)
@@ -345,7 +401,8 @@ class Perception(Node):
                 detection = {'stamp': stamp, 'label': label, 'confidence': float(b.conf.item()),
                              'box': box.tolist(), 'reason': geometry_error,'reason_codes':[],
                              'settled':self.settled(),'motion_check':self.motion_check,
-                             'frame_age':self.get_clock().now().nanoseconds*1e-9-stamp}
+                             'frame_age':self.get_clock().now().nanoseconds*1e-9-stamp,
+                             'attitude':dict(self.attitude_check)}
                 if box[0]<self.p['pixel_margin'] or box[2]>image.width-self.p['pixel_margin']:
                     detection['reason_codes'].append('bearing_horizontal_clipping')
                 if box[1]<self.p['pixel_margin'] or box[3]>image.height-self.p['pixel_margin']:
@@ -388,7 +445,9 @@ class Perception(Node):
                         optical_direction = self.floor_camera.rotation@np.r_[ray, 1.]
                         center_error = angle_difference(math.atan2(optical_direction[1], optical_direction[0]),self.floor_camera.yaw)
                         detection.update(center_error=center_error, settled=self.settled(),
-                            bearing_sigma=math.sqrt((self.p['pixel_sigma']/self.floor_camera.k[0,0])**2+self.pose_variance[1]),
+                            bearing_sigma=math.sqrt((self.p['pixel_sigma']/self.floor_camera.k[0,0])**2+self.pose_variance[1]+
+                                (self.floor_camera.pitch_sigma**2+self.floor_camera.roll_sigma**2
+                                 if self.floor_camera.attitude_pivot is not None else 0.)),
                             position_sigma=math.sqrt(max(.0004, self.pose_variance[0])))
                         if abs(center_error)>math.radians(2.):detection['reason_codes'].append('bearing_not_centered')
                         detection['bearing_stage']='odom_transform'
@@ -474,6 +533,7 @@ class Perception(Node):
                 'odometry_age': self.last_odometry_age,
                 'quiet_seconds': time.monotonic()-self.quiet_since if self.quiet_since is not None else None,
                 'camera_model': self.floor_camera.metadata() if self.floor_camera is not None else None,
+                'attitude': self.attitude_check,
                 'calibration_file': self.p['calibration_file'] or None,
                 'localization_method': self.p['localization_method']})))
         except Exception as exc:

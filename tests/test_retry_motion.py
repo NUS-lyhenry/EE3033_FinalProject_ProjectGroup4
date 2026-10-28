@@ -34,9 +34,9 @@ def mission(goal,translation):
 def test_retry_keeps_original_translation_at_eleven_centimetres_and_excludes_travel(monkeypatch):
     goal=pose(-.30);m=mission(goal,True)
     assert m.goal_requires_translation(goal,'acquire',True,(-.19,0.,0.)) is True
-    # Without a retry, the historical .12 m threshold classifies this distance
-    # as a turn; preserving task identity is what prevents the work-time error.
-    assert m.goal_requires_translation(goal,'acquire',False,(-.19,0.,0.)) is False
+    # A short observation approach is now a translation too; it must actually
+    # move rather than being classified as another in-place turn.
+    assert m.goal_requires_translation(goal,'acquire',False,(-.19,0.,0.)) is True
     clock=[0.];monkeypatch.setattr(time,'monotonic',lambda:clock[0])
     m.update_localization_clock();clock[0]=10.;m.update_localization_clock()
     assert m.acquisition.travel_seconds==10. and m.acquisition.active_seconds==0.

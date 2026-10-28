@@ -10,6 +10,7 @@ import pytest
 
 from ee3033_project.core import quaternion_yaw,stamp_seconds
 from ee3033_project.stationary import StationaryWindow
+from ee3033_project.navigation_supervision import wrap
 
 
 ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
@@ -18,7 +19,7 @@ ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 def load_supervisor(clock=time):
     source=ROOT/'navigation_supervisor.py'
     cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef))
-    env=dict(Node=object,time=clock,threading=threading,math=math,StationaryWindow=StationaryWindow,
+    env=dict(Node=object,time=clock,threading=threading,math=math,wrap=wrap,StationaryWindow=StationaryWindow,
              rclpy=NS(ok=lambda:True),stamp_seconds=stamp_seconds,quaternion_yaw=quaternion_yaw,
              GoalStatus=NS(STATUS_SUCCEEDED=4,STATUS_CANCELED=5,STATUS_ABORTED=6),
              NavigateToPose=NS(Result=object))
@@ -28,6 +29,16 @@ def load_supervisor(clock=time):
 
 def completed(value):
     future=Future();future.set_result(value);return future
+
+
+@pytest.mark.parametrize('distance,yaw,arrived',[(.10,0.,False),(.026,0.,False),(.02,0.,True),(.02,.11,False)])
+def test_short_approach_requires_actual_translation_before_arrival(distance,yaw,arrived):
+    cls=load_supervisor();node=cls.__new__(cls)
+    node.pose=lambda:(0.,0.,0.);node.p={'xy_tolerance':.12}
+    q=NS(x=0.,y=0.,z=math.sin(yaw/2),w=math.cos(yaw/2))
+    request=NS(behavior_tree='navigate_approach.xml',
+        pose=NS(pose=NS(position=NS(x=distance,y=0.),orientation=q)))
+    assert node.reached_goal(request) is arrived
 
 
 def action_fixture():

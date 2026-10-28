@@ -246,8 +246,8 @@ class Integration(unittest.TestCase):
             # Allow any late acceptance/cancellation and terminal heartbeat to settle.
             time.sleep(0.7)
             expected = {'found':'COMPLETE','absent':'SEARCH_INCOMPLETE','search_abort':'SEARCH_INCOMPLETE',
-                        'stale':'FAILED','delayed_accept':'STOPPED',
-                        'false_home_success':'FAILED'}[scenario]
+                        'stale':'STOPPED','delayed_accept':'STOPPED',
+                        'false_home_success':'STOPPED'}[scenario]
             self.assertEqual(mission.state, expected, mission.summary())
             self.assertLessEqual(robot.max_active_goals,1)
             self.assertTrue(robot.commands)

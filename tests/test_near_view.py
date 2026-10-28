@@ -52,7 +52,7 @@ def test_bottom_crop_requests_reframe_without_an_invented_contact_range():
 
 
 def test_vertical_crop_with_valid_bearing_prioritizes_retreat_over_lateral_baseline():
-    target=SingleTarget();target.candidate=near_detection(reason_codes=['detection_vertical_clipping'])
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=near_detection(reason_codes=['detection_vertical_clipping'])
     goal=target.observation_goal(planner(),(2.,2.,0.),allowed=lambda x,y:True)
     assert goal and goal[0]<2. and goal[1]==pytest.approx(2.)
     assert math.dist(goal[:2],(2.,2.))==pytest.approx(.3)
@@ -89,7 +89,7 @@ def test_reframing_never_uses_invalid_floor_coordinates_as_the_target(monkeypatc
     def visible(*args,**kwargs):
         calls.append(kwargs);return NS(visible=True,reason='test clear')
     monkeypatch.setattr('ee3033_project.near_view.observation_visibility',visible)
-    target=SingleTarget();target.candidate=near_detection(x=999.,y=999.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=near_detection(x=999.,y=999.)
     assert target.observation_goal(planner(),(2.,2.,0.))
     assert calls and calls[0].get('target') is None and calls[0]['source_origin']==(2.,2.)
 
@@ -119,7 +119,7 @@ def test_invalid_reframe_geometry_rejects_without_crashing(field,value):
 def test_near_field_moves_are_bounded_without_spending_abc_stations(monkeypatch):
     monkeypatch.setattr('ee3033_project.near_view.observation_visibility',
         lambda *a,**kw:NS(visible=True,reason='test clear'))
-    target=SingleTarget();p=planner();pose=(2.,2.,0.)
+    target=SingleTarget(enable_ab_maneuver=True);p=planner();pose=(2.,2.,0.)
     for stamp in (10.,11.):
         d=near_detection();d['stamp']=stamp;d['origin']=list(pose[:2]);target.candidate=d
         goal=target.observation_goal(p,pose)
@@ -166,7 +166,7 @@ def test_legacy_coarse_far_point_remains_outside_the_accepted_measurement_range(
 
 
 def test_two_failed_framing_views_still_allow_valid_a_and_lateral_b():
-    target=SingleTarget();p=planner();pose=(2.,2.,0.)
+    target=SingleTarget(enable_ab_maneuver=True);p=planner();pose=(2.,2.,0.)
     for stamp in (10.,11.):
         d=near_detection();d['stamp']=stamp;d['origin']=list(pose[:2])
         target.candidate=d
@@ -188,7 +188,7 @@ def test_two_failed_framing_views_still_allow_valid_a_and_lateral_b():
 
 
 def test_repeated_near_view_does_not_duplicate_recovery_position():
-    target=SingleTarget();p=planner();pose=(2.,2.,0.)
+    target=SingleTarget(enable_ab_maneuver=True);p=planner();pose=(2.,2.,0.)
     target.candidate=near_detection()
     target.observation_goal(p,pose)
     target.observation_goal(p,pose)

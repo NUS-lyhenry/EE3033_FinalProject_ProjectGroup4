@@ -68,8 +68,9 @@ class Mission(Node):
             # Historical name retained: a preferred variance, not a rejection cap.
             'max_target_variance': 0.01, 'max_target_age': 2.0,
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
-            'min_observe_seconds': .8, 'acquisition_seconds': 45.,
+            'min_observe_seconds': .8, 'acquisition_seconds': 90.,
             'acquisition_steps': 5, 'navigation_profile': 'original',
+            'enable_ab_maneuver': False,
             'localize_wait_seconds': 2.,
             'home_behavior_tree': '',
         })
@@ -151,12 +152,16 @@ class Mission(Node):
         self.geometry_error = None
         self.geometry_fault_since = None
         self.search_cost_source = 'safe grid paths'
-        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'])
+        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'],
+                                        self.p['enable_ab_maneuver'])
         self.acquisition_wait = 0.
         self.acquisition_retry_after = 0.
         self.target_detected = False
         self.detection_stamp = None
         self.localization_reason = None
+        self.termination_reason = None
+        self.internal_error = None
+        self.localization_finished_at = None
         self.local_sigmas = []
         self.view_frames = set()
         self.started_stamp = 0.
@@ -393,6 +398,8 @@ class Mission(Node):
         self.detection_stamp = None
         self.localization_reason = None
         self.local_sigmas = []
+        self.termination_reason = self.internal_error = None
+        self.localization_finished_at = None
         self.view_frames.clear()
         self.selection_future = None
         self.finished_at = 0.0
@@ -504,7 +511,8 @@ class Mission(Node):
             goal.behavior_tree=self.p['home_behavior_tree']
         elif kind=='acquire' or (kind=='home' and not self.p['return_heading_required']):
             from ament_index_python.packages import get_package_share_directory
-            name='navigate_observation.xml' if kind=='acquire' else 'navigate_home.xml'
+            name=('navigate_approach.xml' if self.acquisition.last_goal_action=='approach'
+                  else 'navigate_observation.xml') if kind=='acquire' else 'navigate_home.xml'
             goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/'behavior_trees'/name)
         self.set_state('RETURNING' if kind == 'home' else 'ACQUIRING' if kind == 'acquire' else 'SEARCHING',
                        'Returning to recorded start' if kind == 'home'
@@ -528,7 +536,7 @@ class Mission(Node):
             # when travel ends, rather than this remaining-distance test.
             return self.goal_translation
         return bool(current and math.hypot(pose.pose.position.x-current[0],
-                                          pose.pose.position.y-current[1])>=.12)
+                                          pose.pose.position.y-current[1])>=(.04 if kind=='acquire' else .12))
 
     def goal_response(self, future, serial):
         try:
@@ -590,7 +598,8 @@ class Mission(Node):
             self.view_frames.clear()
             self.acquisition_wait = time.monotonic()
             self.acquisition_decision_after=0.
-            self.acquisition.phase=f'{"ABC"[min(2,len(self.acquisition.positions))]}: settling and collecting bearing frames'
+            self.acquisition.phase=(f'{"ABC"[min(2,len(self.acquisition.positions))]}: settling and collecting bearing frames'
+                if self.acquisition.enable_ab_maneuver else 'Settling and sampling target after a safe approach')
             self.set_state('LOCALIZING', self.acquisition.phase if success else 'Observation approach failed; trying another safe view')
             return
         self.heartbeat(False, self.goal_kind == 'search')
@@ -760,7 +769,7 @@ class Mission(Node):
             data=json.loads(msg.data)
             self.current_target_estimate=data
             if (self.state not in ('SEARCHING','OBSERVING','ACQUIRING','LOCALIZING') or self.target is not None
-                    or data.get('method')!='map-constrained MMSE' or data.get('stable') is not True
+                    or data.get('method')!='map-constrained MMSE'
                     or data.get('prior_conflict') or data.get('geometry_conflict') or data.get('frame_id')!=self.p['map_frame']
                     or data.get('label')!=self.p['target_class'] or data.get('mission_stamp')!=self.started_stamp):return
             now=self.get_clock().now().nanoseconds*1e-9
@@ -773,14 +782,19 @@ class Mission(Node):
             if not math.isclose(variance,float(data['variance']),rel_tol=1e-6,abs_tol=1e-8):return
             self.target_details=data
             estimate=dict(data)
-            self.best_target=estimate
+            # Cache a real, associated posterior without upgrading weak evidence
+            # to a precise result. A later poor frame must not erase a good one.
+            if (data.get('stable') is True or (self.target_detected and
+                    max(data.get('frames',0),len(data.get('source_frames',[])))>=2)):
+                previous=self.best_target
+                score=lambda e:(e['variance'],-e.get('position_confidence',0.),-e['stamp'])
+                if previous is None or score(estimate)<score(previous):
+                    self.best_target=json.loads(json.dumps(estimate))
             sites = int(data.get('sites', max(1, len(self.acquisition.positions))))
             if not self.local_sigmas or sites > self.local_sigmas[-1][0]:
                 self.local_sigmas.append((sites, math.sqrt(variance)))
-            if self.target_detected and len(self.local_sigmas)>=2 and sites>=2 and self.local_sigmas[-1][1]>=.9*self.local_sigmas[-2][1]:
-                self.finish_localization('Additional view improved uncertainty by less than ten percent')
-                return
-            if variance<=self.p['max_target_variance'] or math.isclose(variance,self.p['max_target_variance'],rel_tol=1e-9):
+            if data.get('stable') is True and (variance<=self.p['max_target_variance'] or
+                    math.isclose(variance,self.p['max_target_variance'],rel_tol=1e-9)):
                 self.report_target(estimate,'preferred_precision')
         except (ValueError,TypeError,KeyError):pass
 
@@ -799,29 +813,38 @@ class Mission(Node):
         except (ValueError,TypeError,KeyError):pass
 
     def report_best_target(self):
-        """Use a fresh, multi-frame stable estimate after bounded refinement."""
+        """Report the best same-map observation, preserving its original age."""
         estimate = self.best_target
         now = self.get_clock().now().nanoseconds*1e-9
-        if (estimate is None or not 0 <= now-estimate['stamp'] <= self.p['max_target_age']
+        if (estimate is None or not 0 <= now-estimate['stamp']
                 or (self.current_target_estimate or {}).get('geometry_conflict')
+                or self.planner is None
+                or estimate.get('map_signature')!=map_signature(self.planner.grid,self.planner.resolution,self.planner.origin)
                 or self.readiness_error(require_perception=False)):
             return False
-        self.report_target(estimate, 'best_available')
+        self.report_target(estimate, 'approximate')
         return True
 
     def report_target(self, estimate, quality):
         if self.target is not None or self.state not in ('SEARCHING', 'OBSERVING', 'ACQUIRING', 'LOCALIZING'):
             return
         self.target_detected = True
+        self.localization_finished_at = time.monotonic()
         self.target = {k: estimate[k] for k in ('x', 'y', 'variance')}
         self.target.update(**{'class': self.p['target_class']}, frame=self.p['map_frame'],
                            covariance=estimate['covariance'],posterior_mean=estimate['posterior_mean'],
                            projected=estimate['projected'],estimate_id=estimate['estimate_id'],
                            estimator=estimate['method'],map_signature=estimate['map_signature'],
                            sigma=math.sqrt(estimate['variance']), quality=quality,
+                           measurement_stable=estimate.get('stable',False),
                            preferred_sigma=math.sqrt(self.p['max_target_variance']),
-                           observation_stamp=estimate['stamp'])
-        self.target.update({k: estimate[k] for k in ('source', 'source_frames', 'sites', 'crossing_angle', 'baseline', 'geometry_conflict') if k in estimate})
+                           observation_stamp=estimate['stamp'],
+                           age=max(0.,self.get_clock().now().nanoseconds*1e-9-estimate['stamp']),
+                           stale=self.get_clock().now().nanoseconds*1e-9-estimate['stamp']>self.p['max_target_age'],
+                           termination_reason=self.localization_reason or quality)
+        self.target.update({k: estimate[k] for k in ('confidence','frames','position_confidence','confidence_radius_m',
+            'source', 'source_frames', 'sites', 'crossing_angle', 'baseline', 'geometry_conflict',
+            'first_source_stamp','last_source_stamp') if k in estimate})
         self.attach_details()
         self.target_pub.publish(self.make_pose(self.target['x'], self.target['y']))
         self.get_logger().info(f'TARGET ({self.target["x"]:.3f}, {self.target["y"]:.3f}) m; sigma={self.target["sigma"]:.3f} m; {quality}')
@@ -951,13 +974,14 @@ class Mission(Node):
             distance = math.dist(pose[:2], self.home[:2])*2
         if not math.isfinite(distance):
             distance = math.dist(pose[:2], self.home[:2])*2
-        reserve = 15.+1.5*distance/max(.01, self.p['search_linear_speed'])
+        reserve = max(90.,30.+1.5*distance/max(.01, self.p['search_linear_speed']))
         return time.monotonic()-self.started+reserve >= self.p['mission_timeout']
 
     def finish_localization(self, reason):
         if self.state in ('RETURNING', 'VERIFYING') or self.state not in self.ACTIVE:
             return
         self.localization_reason = reason
+        self.localization_finished_at = time.monotonic()
         if not self.report_best_target():
             self.cancel('RETURN', reason+'; returning after confirmed detection without coordinates')
 
@@ -976,6 +1000,13 @@ class Mission(Node):
         self.send_goal(self.make_pose(self.home[0], self.home[1], yaw), 'home')
 
     def finish(self, state, reason):
+        if state=='FAILED':
+            # A safe abort is explicit, never a fabricated successful result.
+            self.internal_error=reason
+            state='STOPPED'
+        self.termination_reason=reason
+        if getattr(self,'localization_finished_at',None) is None:
+            self.localization_finished_at=time.monotonic()
         self.pending_navigation = None
         self.plan_cancel.set()
         self.heartbeat(False, False)
@@ -991,6 +1022,10 @@ class Mission(Node):
         pose=self.pose() if self.home is not None else None
         distance=math.hypot(pose[0]-self.home[0],pose[1]-self.home[1]) if pose and self.home else None
         readiness=self.readiness_error()
+        target=self.target
+        if target is not None and target.get('observation_stamp') is not None:
+            age=max(0.,self.get_clock().now().nanoseconds*1e-9-target['observation_stamp'])
+            target=dict(target,age=age,stale=age>self.p['max_target_age'])
         return {'phase':'mission','stamp':self.get_clock().now().nanoseconds*1e-9,'state': self.state, 'reason': self.reason,
                 'ready':readiness is None and self.nav.server_is_ready(),
                 'readiness_reason':readiness or ('Ready' if self.nav.server_is_ready() else 'Nav2 not ready'),
@@ -1003,8 +1038,13 @@ class Mission(Node):
                 'stationary_check':self.stationary_check,
                 'stationary_required_seconds':self.p['verify_seconds'],
                 'target_class': self.p['target_class'], 'started_stamp':self.started_stamp,
-                'target': self.target, 'home': self.home,
+                'target': target, 'home': self.home,
                 'target_detected': self.target_detected, 'detection_stamp': self.detection_stamp,
+                'termination_reason':getattr(self,'termination_reason',None),
+                'internal_error':getattr(self,'internal_error',None),
+                'enable_ab_maneuver':self.p.get('enable_ab_maneuver',False),
+                'localization_budget_seconds':self.p['acquisition_seconds'],
+                'localization_elapsed_seconds':max(0.,(getattr(self,'localization_finished_at',None) or time.monotonic())-self.acquisition.started) if self.acquisition.started is not None else 0.,
                 'localization_reason': self.localization_reason,
                 'localization_active_seconds':self.acquisition.active_seconds,
                 'localization_travel_seconds':self.acquisition.travel_seconds,
@@ -1088,7 +1128,7 @@ class Mission(Node):
                 elif self.pending_navigation is not None:
                     self.retry_costmap_wait(now)
                 elif self.state in ('ACQUIRING', 'LOCALIZING'):
-                    if self.acquisition.active_seconds >= self.p['acquisition_seconds'] or self.return_budget_exhausted():
+                    if self.acquisition.expired(now) or self.return_budget_exhausted():
                         if not self.report_best_target():
                             self.finish_localization('Visual localization budget exhausted')
                     elif self.state == 'ACQUIRING':

@@ -84,6 +84,8 @@ class FloorCamera:
     height_sigma: float = .015
     pitch_sigma: float = math.radians(2.)
     bearing_limits: object = None
+    attitude_pivot: object = None
+    roll_sigma: float = 0.
 
     def __post_init__(self):
         self.k = np.asarray(self.k, dtype=float).reshape(3, 3)
@@ -106,6 +108,10 @@ class FloorCamera:
                 len(self.bearing_limits) != 2 or not np.isfinite(self.bearing_limits).all()
                 or self.bearing_limits[0] > self.bearing_limits[1]):
             raise ValueError('Invalid legacy bearing envelope')
+        if (not math.isfinite(self.roll_sigma) or self.roll_sigma < 0 or
+                (self.attitude_pivot is not None and (np.asarray(self.attitude_pivot).shape != (3,)
+                 or not np.isfinite(self.attitude_pivot).all()))):
+            raise ValueError('Invalid attitude pivot or roll uncertainty')
 
     def metadata(self):
         return {name: value.tolist() if isinstance(value, np.ndarray) else value
@@ -157,8 +163,17 @@ class FloorCamera:
         a = self.pitch_sigma
         rotation = np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0],
                              [-math.sin(a), 0, math.cos(a)]])
-        derivatives.append((self.intersection(pixel, rotation=rotation@self.rotation)-
-                            self.intersection(pixel, rotation=rotation.T@self.rotation))[:2]/2)
+        def tilted(change):
+            origin = self.translation
+            if self.attitude_pivot is not None:
+                pivot = np.asarray(self.attitude_pivot)
+                origin = pivot+change@(origin-pivot)
+            return self.intersection(pixel, rotation=change@self.rotation, translation=origin)
+        derivatives.append((tilted(rotation)-tilted(rotation.T))[:2]/2)
+        if self.roll_sigma:
+            c, s = math.cos(self.roll_sigma), math.sin(self.roll_sigma)
+            roll = np.array([[1., 0., 0.], [0., c, -s], [0., s, c]])
+            derivatives.append((tilted(roll)-tilted(roll.T))[:2]/2)
         jacobian = np.asarray(derivatives).T
         sigma = math.sqrt(max(.0001, float(np.linalg.eigvalsh(jacobian@jacobian.T).max())))
         return point, sigma, float(distance)

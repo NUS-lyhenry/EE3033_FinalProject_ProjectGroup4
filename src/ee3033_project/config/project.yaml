@@ -35,6 +35,8 @@ project_mission:
     sensor_timeout: 1.0
     perception_timeout: 3.0
     localize_wait_seconds: 2.0  # Allow exposure-time motion window + distinct frames.
+    enable_ab_maneuver: false  # Optional active A–B maneuver; natural target crossings remain enabled.
+    acquisition_seconds: 90.0
     results_directory: ~/ee3033_results
 
 project_perception:

@@ -114,3 +114,50 @@ def test_mmse_rejection_is_distinguished_from_unfinished_confirmation():
     assert not m.update(d,11.1)
     assert mmse_rejection_reason(m,d,11.1)=='mmse_duplicate_or_reordered_evidence'
     assert mmse_rejection_reason(m,dict(d,stamp=11.2,x=3.),11.2)=='mmse_innovation_rejected'
+
+
+def test_bearing_only_map_posterior_precedes_natural_intersection_with_ab_maneuver_off():
+    n,events=filter_node()
+    # This flag belongs to the motion owner; it must never disable passive
+    # geometry processing when two naturally visited sites provide bearings.
+    n.p['enable_ab_maneuver']=False
+    for stamp in (11.,11.2,11.4,11.6):deliver(n,stamp,[bearing(stamp)])
+    first=n.tracker.snapshot(11.7)
+    assert first['source']=='bearing_only' and first['stable']
+    assert first['sigma']>.5 and first['samples']==4
+    assert events[-1]['mmse']['source']=='bearing_only'
+    for stamp in (13.,13.2,13.4,13.6):deliver(n,stamp,[bearing(stamp,(0.,1.))])
+    result=n.tracker.snapshot(13.7)
+    assert result['source']=='bearing_intersection' and result['stable']
+    assert result['sigma']<first['sigma']
+    assert len(n.tracker.samples)==1 and not n.tracker.bearings
+    assert len(result['source_frames'])==8 and result['first_source_stamp']==11.
+    assert result['last_source_stamp']==13.6
+    assert result['position_confidence']>first['position_confidence']
+    assert 0<=result['position_confidence']<=1 and result['confidence_radius_m']==.2
+
+
+def test_same_frame_floor_and_ray_are_not_counted_twice_and_joint_factor_replaces_both():
+    n,_=filter_node()
+    for origin,start in [((0.,0.),11.),((0.,1.),13.)]:
+        for i in range(4):
+            stamp=start+i*.2
+            floor=dict(stamp=stamp,source_frame=stamp,x=1.,y=1.,sigma=.2,
+                label='cup',confidence=.9,box=[100,100,140,200])
+            deliver(n,stamp,[bearing(stamp,origin)],[floor])
+            if n.tracker.factor is None:
+                assert not n.tracker.bearings
+    result=n.tracker.snapshot(13.7)
+    assert result['source']=='bearing_intersection'
+    assert len(n.tracker.samples)==1 and not n.tracker.bearings
+    before=result['covariance']
+    floor.update(stamp=13.8,source_frame=13.8)
+    deliver(n,13.8,[],[floor])
+    assert n.tracker.snapshot(13.9)['covariance']==before
+
+
+def test_invalid_capture_bearing_cannot_create_map_posterior_without_floor():
+    n,events=filter_node()
+    deliver(n,11.,[dict(bearing(11.),settled=False)])
+    assert n.tracker.snapshot(11.1) is None
+    assert 'bearing_motion_unsettled' in events[-1]['reason_codes']

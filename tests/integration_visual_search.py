@@ -133,7 +133,7 @@ class VisualSearch(unittest.TestCase):
                 time.sleep(.7)
                 self.assertEqual(mission.state, expected, mission.summary())
                 self.assertLessEqual(robot.max_active_goals, 1)
-                self.assertLessEqual(robot.max_steps, 5 if mode=='bearing_only' else 3)
+                self.assertLessEqual(mission.summary()['localization_elapsed_seconds'], mission.p['acquisition_seconds']+1.0)
                 self.assertIsNone(mission.goal_handle)
                 self.assertFalse(mission.goal_pending)
                 self.assertIn('LOCALIZING', robot.states)
@@ -155,7 +155,7 @@ class VisualSearch(unittest.TestCase):
                     self.assertEqual(target['estimator'],'map-constrained MMSE')
                     self.assertTrue(posterior['confirmed'])
                     if mode == 'soft_precision':
-                        self.assertEqual(mission.target['quality'], 'best_available')
+                        self.assertEqual(mission.target['quality'], 'approximate')
                         self.assertGreater(mission.target['sigma'], .1)
                         self.assertAlmostEqual(mission.target['variance'],mission.target['sigma']**2)
                     elif mode in ('precision_boundary','tunable_precision'):

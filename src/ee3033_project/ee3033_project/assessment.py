@@ -253,6 +253,8 @@ def mission_options(values):
     method = values.get('localization_method','hybrid')
     tolerance = values.get('return_tolerance',.20)
     sigma = values.get('preferred_target_sigma',.10)
+    enable_ab_maneuver = values.get('enable_ab_maneuver',False)
+    acquisition_seconds = values.get('acquisition_seconds',90.)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
         raise ValueError('Use the detector class label, for example cup or bottle')
     if method not in ('lidar','ground_plane','hybrid'):
@@ -261,8 +263,13 @@ def mission_options(values):
         raise ValueError('Return tolerance must be 0.02–1.00 m')
     if isinstance(sigma,bool) or not isinstance(sigma,(int,float)) or not math.isfinite(sigma) or not .01<=sigma<=1.:
         raise ValueError('Preferred precision must be 0.01–1.00 m (one sigma)')
+    if not isinstance(enable_ab_maneuver,bool):
+        raise ValueError('Active A–B maneuver must be true or false')
+    if isinstance(acquisition_seconds,bool) or not isinstance(acquisition_seconds,(int,float)) or not math.isfinite(acquisition_seconds) or not 1.<=acquisition_seconds<=600.:
+        raise ValueError('Acquisition time must be 1–600 seconds')
     return dict(target_class=target,localization_method=method,return_tolerance=float(tolerance),
-                preferred_target_sigma=float(sigma))
+                preferred_target_sigma=float(sigma),enable_ab_maneuver=enable_ab_maneuver,
+                acquisition_seconds=float(acquisition_seconds))
 
 
 class StageProcess:
@@ -278,6 +285,7 @@ class StageProcess:
         self.scan_self_mask_radius = .08
         self.mapping_resolution = .05
         self.vision_config = ''
+        self.attitude_config = ''
         self.calibration_directory = '~/ee3033_calibrations'
         self.calibration_port, self.console_port = 8780, 8765
         self.calibration_initial_pose = None
@@ -345,10 +353,13 @@ class StageProcess:
             if map_path is None: raise ValueError('A reviewed saved map is required')
             options=mission_options(options or {})
             args.append('results_directory:='+str(self.root.parent/'mission_runs'))
-            args += ['map_partial:='+str(bool(getattr(self,'map_partial',False))).lower(), 'map:='+str(map_path),*[(key+':='+str(value)) for key,value in options.items()]]
+            args += ['map_partial:='+str(bool(getattr(self,'map_partial',False))).lower(), 'map:='+str(map_path),
+                     *[(key+':='+str(value).lower() if isinstance(value,bool) else key+':='+str(value))
+                       for key,value in options.items()]]
             if self.model: args.append('model:='+self.model)
             if self.calibration_file: args.append('calibration_file:='+self.calibration_file)
             if self.vision_config: args.append('vision_config:='+self.vision_config)
+            if self.attitude_config: args.append('attitude_config:='+str(self.attitude_config))
         with self.log.open('w') as stream:
             self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
         self.phase,self.fault=phase,None
