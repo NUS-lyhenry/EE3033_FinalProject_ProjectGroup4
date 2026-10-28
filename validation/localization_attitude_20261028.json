@@ -2,25 +2,154 @@
   "baseline_pr": "https://github.com/NUS-lyhenry/EE3033_FinalProject_ProjectGroup4/pull/8",
   "baseline_merge": "fbef8d556b3fe53868b945c746f42459de48b102",
   "baseline_checks": "Both exact-head workflows passed algorithms, browser and native-navigation",
-  "baseline_operator_result": {"state": "COMPLETE", "return_verified": true, "sigma_m": 0.13300253217505445},
-  "implementation": {"pure_tests_passed": 677, "browser_tests_passed": 56, "source_compile_passed": true},
+  "baseline_operator_result": {
+    "state": "COMPLETE",
+    "return_verified": true,
+    "sigma_m": 0.13300253217505445
+  },
+  "implementation": {
+    "pure_tests_passed": 677,
+    "browser_tests_passed": 56,
+    "source_compile_passed": true
+  },
   "physical_release": "localization_20261028_11f2286b7d",
   "physical_source_files_verified": 85,
   "effective_source_manifest_sha256": "69c9ca5de3c2efed8e4babcd9be5cd5a4e411a0e753739f8e20b4071b488f1f5",
-  "incremental_patches": ["omit-empty-attitude-launch-argument", "measured-10hz-cadence", "bounded-balance-reference-window"],
+  "incremental_patches": [
+    "omit-empty-attitude-launch-argument",
+    "measured-10hz-cadence",
+    "bounded-balance-reference-window"
+  ],
   "driver_overlay": "attitude_source_20261028_v1",
   "driver_binary_sha256": "b988e743ea34b73e39bba7d4c27033dfa6012703b1ebc02442d967e877b3bffc",
-  "driver_source": {"topic": "/project/body_attitude", "fresh_validated_packets_only": true, "timestamp_basis": "host receipt, not MCU sample time", "legacy_driver_preserved": true},
-  "measured_source": {"gap_min_s": 0.09932971, "gap_median_s": 0.10017991, "gap_max_s": 0.12050772, "accepted_gap_s": 0.15, "maximum_age_s": 0.20},
-  "measured_balance": {"linear_mean_m_s": 0.03194041, "position_span_m": 0.02624248, "reference_linear_limit_m_s": 0.035, "reference_position_span_limit_m": 0.04},
-  "measured_geometry": {"wheel_axis_height_m": 0.033, "camera_forward_offset_m": -0.01, "configured_camera_height_m": 0.33},
-  "reference": {"captured": true, "samples": 12, "roll_rad": -0.033873932190406526, "pitch_rad": 0.04088433757539023},
-  "runtime": {"mission_state": "WAITING", "readiness": "Ready", "perception_attitude_mode": "controller", "capture_attitude_valid": true, "geometry_ready": true, "operator_scan_filter_m": 0.20, "autonomous_start_issued": false},
-  "static_target_reference_m": 0.90,
+  "driver_source": {
+    "topic": "/project/body_attitude",
+    "fresh_validated_packets_only": true,
+    "timestamp_basis": "host receipt, not MCU sample time",
+    "legacy_driver_preserved": true
+  },
+  "measured_source": {
+    "gap_min_s": 0.09932971,
+    "gap_median_s": 0.10017991,
+    "gap_max_s": 0.12050772,
+    "accepted_gap_s": 0.15,
+    "maximum_age_s": 0.2
+  },
+  "measured_balance": {
+    "linear_mean_m_s": 0.03194041,
+    "position_span_m": 0.02624248,
+    "reference_linear_limit_m_s": 0.035,
+    "reference_position_span_limit_m": 0.04
+  },
+  "measured_geometry": {
+    "wheel_axis_height_m": 0.033,
+    "camera_forward_offset_m": -0.01,
+    "configured_camera_height_m": 0.305,
+    "camera_height_m": 0.305,
+    "camera_to_wheel_axis_height_m": 0.272
+  },
+  "reference": {
+    "captured": true,
+    "samples": 12,
+    "roll_rad": -0.033873932190406526,
+    "pitch_rad": 0.04088433757539023
+  },
+  "runtime": {
+    "mission_state": "WAITING",
+    "readiness": "Ready",
+    "perception_attitude_mode": "controller",
+    "capture_attitude_valid": true,
+    "geometry_ready": true,
+    "operator_scan_filter_m": 0.2,
+    "autonomous_start_issued": false
+  },
+  "static_target_reference_m": 0.9,
   "limitations": [
     "Static range bias remains under investigation; this is not an independent localization-accuracy pass",
     "Image-time and current map poses differ; their difference is not independently measured physical movement",
     "Position confidence is conditional on the map support and error model, not calibrated physical accuracy",
     "No new autonomous-approach physical acceptance or local ROS world simulation was run"
-  ]
+  ],
+  "camera_calibration": {
+    "reference_distance_m": 0.9,
+    "height_m": 0.305,
+    "pixel": [
+      309.2372589111328,
+      207.6169891357422
+    ],
+    "old_pitch_deg": 26.0,
+    "fitted_old_reference_pitch_deg": 27.471442534910963,
+    "new_reference_pitch_deg": 27.56893863007911,
+    "camera_info_k": [
+      [
+        303.58978001,
+        0.0,
+        313.75809193
+      ],
+      [
+        0.0,
+        302.97064273,
+        258.71992369
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "camera_info_d": [
+      0.06801198,
+      -0.0985489,
+      -0.0005351,
+      -0.00040454,
+      0.02653797
+    ],
+    "calibration_only": true,
+    "independent_accuracy_validation": false,
+    "actual_capture_reference": {
+      "roll": -0.03407755391566658,
+      "pitch": 0.03241949114707792,
+      "stamp": 1793184429.5981514,
+      "samples": 12,
+      "span": [
+        0.0012217313918576542,
+        0.0008726637937593179
+      ],
+      "frame": "base_footprint",
+      "source": "/project/body_attitude",
+      "rotation": [
+        [
+          0.0,
+          -0.46281553556427985,
+          0.8864546125100533
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -0.8864546125100533,
+          -0.46281553556427985
+        ]
+      ],
+      "translation": [
+        -0.01,
+        0.0,
+        0.305
+      ],
+      "mount_fingerprint": "27110f95f98ff1b500fd2c4d48db1744bb9f25f22209f7eba8a029bb0ec628b0",
+      "valid": true
+    },
+    "approx_latest_body_range_m": 0.9468628512757874,
+    "model_sigma_m": 0.11098405219043048,
+    "model_position_confidence_20cm": 0.8612482606620263
+  },
+  "operator_navigation_followup": {
+    "reported": "Green planned path jumps, followed by STOPPED",
+    "reason_verified": false,
+    "connection_status": "Local forward refused; original robot SSH address timed out; awaiting reconnection and retained logs",
+    "new_version_merge_allowed": false
+  }
 }
