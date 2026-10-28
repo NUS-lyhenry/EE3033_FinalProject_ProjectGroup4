@@ -13,6 +13,22 @@ import urllib.parse
 import urllib.request
 
 
+def wait_saved_map(get, timeout=30.):
+    """Wait for the console's map catalogue to catch up with mapper status."""
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        state=get('state')
+        if state.get('simulated') is not True or state.get('preview_backend')!='main-ros':
+            raise RuntimeError('Refusing to control a non-simulation console')
+        path=state.get('saved_map')
+        mapper_path=state.get('mission',{}).get('saved_map')
+        if path and path==mapper_path:
+            entry=next((m for m in get('maps')['maps'] if m['path']==path),None)
+            if entry is not None:return state,entry
+        time.sleep(.25)
+    raise TimeoutError('Saved map did not become available in the simulation catalogue')
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--url',default='http://127.0.0.1:8792')
@@ -63,9 +79,9 @@ def main():
             wait(lambda s:s.get('mission',{}).get('ready') is True,60)
             post('start')
             state=wait(lambda s:s.get('mission',{}).get('state') in ('MAPPED','MAPPED_PARTIAL'),300)
+            state,entry=wait_saved_map(get)
             pose=state['pose']
             if not pose:raise RuntimeError('Mapping-to-mission pose handoff is unavailable')
-            entry=next(m for m in get('maps')['maps'] if m['path']==state['saved_map'])
             post('review_map',{'map_id':entry['id']})
         labels=get('labels')
         if not labels.get('ready') or 'cup' not in labels['labels']:raise RuntimeError(str(labels))
