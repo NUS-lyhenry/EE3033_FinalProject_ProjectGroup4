@@ -2,6 +2,7 @@
 import json
 import math
 import time
+import threading
 
 import cv2
 import numpy as np
@@ -17,16 +18,24 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from ee3033_project.ros_utils import LATCHED, set_yaw
 from simulation_geometry import CAMERA_OFFSET, K, PITCH, clearance, raycast, render_camera
+from simulation_scenarios import default_scenario,validate_scenario
 
 
 class SimulatedRobot(Node):
-    def __init__(self, texture_path):
+    def __init__(self, texture_path,scenario=None):
         super().__init__('preview_sensor_world')
         self.pose = [0., 0., 0.]
         self.command = (0., 0.)
         self.command_time = -math.inf
         self.last_tick = time.monotonic()
         self.phase = 'mapping'
+        self.world_lock=threading.RLock()
+        self.accept_commands=True
+        self.scene_status_after=-math.inf
+        self.scene=validate_scenario(scenario or default_scenario())
+        self.walls=np.asarray(self.scene['walls'],dtype=float)
+        self.target=np.asarray(self.scene['target'],dtype=float)
+        self.pose=list(self.scene['start'])
         self.texture = cv2.imread(texture_path)
         if self.texture is None:
             raise ValueError('A real target photograph is required for camera rendering')
@@ -57,16 +66,53 @@ class SimulatedRobot(Node):
         self.create_timer(.2, self.camera_tick)
 
     def on_command(self, msg):
-        self.command = (msg.linear.x, msg.angular.z)
-        self.command_time = time.monotonic()
+        with self.world_lock:
+            if not self.accept_commands:return
+            self.command = (msg.linear.x, msg.angular.z)
+            self.command_time = time.monotonic()
+
+    def stationary(self):
+        with self.world_lock:
+            return (time.monotonic()-self.command_time>=.5
+                or all(math.isfinite(v) and abs(v)<=1e-5 for v in self.command))
+
+    def pause_commands(self):
+        with self.world_lock:
+            self.accept_commands=False
+            self.command=(0.,0.);self.command_time=-math.inf
+
+    def resume_commands(self):
+        with self.world_lock:
+            self.command=(0.,0.);self.command_time=-math.inf
+            self.accept_commands=True
+
+    def apply_scenario(self,scenario,reset_pose=False):
+        scene=validate_scenario(scenario)
+        with self.world_lock:
+            if self.accept_commands:raise RuntimeError('Pause simulated motion before replacing the scene')
+            self.scene=scene
+            self.walls=np.asarray(scene['walls'],dtype=float)
+            self.target=np.asarray(scene['target'],dtype=float)
+            if reset_pose:
+                self.pose=list(scene['start'])
+                self.phase='mapping'
+            self.command=(0.,0.);self.command_time=-math.inf
+            self.last_tick=time.monotonic()
+            self.scene_status_after=self.get_clock().now().nanoseconds*1e-9
 
     def on_status(self, msg):
         try:
-            self.phase = json.loads(msg.data).get('phase', self.phase)
+            data=json.loads(msg.data)
+            with self.world_lock:
+                if float(data.get('stamp',-math.inf))<self.scene_status_after:return
+                self.phase = data.get('phase', self.phase)
         except (ValueError, TypeError):
             pass
 
     def tick(self):
+        with self.world_lock:self.physics_tick()
+
+    def physics_tick(self):
         now = time.monotonic()
         dt = min(.05, now-self.last_tick)
         self.last_tick = now
@@ -74,7 +120,8 @@ class SimulatedRobot(Node):
         x, y, yaw = self.pose
         heading = yaw+w*dt
         new_xy = np.array([x+v*math.cos(heading)*dt, y+v*math.sin(heading)*dt])
-        if clearance(new_xy) < .14:
+        if not self.accept_commands:v=w=0.;new_xy=np.array([x,y]);heading=yaw
+        if clearance(new_xy,self.walls) < .14:
             v = 0.
             new_xy = np.array([x, y])
         self.pose = [*map(float, new_xy), heading]
@@ -94,6 +141,9 @@ class SimulatedRobot(Node):
         self.odom.publish(odom)
 
     def scan_tick(self):
+        with self.world_lock:self.publish_scan()
+
+    def publish_scan(self):
         msg = LaserScan()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'preview_laser'
@@ -102,11 +152,12 @@ class SimulatedRobot(Node):
         msg.angle_max = msg.angle_min+(n-1)*msg.angle_increment
         msg.range_min, msg.range_max, msg.scan_time = .08, 8., .1
         angles = msg.angle_min+np.arange(n)*msg.angle_increment+self.pose[2]
-        msg.ranges = raycast(self.pose[:2], angles).astype(float).tolist()
+        msg.ranges = raycast(self.pose[:2], angles,self.walls).astype(float).tolist()
         self.scan.publish(msg)
 
     def camera_tick(self):
-        frame = render_camera(self.pose, self.texture, self.phase == 'mission')
+        with self.world_lock:
+            frame = render_camera(self.pose, self.texture, self.phase == 'mission',self.walls,self.target)
         image = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
         image.header.stamp = self.get_clock().now().to_msg()
         image.header.frame_id = 'project_camera_optical'
