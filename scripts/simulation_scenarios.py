@@ -149,42 +149,99 @@ def randomize_target(scenario,seed):
     return validate_scenario(result)
 
 
-def generate_scenario(seed):
-    """Generate deterministic, connected rooms with varied occluding walls."""
+def _segment_blocked(start,end,walls):
+    """Physical XY visibility for scene placement, never an algorithm hint."""
+    start=np.asarray(start);direction=np.asarray(end)-start
+    for a,b in np.asarray(walls):
+        edge=b-a;offset=a-start
+        cross=direction[0]*edge[1]-direction[1]*edge[0]
+        if abs(cross)<1e-10:continue
+        along=(offset[0]*edge[1]-offset[1]*edge[0])/cross
+        across=(offset[0]*direction[1]-offset[1]*direction[0])/cross
+        if 1e-8<along<1.-1e-8 and -1e-8<=across<=1.+1e-8:return True
+    return False
+
+
+def _multi_room_layout(seed):
+    """Build geometry plus private topology for structural validation tests."""
     seed=_seed(seed);rng=random.Random(seed)
-    width=rng.uniform(2.8,3.8);height=rng.uniform(2.6,3.6)
-    xmin,ymin=-width/2,-height/2;xmax,ymax=width/2,height/2
+    rows=rng.choice((2,3,3));cols=3
+    widths=[rng.uniform(1.35,1.65) for _ in range(cols)]
+    heights=[rng.uniform(1.35,1.65) for _ in range(rows)]
+    xx=np.r_[0.,np.cumsum(widths)];yy=np.r_[0.,np.cumsum(heights)]
+    start_row,start_col=rng.choice(((0,0),(0,cols-1),(rows-1,0),(rows-1,cols-1)))
+    xx-=float((xx[start_col]+xx[start_col+1])/2)
+    yy-=float((yy[start_row]+yy[start_row+1])/2)
+    centers=[[float((xx[c]+xx[c+1])/2),float((yy[r]+yy[r+1])/2)]
+             for r in range(rows) for c in range(cols)]
+    edges=[]
+    for r in range(rows):
+        for c in range(cols):
+            index=r*cols+c
+            if c+1<cols:edges.append((index,index+1,True,float(xx[c+1]),float(yy[r]),float(yy[r+1])))
+            if r+1<rows:edges.append((index,index+cols,False,float(yy[r+1]),float(xx[c]),float(xx[c+1])))
+    shuffled=list(edges);rng.shuffle(shuffled)
+    parents=list(range(rows*cols))
+    def root(index):
+        while parents[index]!=index:
+            parents[index]=parents[parents[index]];index=parents[index]
+        return index
+    opened=set();remaining=[]
+    for edge in shuffled:
+        a,b=edge[:2];ra,rb=root(a),root(b)
+        if ra!=rb:parents[ra]=rb;opened.add((a,b))
+        else:remaining.append((a,b))
+    # Every map contains a loop as well as a spanning tree. Different doors and
+    # occasional open connections prevent one repeated corridor template.
+    extras=set(rng.sample(remaining,rng.randint(1,len(remaining))))
+    opened|=extras
+    xmin,ymin,xmax,ymax=float(xx[0]),float(yy[0]),float(xx[-1]),float(yy[-1])
     corners=[[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]]
-    scene=dict(version=1,name='Random room '+str(seed),seed=seed,
-        bounds=[xmin,ymin,xmax,ymax],start=[0.,0.,0.],target=[.7,.7,0.],
-        walls=[[corners[i],corners[(i+1)%4]] for i in range(4)])
-    # Alternate boundary-attached partitions and freestanding walls. Each wall
-    # leaves a generous passage to its opposite boundary; validate the complete
-    # world before returning rather than assuming that individually safe walls
-    # compose into a connected layout.
-    for _ in range(rng.randint(1,3)):
-        vertical=rng.choice((True,False));side=rng.choice((-1,1))
-        if vertical:
-            x=rng.choice((-1,1))*rng.uniform(.55,min(1.0,width/2-.35))
-            begin=ymin if side<0 else ymax
-            end=begin-side*rng.uniform(.65,height-.8)
-            wall=[[x,begin],[x,end]]
-        else:
-            y=rng.choice((-1,1))*rng.uniform(.55,min(.95,height/2-.35))
-            begin=xmin if side<0 else xmax
-            end=begin-side*rng.uniform(.65,width-.8)
-            wall=[[begin,y],[end,y]]
-        if _clearance([0.,0.],scene['walls']+[wall])>=.35:
-            scene['walls'].append(wall)
-    # Find a first reachable point without needing a placeholder target to be
-    # valid. Do not inject knowledge of the target position into perception
-    # or the navigation algorithms.
-    points,reachable=_connected_grid(scene)
-    candidates=points[reachable]
-    candidates=candidates[np.linalg.norm(candidates,axis=-1)>=.75]
-    if not len(candidates):raise ValueError('Generated room has no reachable target placement')
-    chosen=candidates[rng.randrange(len(candidates))]
-    scene['target']=[float(chosen[0]),float(chosen[1]),0.]
+    walls=[[corners[i],corners[(i+1)%4]] for i in range(4)]
+    doors=[];adjacency={i:[] for i in range(rows*cols)}
+    for a,b,vertical,fixed,low,high in edges:
+        def point(along):return [fixed,along] if vertical else [along,fixed]
+        if (a,b) not in opened:
+            walls.append([point(low),point(high)]);continue
+        adjacency[a].append(b);adjacency[b].append(a)
+        open_connection=(a,b) in extras and rng.random()<.2
+        width=(high-low) if open_connection else rng.uniform(.74,.92)
+        offset=0. if open_connection else rng.uniform(-1.,1.)*max(0.,(high-low-width)/2-.18)
+        center=(low+high)/2+offset
+        door_low,door_high=center-width/2,center+width/2
+        if door_low-low>1e-8:walls.append([point(low),point(door_low)])
+        if high-door_high>1e-8:walls.append([point(door_high),point(high)])
+        doors.append(dict(rooms=(a,b),center=point(center),width=width,open=open_connection))
+    start=start_row*cols+start_col
+    distances={start:0};queue=deque([start])
+    while queue:
+        current=queue.popleft()
+        for neighbor in adjacency[current]:
+            if neighbor not in distances:
+                distances[neighbor]=distances[current]+1
+                queue.append(neighbor)
+    farthest=max(distances.values())
+    far_rooms=[i for i,distance in distances.items() if distance>=max(2,farthest-1)]
+    samples=[]
+    for index in far_rooms:
+        for _ in range(8):
+            center=centers[index]
+            target=[center[0]+rng.uniform(-.16,.16),center[1]+rng.uniform(-.16,.16)]
+            if _clearance(target,walls)<ROBOT_CLEARANCE+.05:continue
+            score=(_segment_blocked([0.,0.],target,walls),distances[index],math.hypot(*target))
+            samples.append((score,index,target))
+    if not samples:raise ValueError('Generated multi-room scene has no safe distant target')
+    _,target_room,target=max(samples,key=lambda sample:sample[0])
+    scene=dict(version=1,name='Random multi-room '+str(rows)+'x'+str(cols)+' '+str(seed),seed=seed,
+        bounds=[xmin,ymin,xmax,ymax],start=[0.,0.,0.],target=[*target,0.],walls=walls)
+    topology=dict(rows=rows,columns=cols,rooms=centers,connections=opened,doors=doors,
+                  start_room=start,target_room=target_room,room_distances=distances)
+    return scene,topology
+
+
+def generate_scenario(seed):
+    """Generate reproducible 6–9 room worlds with doors, loops and occlusion."""
+    scene,_=_multi_room_layout(seed)
     return validate_scenario(scene)
 
 

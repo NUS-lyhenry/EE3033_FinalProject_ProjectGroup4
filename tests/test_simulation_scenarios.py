@@ -25,7 +25,7 @@ def test_random_scenes_are_deterministic_json_and_have_varied_occluders():
     assert scenes[3]==s.generate_scenario(3)
     assert len({json.dumps(scene['walls']) for scene in scenes})==15
     for scene in scenes:
-        assert 5<=len(scene['walls'])<=7
+        assert 12<=len(scene['walls'])<=48
         assert s.validate_scenario(json.loads(json.dumps(scene)))==scene
         assert np.asarray(scene['walls']).shape[1:]==(2,2)
         assert s._clearance(scene['start'][:2],scene['walls'])>=s.ROBOT_CLEARANCE
@@ -66,3 +66,43 @@ def test_invalid_outer_walls_and_nonfinite_inputs_rejected():
     with pytest.raises(ValueError,match='nonzero'):s.validate_scenario(scene)
     scene=s.default_scenario();scene['version']=True
     with pytest.raises(ValueError,match='version'):s.validate_scenario(scene)
+
+
+def test_multi_room_spanning_connections_and_loops_reach_every_room_and_door():
+    for seed in range(20):
+        scene,topology=s._multi_room_layout(seed)
+        scene=s.validate_scenario(scene)
+        rooms=topology['rooms'];connections=topology['connections']
+        assert len(rooms) in (6,9)
+        assert len(connections)>=len(rooms)  # spanning tree plus at least one cycle
+        assert len(topology['room_distances'])==len(rooms)
+        points,reachable=s._connected_grid(scene)
+        reachable_points=points[reachable]
+        # This checks the inflated physical wall geometry as well as the graph.
+        for room in rooms:
+            assert np.min(np.linalg.norm(reachable_points-room,axis=-1))<.08
+            assert s._clearance(room,scene['walls'])>.5
+        for door in topology['doors']:
+            assert door['width']>=.74
+            if not door['open']:assert door['width']<=.92
+            assert s._clearance(door['center'],scene['walls'])>=door['width']/2-1e-8
+            assert np.min(np.linalg.norm(reachable_points-door['center'],axis=-1))<.08
+        assert topology['room_distances'][topology['target_room']]>=2
+        assert np.linalg.norm(scene['target'][:2])>.9
+        assert s._segment_blocked(scene['start'][:2],scene['target'][:2],scene['walls'])
+
+
+def test_complex_rooms_cover_103_seeds_without_invalid_or_disconnected_worlds():
+    dimensions=set();loop_counts=set()
+    for seed in [*range(100),4294967295,30903,71929]:
+        scene,topology=s._multi_room_layout(seed)
+        assert s.generate_scenario(seed)==s.validate_scenario(scene)
+        dimensions.add((topology['rows'],topology['columns']))
+        loop_counts.add(len(topology['connections'])-len(topology['rooms'])+1)
+        assert max(scene['bounds'][2]-scene['bounds'][0],scene['bounds'][3]-scene['bounds'][1])>4.
+        assert len(scene['walls'])<=48
+        points,reachable=s._connected_grid(scene)
+        assert all(np.min(np.linalg.norm(points[reachable]-room,axis=-1))<.08
+                   for room in topology['rooms'])
+        assert s._segment_blocked(scene['start'][:2],scene['target'][:2],scene['walls'])
+    assert dimensions=={(2,3),(3,3)} and len(loop_counts)>1
