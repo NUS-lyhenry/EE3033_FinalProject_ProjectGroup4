@@ -98,6 +98,12 @@ async function fixture(page,{phase='mapping',active=false}={}){
       json={success:true,values:trial,synchronized:true,profile:body.profile};
     }else if(path==='/api/vision'){
       state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
+    }else if(path==='/api/simulation_scenario'){
+      const scene=state.simulation_scenario;
+      scene.revision++;
+      if(body.action==='set_target')scene.target=[body.x,body.y,0];
+      if(body.seed!=null)scene.seed=body.seed;
+      json={success:true,scenario:scene,message:'Simulation scene updated'};
     }else if(path==='/api/teleop')json={success:true};
     else return route.fulfill({status:404,json:{error:'Unknown test endpoint'}});
     return route.fulfill({json:JSON.parse(JSON.stringify(json))});
@@ -602,4 +608,52 @@ test('TF pitch override is saved as a boolean with radians',async({page})=>{
   await expect.poll(()=>f.calls.some(c=>c.path==='/api/vision')).toBe(true);
   const body=f.calls.find(c=>c.path==='/api/vision').body;
   expect(body.use_pitch_override).toBe(true);expect(body.camera_pitch).toBeCloseTo(28.6*Math.PI/180,8);
+});
+
+function enableScenario(f){
+  Object.assign(f.state,{preview_backend:'main-ros',simulation_can_apply:true,
+    simulation_scenario:{revision:1,seed:42,bounds:[0,0,6,4],start:[1,1,0],target:[4,2,0],
+      walls:[[[0,0],[6,0]],[[6,0],[6,4]],[[6,4],[0,4]],[[0,4],[0,0]],[[3,1],[3,3]]]}});
+}
+
+test('simulation scene supports seeded random maps and click target placement',async({page})=>{
+  const f=await fixture(page);enableScenario(f);await view(page,'workflow');
+  await expect(page.locator('#simulationPanel')).toBeVisible();
+  await page.locator('#simulationSeed').fill('123');
+  await page.getByRole('button',{name:'Generate random map',exact:true}).click();
+  await expect.poll(()=>f.calls.find(c=>c.path==='/api/simulation_scenario')?.body).toEqual({action:'random_map',seed:123});
+  await page.getByRole('button',{name:'Random target',exact:true}).click();
+  await expect.poll(()=>f.calls.filter(c=>c.path==='/api/simulation_scenario').at(-1)?.body).toEqual({action:'random_target',seed:123});
+  const scene=page.locator('#simulationScene'),box=await scene.boundingBox();
+  await scene.click({position:{x:box.width/2,y:box.height/2}});
+  const x=Number(await page.locator('#simulationTargetX').inputValue()),y=Number(await page.locator('#simulationTargetY').inputValue());
+  expect(x).toBeCloseTo(3,1);expect(y).toBeCloseTo(2,1);
+  await page.getByRole('button',{name:'Place target',exact:true}).click();
+  await expect.poll(()=>f.calls.filter(c=>c.path==='/api/simulation_scenario').at(-1)?.body).toEqual({action:'set_target',x,y});
+  expect(f.errors).toEqual([]);
+});
+
+test('simulation editor stays hidden on hardware and locked during a run',async({page})=>{
+  const f=await fixture(page);enableScenario(f);f.state.simulated=false;
+  await expect(page.locator('#simulationPanel')).toBeHidden();
+  f.state.simulated=true;f.state.mission.state='MAPPING';f.state.simulation_can_apply=false;
+  await expect(page.locator('#simulationPanel')).toBeVisible();
+  await expect(page.locator('#simulationRandomMap')).toBeDisabled();
+  await expect(page.locator('#simulationPlaceTarget')).toBeDisabled();
+  await page.locator('#simulationScene').click();
+  expect(f.calls.filter(c=>c.path==='/api/simulation_scenario')).toEqual([]);
+});
+
+test('simulation target coordinate entry validates input and shows server rejection',async({page})=>{
+  const f=await fixture(page);enableScenario(f);
+  await expect(page.locator('#simulationPlaceTarget')).toBeEnabled();
+  await page.locator('#simulationTargetX').fill('');
+  await page.getByRole('button',{name:'Place target',exact:true}).click();
+  await expect(page.locator('#feedback')).toContainText('Enter finite target coordinates');
+  expect(f.calls.filter(c=>c.path==='/api/simulation_scenario')).toEqual([]);
+  await page.route('**/api/simulation_scenario',route=>route.fulfill({status:400,json:{error:'Target is too close to a wall'}}));
+  await page.locator('#simulationTargetX').fill('3');
+  await page.getByRole('button',{name:'Place target',exact:true}).click();
+  await expect(page.locator('#feedback')).toContainText('too close to a wall');
+  await expect(page.locator('#simulationPlaceTarget')).toBeEnabled();
 });

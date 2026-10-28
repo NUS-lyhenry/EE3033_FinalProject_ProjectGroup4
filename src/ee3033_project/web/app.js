@@ -9,6 +9,7 @@ let modelLabels=null,labelKey='',labelsBusy=false;
 let waypointDraft=null;
 let coordinateMethodChosen=false,lastSavedMapId=null;
 let measuring=false,measurement=null;
+let simulationDraft=null,simulationRevision=null;
 const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Select an audacity level and configure navigation while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
 PAGES.workflow=['Map, find & return','Build the map, confirm it, set the start, then run the autonomous mission.'];
 let currentPage='workflow',workflowSerial=0,visionDirty=false;
@@ -54,6 +55,67 @@ async function send(path,body={}){
   const data=await r.json();if(!r.ok||data.success===false)throw Error(data.error||data.message||'Command rejected');return data;
 }
 async function action(path,body={}){releaseDrive();busy++;render();try{const d=await send(path,body);if(d.message)feedback(d.message);return d;}catch(e){feedback(e.message,true);throw e;}finally{busy--;render();}}
+function simulationEditable(){return setupIdle()&&snapshot?.simulated===true&&snapshot?.preview_backend==='main-ros'&&snapshot?.simulation_can_apply===true;}
+function sceneTransform(scene){
+  const [xmin,ymin,xmax,ymax]=scene.bounds,c=$('simulationScene'),padding=24;
+  const scale=Math.min((c.width-2*padding)/(xmax-xmin),(c.height-2*padding)/(ymax-ymin));
+  const left=(c.width-scale*(xmax-xmin))/2,top=(c.height-scale*(ymax-ymin))/2;
+  return {point:([x,y])=>[left+(x-xmin)*scale,top+(ymax-y)*scale],
+    world:([x,y])=>[xmin+(x-left)/scale,ymax-(y-top)/scale]};
+}
+function drawSimulation(){
+  const scene=snapshot?.simulation_scenario;if(!scene)return;
+  const c=$('simulationScene'),ctx=c.getContext('2d'),t=sceneTransform(scene);
+  ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#edf3f2';ctx.fillRect(0,0,c.width,c.height);
+  ctx.strokeStyle='#243d45';ctx.lineWidth=5;ctx.lineCap='round';
+  for(const wall of scene.walls){ctx.beginPath();ctx.moveTo(...t.point(wall[0]));ctx.lineTo(...t.point(wall[1]));ctx.stroke();}
+  const dot=(p,color,r,label)=>{const [x,y]=t.point(p);ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.font='13px sans-serif';ctx.fillText(label,x+10,y-10);};
+  dot(scene.start,'#2583ae',7,'Start');dot(scene.target,'#bd7b16',8,'Cup');
+  if(simulationDraft){const [x,y]=t.point(simulationDraft);ctx.strokeStyle='#bd7b16';ctx.lineWidth=2;ctx.setLineDash([4,3]);ctx.strokeRect(x-10,y-10,20,20);ctx.setLineDash([]);}
+}
+function renderSimulation(){
+  const s=snapshot,scene=s?.simulation_scenario;
+  $('simulationPanel').hidden=!(s?.simulated===true&&s?.preview_backend==='main-ros'&&scene);
+  if(!scene)return;
+  const editable=simulationEditable();
+  for(const id of ['simulationRandomMap','simulationRandomTarget','simulationPlaceTarget','simulationSeed','simulationTargetX','simulationTargetY'])$(id).disabled=!editable;
+  if(simulationRevision!==scene.revision){
+    simulationRevision=scene.revision;simulationDraft=null;
+    $('simulationTargetX').value=fmt(scene.target[0],3);$('simulationTargetY').value=fmt(scene.target[1],3);
+  }
+  $('simulationSeedStatus').textContent=scene.seed==null?'Default scene':`Seed ${scene.seed}`;
+  $('simulationSceneStatus').textContent=!editable?(s.simulation_scenario_reason||'Stop the current run before editing the scene.'):
+    simulationDraft?'Target selected. Press Place target to apply it.':'Click the scene or enter coordinates, then press Place target.';
+  $('simulationScene').style.cursor=editable?'crosshair':'default';drawSimulation();
+}
+async function editSimulation(kind){
+  if(!simulationEditable())return;
+  try{
+    const body={action:kind};
+    if(kind==='set_target'){
+      body.x=Number($('simulationTargetX').value);body.y=Number($('simulationTargetY').value);
+      if(!$('simulationTargetX').value.trim()||!$('simulationTargetY').value.trim()||!Number.isFinite(body.x)||!Number.isFinite(body.y))throw Error('Enter finite target coordinates.');
+    }else if($('simulationSeed').value.trim()){
+      body.seed=Number($('simulationSeed').value);
+      if(!Number.isInteger(body.seed)||body.seed<0||body.seed>4294967295)throw Error('Use a whole-number seed from 0 to 4294967295.');
+    }
+    const response=await action('simulation_scenario',body);
+    if(response.scenario){snapshot.simulation_scenario=response.scenario;simulationRevision=null;simulationDraft=null;renderSimulation();}
+  }catch(e){feedback(e.message,true);}
+}
+$('simulationRandomMap').onclick=()=>editSimulation('random_map');
+$('simulationRandomTarget').onclick=()=>editSimulation('random_target');
+$('simulationPlaceTarget').onclick=()=>editSimulation('set_target');
+for(const id of ['simulationTargetX','simulationTargetY'])$(id).oninput=()=>{
+  const x=Number($('simulationTargetX').value),y=Number($('simulationTargetY').value);
+  simulationDraft=Number.isFinite(x)&&Number.isFinite(y)?[x,y]:null;drawSimulation();
+};
+$('simulationScene').onclick=e=>{
+  if(!simulationEditable())return;
+  const c=$('simulationScene'),rect=c.getBoundingClientRect();
+  simulationDraft=sceneTransform(snapshot.simulation_scenario).world([(e.clientX-rect.left)*c.width/rect.width,(e.clientY-rect.top)*c.height/rect.height]);
+  $('simulationTargetX').value=fmt(simulationDraft[0],3);$('simulationTargetY').value=fmt(simulationDraft[1],3);renderSimulation();
+};
 function chosenMap(){return maps.find(m=>m.id===$('savedMaps').value);}
 function currentSavedMap(){return maps.find(m=>m.path===(snapshot?.saved_map||snapshot?.mission?.saved_map));}
 function running(){return snapshot?.stage?.managed?snapshot.stage.running:true;}
@@ -66,6 +128,7 @@ function render(){
   const s=snapshot,m=s.mission||{},active=ACTIVE.has(m.state),mapping=s.phase==='mapping',idle=setupIdle(),loaded=running(),managed=!!s.stage?.managed;
   $('previewNotice').hidden=!s.simulated;
   $('previewNotice').textContent=s.preview_backend==='main-ros'?`ALGORITHM SIMULATION · No robot is connected. ${s.preview_hint||''}`:'SIMULATED PREVIEW · No robot is connected. Values illustrate the operator workflow.';
+  renderSimulation();
   $('stop').disabled=!!s.read_only;
   setPill('connection',online?(s.preview_interactive?'Simulated connection':'Connected'):'Disconnected',online?'good':'bad');
   $('connectionBanner').hidden=online;

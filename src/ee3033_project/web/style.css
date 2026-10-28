@@ -21,3 +21,5 @@
 .map-tool-status{display:flex;flex-wrap:wrap;gap:8px 20px;padding:0 20px 12px;font-size:11px;color:var(--muted)}.map-tool-status span{max-width:100%}.dot.estimate{background:transparent;border:1.5px dashed #be761e}.map-panel button[aria-pressed="true"]{background:#fff3d9;border-color:#c48730;color:#845212}.map-wrap.measuring canvas{cursor:crosshair}
 
 .legend{flex-wrap:wrap}
+
+.simulation-layout{display:grid;grid-template-columns:1fr 1.2fr;gap:24px}.simulation-layout .buttons{margin-top:14px}.simulation-layout canvas{width:100%;height:auto;border:1px solid var(--line);border-radius:12px;touch-action:manipulation}.simulation-layout input{max-width:100%}@media(max-width:750px){.simulation-layout{grid-template-columns:1fr}}
