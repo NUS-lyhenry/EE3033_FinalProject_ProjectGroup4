@@ -193,5 +193,14 @@
     "The crop recovery used bearing intersection with zero floor observations; the earlier floor-only test assertion was overly restrictive and is retained explicitly.",
     "The diagnostic crop run included TF future-extrapolation and Nav2 action/service acknowledgement timeouts under load; it recovered through production fallback.",
     "Latest resumable-grid and direct-corridor performance fixes were added after the 95c8 native run and are not claimed as rerun here."
-  ]
+  ],
+  "additional_regression": {
+    "name": "integration_ros.py",
+    "passed": true,
+    "tests": 9,
+    "seconds": 21.016,
+    "code_version": "d8f733fae0fe7b6c04f13dc6225995b22513302a",
+    "mock_navigation_actions": true,
+    "matching_GetCostmap_fixture": true
+  }
 }
