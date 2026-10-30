@@ -10,7 +10,8 @@ sources replace rather than accumulate, and replacement must be consistent
 and no weaker in any likelihood covariance direction before map conditioning.
 The former less-than-ten-percent improvement early exit has been removed.
 
-Local Python regressions: **667 passed** (including two runner-readiness fixes).
+Local Python regressions: **675 passed**, including runner-readiness and
+fixed-reference accuracy regressions.
 Added coverage checks source ordering,
 stronger floor recovery, weaker/inconsistent factor rejection, anisotropic
 covariance, stale-source replacement, frozen results, default-off approach,
@@ -24,8 +25,9 @@ record replay, not a new independent end-to-end accuracy measurement.
 target layouts, each with A/B disabled and enabled. Exact committed snapshots
 differ only in the mode parameter. Camera, 0.05 m map resolution, detector,
 speed, safety and precision remain unchanged. It uses normal protected Console
-controls and read-only TF to transform simulator truth for error analysis;
-truth is never sent to localization. It saves every failed/censored attempt
+controls and a frozen, evidenced pre-motion map/world gauge for total error;
+report-time estimated TF is retained only for conditional geometry consistency.
+Truth is never sent to localization. It saves every failed/censored attempt
 without automatic retries. Native ROS and live comparison outcomes must be
 reported separately from the Python checks.
 
@@ -36,6 +38,49 @@ operator interruption are retained. Parameter diagnostics now wait briefly for
 service discovery and save stdout/stderr; mission setup follows the normal
 labels-ready gate. The complete four-case protocol is then started afresh,
 without changing algorithms, scenes or acceptance thresholds.
+
+Four complete real-ROS/simulated-sensor trials at algorithm commit `b617a46`
+all reached COMPLETE, met the configured sigma objective and verified return
+and stationary hold. Final code changes after that algorithm commit concern
+only the runner, tests, documentation and evidence. The 2.0 by 1.8 m open room
+used the unchanged 5 cm grid, camera, YOLO, speed and safety configuration.
+
+| Target layout | Deliberate A/B | Actual lateral moves | Fixed-gauge total error | Mission time |
+| --- | --- | ---: | ---: | ---: |
+| Normal | Off | 0 | 7.27 cm | 91.44 s |
+| Normal | On | 0 | 7.18 cm | 34.08 s |
+| Far/side | Off | 0 | 6.11 cm | 78.35 s |
+| Far/side | On | 1 | 4.97 cm | 48.34 s |
+
+Mission time excludes mapping/setup; total per-case time including those steps
+was 93.62–149.73 s. The off trials used one and six checked short approaches.
+All four final sources were floor_projection. The normal on trial never
+executed a baseline, and independent SLAM/search trajectories differed; its
+speed difference cannot be assigned to A/B. The far on trial demonstrates
+useful optional viewpoint movement, not a measured triangulation-fusion gain.
+These two layouts with one trial per mode do not justify deleting bearing
+intersection; keep deliberate A/B off by default and retain the optional path.
+
+The initial analysis used report-time AMCL TF to realign truth, producing
+0.14–0.64 cm conditional residuals. That realignment removes map/pose drift
+and is **not total coordinate accuracy**. The primary numbers above instead
+freeze the observed SLAM map/world gauge while WAITING before mapping Start,
+with physical pose [0,0,0] and continuous simulated odometry. The fixed-gauge
+reference assumes the saved map retains that gauge and is not a surveyed
+physical acceptance. Most of these trials' total offset accompanies the global
+map/pose transform; the comparison does not isolate SLAM versus AMCL causes.
+
+`validation/localization_ab_comparison_20261030.json` records both metrics,
+motion counts, uncertainty and source counts. Full raw sessions, unchanged
+initial summaries and corrected `comparison-analysis.json` remain under
+`results/localization_comparison_20261030_b617a462_harness02/`.
+Native bearing-only Image/TF → intersection → MMSE passed, as did all 15 native
+visual-search regressions (65.066 s), including automatic A/B bearing-only
+completion, weak precision, loss recovery and Stop. These isolated-domain
+checks and simulations do not establish physical robot performance.
+Full GitHub Actions algorithms, browser and native-navigation jobs passed at
+algorithm commit `b617a46`; later commits only change evaluation, tests,
+documentation and recorded evidence. Final-head CI must be read independently.
 
 ## Simulation mapping inherits assessment defaults — 2026-10-30
 

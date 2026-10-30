@@ -77,11 +77,13 @@ def test_reference_error_uses_only_fresh_recorded_tf(tmp_path, age, expected):
     api = SimpleNamespace(first_report_wall=100.,
                           first_report={'mission': {'target': {'x': 1.3, 'y': 2.5}}})
     result = runner.truth_metrics(tmp_path, scene, api, {})
+    # A report-time TF alone cannot establish a fixed map/world reference.
+    assert result['target_error_metres'] is None
     if expected is None:
-        assert result['target_error_metres'] is None
-        assert 'stale' in result['truth_unavailable_reason']
+        assert result['conditional_geometry_error_metres'] is None
+        assert 'stale' in result['conditional_truth_unavailable_reason']
     else:
-        assert result['target_error_metres'] == pytest.approx(expected)
+        assert result['conditional_geometry_error_metres'] == pytest.approx(expected)
 
 
 def test_state_artifacts_remove_nested_session_tokens():
@@ -112,3 +114,65 @@ def test_model_label_readiness_populates_cache_before_mission_setup(monkeypatch,
     monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
     assert runner.wait_labels(api) == dict(ready=True, labels=['cup'])
     assert len((tmp_path/'model-labels.jsonl').read_text().splitlines()) == 2
+
+
+def gauge_fixture(tmp_path, change=None, legacy=False):
+    import json
+    scene = {'target': [.5, -.25, 0.], 'start': [0., 0., 0.]}
+    initial_tf = dict(captured_wall=10., ros_time=10., transform_stamp=9.9,
+                      transform=[1., 2., math.pi/2])
+    report_tf = dict(captured_wall=100., ros_time=100., transform_stamp=99.9,
+                     transform=[1.5, 2., math.pi/2])
+    state = dict(captured_wall=10., state=dict(phase='mapping', mission={'state': 'WAITING'},
+        simulation_motion=dict(ground_truth=[0., 0., 0.], command=[0., 0.], actual_velocity=[0., 0.])))
+    controls = [dict(path='start', captured_wall=20.1, request_started_wall=20.)]
+    if change == 'wrong_phase':
+        state['state']['phase'] = 'mission'
+    elif change == 'wrong_pose':
+        state['state']['simulation_motion']['ground_truth'][0] = .1
+    elif change == 'nonzero_command':
+        state['state']['simulation_motion']['command'][0] = .1
+    elif change == 'nonzero_velocity':
+        state['state']['simulation_motion']['actual_velocity'][0] = .1
+    elif change == 'after_start':
+        initial_tf['captured_wall'] = state['captured_wall'] = 21.
+    elif change == 'no_start_evidence':
+        controls = []
+    states = [state]
+    if legacy:
+        controls[0].pop('request_started_wall')
+        later = json.loads(json.dumps(state))
+        later['captured_wall'] = 19.
+        states.append(later)
+    for name, rows in [('map-to-odom-tf.jsonl', [initial_tf, report_tf]),
+                       ('states.jsonl', states), ('controls.jsonl', controls)]:
+        (tmp_path/name).write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    api = SimpleNamespace(first_report_wall=100.,
+        first_report={'mission': {'target': {'x': 1.75, 'y': 2.5}}})
+    return scene, api
+
+
+def test_primary_map_error_keeps_localization_drift_when_dynamic_alignment_cancels_it(tmp_path):
+    scene, api = gauge_fixture(tmp_path)
+    result = runner.truth_metrics(tmp_path, scene, api, {})
+    assert result['target_error_metres'] == pytest.approx(.5)
+    assert result['conditional_geometry_error_metres'] == pytest.approx(0.)
+    assert result['map_truth'] == pytest.approx([1.25, 2.5])
+    assert result['frozen_initial_gauge']['mission_state'] == 'WAITING'
+
+
+@pytest.mark.parametrize('change', ['wrong_phase', 'wrong_pose', 'nonzero_command',
+                                  'nonzero_velocity', 'after_start', 'no_start_evidence'])
+def test_primary_accuracy_unavailable_without_proven_stationary_pre_start_gauge(tmp_path, change):
+    scene, api = gauge_fixture(tmp_path, change=change)
+    result = runner.truth_metrics(tmp_path, scene, api, {})
+    assert result['target_error_metres'] is None
+    assert result['conditional_geometry_error_metres'] == pytest.approx(0.)
+    assert 'not a fallback' in result['truth_unavailable_reason']
+
+
+def test_legacy_serial_pre_start_snapshot_preserves_frozen_gauge_evidence(tmp_path):
+    scene, api = gauge_fixture(tmp_path, legacy=True)
+    result = runner.truth_metrics(tmp_path, scene, api, {})
+    assert result['target_error_metres'] == pytest.approx(.5)
+    assert 'legacy' in result['frozen_initial_gauge']['evidence_kind']

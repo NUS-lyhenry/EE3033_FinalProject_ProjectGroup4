@@ -121,6 +121,7 @@ class Api:
         request = urllib.request.Request(self.base+path, data=json.dumps(body or {}).encode(),
             headers={'Content-Type': 'application/json', 'X-Project-Token': state['token'],
                      'X-Control-Generation': str(state['control_generation'])})
+        request_started_wall = time.time()
         try:
             with urllib.request.urlopen(request, timeout=65) as response:
                 result = json.load(response)
@@ -129,7 +130,8 @@ class Api:
         if result.get('success') is False:
             raise RuntimeError(str(result))
         with (self.output/'controls.jsonl').open('a') as stream:
-            stream.write(json.dumps(dict(captured_wall=time.time(), path=path, body=body or {},
+            stream.write(json.dumps(dict(captured_wall=time.time(), request_started_wall=request_started_wall,
+                                         path=path, body=body or {},
                                          response=sanitized(result)))+'\n')
         return result
 
@@ -265,32 +267,100 @@ def observe_tf(args, container, output):
     return proc, stream, error
 
 
-def truth_metrics(output, scene, api, result):
-    target = (api.first_report or {}).get('mission', {}).get('target') or result.get('mission', {}).get('target')
-    metrics = dict(reference='Simulator world equals odom_combined; target transformed by observed map->odom_combined TF',
-                   target_world=scene['target'], reported_target=target)
-    samples = []
-    path = output/'map-to-odom-tf.jsonl'
+def json_rows(path):
+    rows = []
     for line in path.read_text().splitlines() if path.exists() else []:
         try:
-            samples.append(json.loads(line))
+            rows.append(json.loads(line))
         except ValueError:
             continue
+    return rows
+
+
+def initial_mapping_gauge(output, scene, samples):
+    """Freeze the map/world frame before Start, never the later AMCL drift.
+
+    The simulator publishes its physical world pose directly in odom_combined.
+    A stationary pre-Start map/odom relation establishes the map gauge. Saved
+    maps are assumed to retain that gauge. With no such evidence, accuracy is
+    unavailable; later estimated alignment must not manufacture a reference.
+    """
+    states = json_rows(output/'states.jsonl')
+    starts = [row for row in json_rows(output/'controls.jsonl') if row.get('path') == 'start']
+    expected = scene.get('start')
+    if not states or not starts or expected is None:
+        return None
+    first_start = starts[0]
+    cutoff = first_start.get('request_started_wall')
+    evidence_kind = 'Recorded before the mapping Start request was sent'
+    if cutoff is None:
+        # Legacy artifacts record POST completion only. This runner makes its
+        # state GET immediately before each POST on one serial control thread;
+        # its last WAITING GET is therefore a conservative pre-request bound.
+        before = [row for row in states if row['captured_wall'] < first_start['captured_wall']
+                  and row['state'].get('phase') == 'mapping'
+                  and row['state'].get('mission', {}).get('state') == 'WAITING']
+        if not before:
+            return None
+        cutoff = max(row['captured_wall'] for row in before)
+        evidence_kind = 'Before the serial runner pre-Start WAITING snapshot (legacy POST-response timestamp)'
+    for tf in sorted(samples, key=lambda row: row['captured_wall']):
+        if tf['captured_wall'] >= cutoff:
+            continue
+        nearest = min(states, key=lambda row: abs(row['captured_wall']-tf['captured_wall']))
+        state = nearest['state']
+        motion = state.get('simulation_motion') or {}
+        pose = motion.get('ground_truth')
+        if (state.get('phase') != 'mapping' or state.get('mission', {}).get('state') != 'WAITING'
+                or pose is None or len(pose) != 3 or len(tf.get('transform', [])) != 3
+                or not all(math.isfinite(v) for v in (*pose, *expected, *tf['transform']))
+                or math.dist(pose[:2], expected[:2]) > 1e-5
+                or abs(math.atan2(math.sin(pose[2]-expected[2]), math.cos(pose[2]-expected[2]))) > 1e-5
+                or any(abs(v) > 1e-5 for v in motion.get('command', [math.inf, math.inf]))
+                or any(abs(v) > 1e-5 for v in motion.get('actual_velocity', [math.inf, math.inf]))
+                or abs(nearest['captured_wall']-tf['captured_wall']) > .5
+                or not -.5 <= tf['ros_time']-tf['transform_stamp'] <= 1.):
+            continue
+        return dict(transform_sample=tf, evidence_kind=evidence_kind,
+            state_snapshot_wall=nearest['captured_wall'], phase=state['phase'],
+            mission_state=state['mission']['state'], physical_pose=pose, expected_start=expected,
+            command=motion['command'], actual_velocity=motion['actual_velocity'],
+            pre_start_cutoff_wall=cutoff, seconds_before_start_bound=cutoff-tf['captured_wall'])
+    return None
+
+
+def truth_metrics(output, scene, api, result):
+    target = (api.first_report or {}).get('mission', {}).get('target') or result.get('mission', {}).get('target')
+    metrics = dict(reference='Frozen pre-Start stationary SLAM map/world gauge; simulator world equals odom_combined',
+        reference_limit='Assumes saved-map gauge is unchanged; simulation evidence, not a physical survey',
+        conditional_geometry_reference='Estimated map-to-odom TF at report time; removes localization drift and is not total map accuracy',
+        target_world=scene['target'], reported_target=target, target_error_metres=None,
+        conditional_geometry_error_metres=None)
+    samples = json_rows(output/'map-to-odom-tf.jsonl')
+    gauge = initial_mapping_gauge(output, scene, samples)
+    if gauge is not None:
+        point = map_point(gauge['transform_sample']['transform'], scene['target'])
+        metrics.update(frozen_initial_gauge=gauge, map_truth=point)
+        if target:
+            metrics['target_error_metres'] = math.hypot(target['x']-point[0], target['y']-point[1])
+        else:
+            metrics['truth_unavailable_reason'] = 'No reported target'
+    else:
+        metrics['truth_unavailable_reason'] = 'No proven pre-Start stationary map/world gauge; dynamic alignment is not a fallback'
     if target and samples and api.first_report_wall is not None:
         tf = min(samples, key=lambda row: abs(row['captured_wall']-api.first_report_wall))
         delta = abs(tf['captured_wall']-api.first_report_wall)
         age = tf['ros_time']-tf['transform_stamp']
-        metrics.update(transform_sample=tf, sampling_delta_seconds=delta, transform_age_seconds=age)
+        metrics.update(conditional_transform_sample=tf, conditional_sampling_delta_seconds=delta,
+                       conditional_transform_age_seconds=age)
         if delta <= .5 and -.5 <= age <= 1.:
             point = map_point(tf['transform'], scene['target'])
-            metrics.update(map_truth=point,
-                target_error_metres=math.hypot(target['x']-point[0], target['y']-point[1]))
+            metrics.update(conditional_map_truth=point,
+                conditional_geometry_error_metres=math.hypot(target['x']-point[0], target['y']-point[1]))
         else:
-            metrics.update(target_error_metres=None,
-                truth_unavailable_reason='TF or first-report sampling was too stale for an accuracy claim')
+            metrics['conditional_truth_unavailable_reason'] = 'TF or report sampling was too stale for conditional geometry'
     else:
-        metrics['target_error_metres'] = None
-        metrics['truth_unavailable_reason'] = 'No report or no read-only map/odom TF sample'
+        metrics['conditional_truth_unavailable_reason'] = 'No report or no read-only map/odom TF sample'
     return metrics
 
 
