@@ -99,7 +99,7 @@ Planner-only comparisons can be reproduced with
 `PYTHONPATH=src/ee3033_project python3 scripts/benchmark_search.py`.
 It compares all three modes under ideal observations and reports planning
 latency separately. Results depend on layout; they do not validate hardware.
-See `validation/search_benchmark_20261027.json` and `TESTING.md`.
+See `validation/search_benchmark_20261030.json` and `TESTING.md`.
 For a real-YOLO simulation workflow check, run
 `python3 scripts/verify_algorithm_preview.py --url http://127.0.0.1:8792`;
 this script refuses a physical-robot console.

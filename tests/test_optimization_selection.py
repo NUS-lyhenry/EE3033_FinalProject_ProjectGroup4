@@ -229,6 +229,24 @@ def test_baseline_does_not_invent_missing_camera_origin():
     assert 'camera origin' in item.last_goal_reason
 
 
+def test_baseline_deadline_keeps_best_completed_visible_candidate(monkeypatch):
+    planner = baseline_planner()
+    item = bearing_target()
+    now = [10.]
+    calls = []
+    monkeypatch.setattr(acquisition.time, 'monotonic', lambda: now[0])
+    def visible(_p, goal, **kwargs):
+        calls.append(goal)
+        now[0] += .08
+        return SimpleNamespace(visible=now[0] < kwargs['deadline'], reason='ok',
+            support=1., range_support=1., camera_origin=goal[:2])
+    monkeypatch.setattr(acquisition, 'observation_visibility', visible)
+    goal = item.bearing_baseline(planner, (2., 2., 0.), deadline=10.2)
+    assert len(calls) == 3
+    assert goal in calls[:2]  # The third, unfinished check cannot authorize motion.
+    assert planner.world_to_cell(*goal[:2]) in item.visited
+
+
 @pytest.mark.parametrize('stop', ['deadline', 'cancel'])
 def test_baseline_stops_during_visibility_without_selecting_earlier_option(monkeypatch, stop):
     planner = baseline_planner()

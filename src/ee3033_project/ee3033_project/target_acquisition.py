@@ -268,8 +268,10 @@ class SingleTarget:
         ty = source[1] + mid * math.sin(bearing)
         options = []
         for radius in (.4, -.4, .6, -.6, .8, -.8, -.3):
-            if (deadline is not None and time.monotonic() >= deadline) or (cancel is not None and cancel.is_set()):
+            if cancel is not None and cancel.is_set():
                 return None
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             angle = bearing + (math.pi / 2 if radius != -.3 else 0.)
             x, y = pose[0] + radius * math.cos(angle), pose[1] + radius * math.sin(angle)
             cell = planner.world_to_cell(x, y)
@@ -281,6 +283,10 @@ class SingleTarget:
             yaw = math.atan2(ty - y, tx - x) - camera_yaw
             visibility = observation_visibility(planner, (x, y, yaw), source_origin=source,
                 bearing=bearing, camera_model=camera, deadline=deadline, cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                return None
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             if not visibility.visible:
                 self.last_goal_reason = 'Baseline visibility rejected: ' + visibility.reason
                 continue
@@ -299,6 +305,10 @@ class SingleTarget:
             score = (2.0 * min(parallax) + .25 * visibility.support
                      + .15 * visibility.range_support - .10 * path_length - .025 * turn)
             options.append((score, -path_length, cell, (x, y, yaw), min(parallax), radius))
+        # A later visibility query can exhaust Mission's 0.2 s callback budget.
+        # Keep earlier fully checked choices; cancellation still discards all.
+        if cancel is not None and cancel.is_set():
+            return None
         if not options:
             self.last_goal_reason = 'No map-safe connected baseline candidate'
             return None

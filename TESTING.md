@@ -3,13 +3,21 @@
 ## Frontier, bearing baseline and adaptive search selection — 2026-10-30
 
 This branch starts from main `fbef8d5`; it does not include the unmerged
-attitude/localization work in PR #9. All 633 Python checks and source compilation
+attitude/localization work in PR #9. All 634 Python checks and source compilation
 passed locally with Python 3.13. New regressions exercise the actual mission
 selector for all three modes, adaptive gain/deadline/cancellation behavior,
 native path rejection, a wall-detour frontier and baseline parallax/path costs
 with visibility, connectivity and allowed-position rejection. Existing baseline
 reason strings remain compatible. No YOLO, camera calibration or chassis safety
 control was changed.
+
+The initial CI run caught a bearing-only mission returning FOUND_UNLOCALIZED:
+ranking every baseline could exhaust Mission's 0.2 s callback budget and discard
+earlier fully checked candidates. Baseline selection now returns the best
+completed candidate on deadline, excludes the unfinished query, and discards
+all candidates on cancellation. A deterministic regression reproduces the
+budget boundary. The original native A/B mission test is retained unchanged;
+current-head native CI must confirm its outcome.
 
 `validation/search_benchmark_20261030.json` records a single planner-only run of
 greedy/lookahead/adaptive in the existing open/divider/alcove layouts, under ideal
