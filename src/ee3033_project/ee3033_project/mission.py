@@ -53,6 +53,7 @@ class Mission(Node):
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
             'max_candidates': 250, 'max_goals': 120, 'coverage_fraction': 0.98,
             'candidate_limit': 1000, 'map_partial': False,
+            'search_strategy': 'adaptive', 'adaptive_margin': 0.08,
             'observe_seconds': 3.0, 'min_observation_frames': 3,
             'search_linear_speed': 0.12, 'search_angular_speed': 0.4,
             'max_observation_retries': 2, 'goal_timeout': 75.0, 'mission_timeout': 900.0,
@@ -70,9 +71,14 @@ class Mission(Node):
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
             'min_observe_seconds': .8, 'acquisition_seconds': 45.,
             'acquisition_steps': 5, 'navigation_profile': 'original',
+            'enable_ab_maneuver': False,
             'localize_wait_seconds': 2.,
             'home_behavior_tree': '',
         })
+        if self.p['search_strategy'] not in ('greedy', 'lookahead', 'adaptive'):
+            raise ValueError('search_strategy must be greedy, lookahead or adaptive')
+        if not isinstance(self.p['adaptive_margin'], (int, float)) or not 0. <= self.p['adaptive_margin'] <= 1.:
+            raise ValueError('adaptive_margin must be between 0 and 1')
         if self.p['navigation_profile'] == 'fast':
             from rclpy.parameter import Parameter
             self.set_parameters([Parameter('search_linear_speed', value=.16),
@@ -151,7 +157,8 @@ class Mission(Node):
         self.geometry_error = None
         self.geometry_fault_since = None
         self.search_cost_source = 'safe grid paths'
-        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'])
+        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'],
+                                        self.p['enable_ab_maneuver'])
         self.acquisition_wait = 0.
         self.acquisition_retry_after = 0.
         self.target_detected = False
@@ -504,7 +511,8 @@ class Mission(Node):
             goal.behavior_tree=self.p['home_behavior_tree']
         elif kind=='acquire' or (kind=='home' and not self.p['return_heading_required']):
             from ament_index_python.packages import get_package_share_directory
-            name='navigate_observation.xml' if kind=='acquire' else 'navigate_home.xml'
+            name=('navigate_approach.xml' if self.acquisition.last_goal_action=='approach'
+                  else 'navigate_observation.xml') if kind=='acquire' else 'navigate_home.xml'
             goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/'behavior_trees'/name)
         self.set_state('RETURNING' if kind == 'home' else 'ACQUIRING' if kind == 'acquire' else 'SEARCHING',
                        'Returning to recorded start' if kind == 'home'
@@ -528,7 +536,7 @@ class Mission(Node):
             # when travel ends, rather than this remaining-distance test.
             return self.goal_translation
         return bool(current and math.hypot(pose.pose.position.x-current[0],
-                                          pose.pose.position.y-current[1])>=.12)
+                                          pose.pose.position.y-current[1])>=(.04 if kind=='acquire' else .12))
 
     def goal_response(self, future, serial):
         try:
@@ -722,13 +730,18 @@ class Mission(Node):
             raise RuntimeError('Search planning canceled')
         if time.monotonic() >= deadline:
             return next((index for _,index in ranked if math.isfinite(lengths.get(index,0.))),None)
-        # Leave the final beam search a cooperative deadline as well.
+        if self.p['search_strategy'] == 'greedy':
+            refined = ranks(lengths)
+            return refined[0][1] if refined else next((i for _, i in ranked if math.isfinite(lengths.get(i, 0.))), None)
+        # The adaptive selector compares the best beam route to the
+        # best greedy-root route using the same coverage-time utility.
         return self.planner.lookahead(*current[:2], self.seen,
             self.attempted | self.failed_options, yaw=current[2],
             linear_speed=self.get_parameter('search_linear_speed').value,
             angular_speed=self.get_parameter('search_angular_speed').value,
             observation_seconds=min(self.p['observe_seconds'], self.p['min_observe_seconds']),
-            path_lengths=lengths, deadline=deadline, cancel=self.plan_cancel)
+            path_lengths=lengths, deadline=deadline, cancel=self.plan_cancel,
+            strategy=self.p['search_strategy'], adaptive_margin=self.p['adaptive_margin'])
 
     def dispatch_viewpoint(self, choice):
         if self.target_detected or self.plan_cancel.is_set():
@@ -777,9 +790,6 @@ class Mission(Node):
             sites = int(data.get('sites', max(1, len(self.acquisition.positions))))
             if not self.local_sigmas or sites > self.local_sigmas[-1][0]:
                 self.local_sigmas.append((sites, math.sqrt(variance)))
-            if self.target_detected and len(self.local_sigmas)>=2 and sites>=2 and self.local_sigmas[-1][1]>=.9*self.local_sigmas[-2][1]:
-                self.finish_localization('Additional view improved uncertainty by less than ten percent')
-                return
             if variance<=self.p['max_target_variance'] or math.isclose(variance,self.p['max_target_variance'],rel_tol=1e-9):
                 self.report_target(estimate,'preferred_precision')
         except (ValueError,TypeError,KeyError):pass
@@ -1008,6 +1018,8 @@ class Mission(Node):
                 'localization_reason': self.localization_reason,
                 'localization_active_seconds':self.acquisition.active_seconds,
                 'localization_travel_seconds':self.acquisition.travel_seconds,
+                'enable_ab_maneuver':self.acquisition.enable_ab_maneuver,
+                'localization_budget_seconds':self.p['acquisition_seconds'],
                 'localization_stage':self.acquisition.phase,
                 'bearing_progress':(self.current_target_estimate or {}).get('bearing_progress'),
                 'navigation_recoveries':self.navigation_recoveries,

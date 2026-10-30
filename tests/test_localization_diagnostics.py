@@ -114,3 +114,21 @@ def test_mmse_rejection_is_distinguished_from_unfinished_confirmation():
     assert not m.update(d,11.1)
     assert mmse_rejection_reason(m,d,11.1)=='mmse_duplicate_or_reordered_evidence'
     assert mmse_rejection_reason(m,dict(d,stamp=11.2,x=3.),11.2)=='mmse_innovation_rejected'
+
+
+def test_current_floor_frame_is_considered_before_weaker_joint_factor():
+    n,events=filter_node()
+    for origin,start in (((0.,0.),11.),((0.,1.),13.)):
+        for i in range(4):
+            stamp=start+i*.2
+            b=bearing(stamp,origin)
+            # These deliberately broad bearing uncertainties yield a weaker
+            # joint factor than the precise, fresh floor evidence.
+            b['bearing_sigma']=.1;b['position_sigma']=.1
+            floor=dict(stamp=stamp,x=1.,y=1.,sigma=.02,label='cup',confidence=.9,box=b['box'])
+            deliver(n,stamp,[b],[floor])
+    assert events[-1]['intersection']['accepted']
+    assert events[-1]['mmse']['factor_rejection']=='weaker_covariance'
+    assert events[-1]['mmse']['source']=='floor_projection'
+    assert events[-1]['mmse']['updated']
+    assert n.tracker.factor is None and len(n.tracker.samples)>1

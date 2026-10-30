@@ -1,5 +1,141 @@
 # Validation record
 
+## Localization source selection and optional A/B — 2026-10-30
+
+Deliberate A/B maneuvers now default off; the retained mode is selected with
+`project_mission.enable_ab_maneuver`. Short approach steps use a dedicated
+2.5 cm goal checker and the existing footprint, connector and visibility gates.
+Joint bearing factors preserve their full covariance. Correlated floor/joint
+sources replace rather than accumulate, and replacement must be consistent
+and no weaker in any likelihood covariance direction before map conditioning.
+The former less-than-ten-percent improvement early exit has been removed.
+
+Local Python regressions: **675 passed**, including runner-readiness and
+fixed-reference accuracy regressions.
+Added coverage checks source ordering,
+stronger floor recovery, weaker/inconsistent factor rejection, anisotropic
+covariance, stale-source replacement, frozen results, default-off approach,
+connector rejection and continued refinement after a worse second site. A replay
+of the earlier divider-room records retains the approximately (0.952, 0.902)
+floor estimate instead of replacing it with the weaker joint result; this is
+record replay, not a new independent end-to-end accuracy measurement.
+
+`scripts/compare_localization_modes.py --sha <full SHA> --output <new directory>
+--run` performs four independent full SLAM/mission trials: two small open-room
+target layouts, each with A/B disabled and enabled. Exact committed snapshots
+differ only in the mode parameter. Camera, 0.05 m map resolution, detector,
+speed, safety and precision remain unchanged. It uses normal protected Console
+controls and a frozen, evidenced pre-motion map/world gauge for total error;
+report-time estimated TF is retained only for conditional geometry consistency.
+Truth is never sent to localization. It saves every failed/censored attempt
+without automatic retries. Native ROS and live comparison outcomes must be
+reported separately from the Python checks.
+
+The first harness attempt exposed ROS CLI discovery racing readiness and the
+need to read the configured model labels before mission loading. Both occurred
+before localization could run. Their original records and a separately marked
+operator interruption are retained. Parameter diagnostics now wait briefly for
+service discovery and save stdout/stderr; mission setup follows the normal
+labels-ready gate. The complete four-case protocol is then started afresh,
+without changing algorithms, scenes or acceptance thresholds.
+
+Four complete real-ROS/simulated-sensor trials at algorithm commit `b617a46`
+all reached COMPLETE, met the configured sigma objective and verified return
+and stationary hold. Final code changes after that algorithm commit concern
+only the runner, tests, documentation and evidence. The 2.0 by 1.8 m open room
+used the unchanged 5 cm grid, camera, YOLO, speed and safety configuration.
+
+| Target layout | Deliberate A/B | Actual lateral moves | Fixed-gauge total error | Mission time |
+| --- | --- | ---: | ---: | ---: |
+| Normal | Off | 0 | 7.27 cm | 91.44 s |
+| Normal | On | 0 | 7.18 cm | 34.08 s |
+| Far/side | Off | 0 | 6.11 cm | 78.35 s |
+| Far/side | On | 1 | 4.97 cm | 48.34 s |
+
+Mission time excludes mapping/setup; total per-case time including those steps
+was 93.62–149.73 s. The off trials used one and six checked short approaches.
+All four final sources were floor_projection. The normal on trial never
+executed a baseline, and independent SLAM/search trajectories differed; its
+speed difference cannot be assigned to A/B. The far on trial demonstrates
+useful optional viewpoint movement, not a measured triangulation-fusion gain.
+These two layouts with one trial per mode do not justify deleting bearing
+intersection; keep deliberate A/B off by default and retain the optional path.
+
+The initial analysis used report-time AMCL TF to realign truth, producing
+0.14–0.64 cm conditional residuals. That realignment removes map/pose drift
+and is **not total coordinate accuracy**. The primary numbers above instead
+freeze the observed SLAM map/world gauge while WAITING before mapping Start,
+with physical pose [0,0,0] and continuous simulated odometry. The fixed-gauge
+reference assumes the saved map retains that gauge and is not a surveyed
+physical acceptance. Most of these trials' total offset accompanies the global
+map/pose transform; the comparison does not isolate SLAM versus AMCL causes.
+
+`validation/localization_ab_comparison_20261030.json` records both metrics,
+motion counts, uncertainty and source counts. Full raw sessions, unchanged
+initial summaries and corrected `comparison-analysis.json` remain under
+`results/localization_comparison_20261030_b617a462_harness02/`.
+Native bearing-only Image/TF → intersection → MMSE passed, as did all 15 native
+visual-search regressions (65.066 s), including automatic A/B bearing-only
+completion, weak precision, loss recovery and Stop. These isolated-domain
+checks and simulations do not establish physical robot performance.
+Full GitHub Actions algorithms, browser and native-navigation jobs passed at
+algorithm commit `b617a46`; later commits only change evaluation, tests,
+documentation and recorded evidence. Final-head CI must be read independently.
+
+## Simulation mapping inherits assessment defaults — 2026-10-30
+
+The preview entry no longer overrides mapping resolution with 0.0125 m. It
+inherits Console's 0.05 m default and forwards it through the same managed
+mapping launch as assessment. The sensor/chassis simulator still supplies
+synthetic inputs; mapping, frontier selection, navigation and safety logic are
+the project implementations.
+
+The operator's initial two attempts sent zero frontier goals and saved partial
+maps while remaining at the origin. An isolated, stationary replay of the same
+450-beam scan exactly reproduced the 0.0125 m map: only 0.159 m of footprint-safe
+reach, below the selector's 0.35 m goal exclusion. At 0.05 m with the same SLAM
+observation threshold, reach extended to 0.978 m and a frontier goal was selected.
+Original-main and optimized selectors both rejected the captured fine-grid map.
+This establishes the startup configuration mismatch, not full mission success.
+
+All 81 assessment, simulator-control/geometry, scan and preview checks passed,
+along with preview source compilation. Restarting the clean UI leaves mapping
+and mission Start to the operator; previous maps and logs are preserved.
+
+## Frontier, bearing baseline and adaptive search selection — 2026-10-30
+
+This branch starts from main `fbef8d5`; it does not include the unmerged
+attitude/localization work in PR #9. All 634 Python checks and source compilation
+passed locally with Python 3.13. New regressions exercise the actual mission
+selector for all three modes, adaptive gain/deadline/cancellation behavior,
+native path rejection, a wall-detour frontier and baseline parallax/path costs
+with visibility, connectivity and allowed-position rejection. Existing baseline
+reason strings remain compatible. No YOLO, camera calibration or chassis safety
+control was changed.
+
+The initial CI run caught a bearing-only mission returning FOUND_UNLOCALIZED:
+ranking every baseline could exhaust Mission's 0.2 s callback budget and discard
+earlier fully checked candidates. Baseline selection now returns the best
+completed candidate on deadline, excludes the unfinished query, and discards
+all candidates on cancellation. A deterministic regression reproduces the
+budget boundary. The original native A/B mission test is retained unchanged;
+current-head native CI must confirm its outcome.
+
+`validation/search_benchmark_20261030.json` records a single planner-only run of
+greedy/lookahead/adaptive in the existing open/divider/alcove layouts, under ideal
+observations and identical speed estimates. All nine routes covered every target
+cell. Greedy versus adaptive mean first visibility was 107.18/102.91 s (open),
+125.19/121.29 s (divider), and 136.10/131.17 s (alcove). Estimated full coverage
+route times were 506.31/522.50 s, 631.11/598.26 s, and 770.44/621.85 s,
+respectively: adaptive is not uniformly faster. Planning p95 was about
+0.106–0.120 s for adaptive versus 0.006–0.007 s for greedy on this Mac.
+Route timing excludes planning latency, inference, localization, mapping and
+return; the result is not an end-to-end mission or hardware measurement.
+
+Native ROS integration remains subject to current-head CI. No physical robot
+deployment or motion test, and no local ROS world simulation, was performed for
+this change.
+
 ## Supervised RPP navigation development — 2026-10-28
 
 This supersedes the first-revision restoration below. Fixed and random scene

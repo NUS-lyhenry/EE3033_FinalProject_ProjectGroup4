@@ -389,8 +389,16 @@ class CoveragePlanner:
 
     def lookahead(self, x, y, observed, excluded=(), yaw=0., linear_speed=.12,
                   angular_speed=.4, observation_seconds=.8, path_lengths=None,
-                  deadline=None, cancel=None):
-        """Three-step beam search maximizing area under a 60-second coverage curve."""
+                  deadline=None, cancel=None, strategy='lookahead', adaptive_margin=.08):
+        """Three-step beam planning; optionally require a gain over greedy.
+
+        The adaptive baseline is the best evaluated path beginning with the
+        greedy action, measured using the SAME 60-second utility. Preserve
+        that branch during pruning to avoid a biased comparison. A deadline
+        conservatively falls back to the one-step greedy candidate.
+        """
+        if strategy not in ('lookahead', 'adaptive') or not 0. <= adaptive_margin <= 1.:
+            raise ValueError('Invalid lookahead strategy or adaptive margin')
         try:
             ranked = self.rank_viewpoints(x, y, observed, excluded, yaw, linear_speed,
                 angular_speed, observation_seconds, path_lengths, deadline, cancel)
@@ -410,18 +418,18 @@ class CoveragePlanner:
                     shortlist.append(i)
         initial = Viewpoint(x, y, yaw, frozenset())
         beam = [(0., 0., (), frozenset(observed), initial)]
-        best = None
+        best = greedy_best = None
         for _ in range(3):
             expanded = []
             for utility, elapsed, route, seen, previous in beam:
                 if cancel is not None and cancel.is_set():
                     raise RuntimeError('Search planning canceled')
                 if deadline is not None and time.monotonic() >= deadline:
-                    return best[2][0] if best else fallback
+                    return fallback if strategy == 'adaptive' else best[2][0] if best else fallback
                 try:
                     distances, _ = self.travel_field(previous.x, previous.y, deadline, cancel)
                 except TimeoutError:
-                    return best[2][0] if best else fallback
+                    return fallback if strategy == 'adaptive' else best[2][0] if best else fallback
                 for i in shortlist:
                     if i in route:
                         continue
@@ -442,10 +450,27 @@ class CoveragePlanner:
                     expanded.append(entry)
                     if best is None or (value, -arrival) > (best[0], -best[1]):
                         best = entry
+                    if entry[2][0] == fallback and (
+                            greedy_best is None or (value, -arrival) > (greedy_best[0], -greedy_best[1])):
+                        greedy_best = entry
             if not expanded:
                 break
-            beam = sorted(expanded, key=lambda e: (-e[0], e[1], e[2]))[:12]
-        return best[2][0] if best and best[0] > 0 else fallback
+            ordered = sorted(expanded, key=lambda e: (-e[0], e[1], e[2]))
+            beam = ordered[:12]
+            if strategy == 'adaptive':
+                # Keep one greedy-root path in the beam for an apples-to-apples
+                # comparison; do not let pruning erase the baseline evidence.
+                greedy_routes = [e for e in ordered if e[2][0] == fallback]
+                if greedy_routes and greedy_routes[0] not in beam:
+                    beam[-1] = greedy_routes[0]
+        if not best or best[0] <= 0:
+            return fallback
+        if strategy == 'adaptive':
+            if greedy_best is None or best[2][0] == fallback:
+                return fallback
+            if best[0] < greedy_best[0] * (1. + adaptive_margin):
+                return fallback
+        return best[2][0]
 
     def plan(self, start_x, start_y):
         options = list(self.prepare(start_x, start_y))

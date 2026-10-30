@@ -11,6 +11,8 @@ project_mission:
     viewpoint_headings: 6
     max_candidates: 250
     candidate_limit: 1000  # Fail explicitly above this bound; never silently drop views.
+    search_strategy: adaptive  # greedy, lookahead or adaptive; viewpoint selection only.
+    adaptive_margin: 0.08  # Require 8% more 60-second coverage utility than the greedy-root route.
     max_goals: 120
     coverage_fraction: 0.98
     observe_seconds: 3.0
@@ -35,6 +37,7 @@ project_mission:
     sensor_timeout: 1.0
     perception_timeout: 3.0
     localize_wait_seconds: 2.0  # Allow exposure-time motion window + distinct frames.
+    enable_ab_maneuver: false  # Explicitly opt in to deliberate lateral A/B moves.
     results_directory: ~/ee3033_results
 
 project_perception:

@@ -42,6 +42,39 @@ class MapMMSE:
         self.frozen=None
         self.label=None
         self.factor = None
+        self.last_factor_rejection = self.last_update_rejection = None
+
+    def replacement_rejection(self, observation, now):
+        """Compare measurement information before conditioning on the map.
+
+        Correlated sources replace one another, never accumulate. Require a
+        replacement to be no less informative in every direction; map-induced
+        posterior shrinkage must not make a weak measurement appear precise.
+        """
+        previous = self.result
+        if (previous is None or previous.get('prior_conflict')
+                or not 0 <= now-previous['stamp'] <= self.max_age):
+            return None
+        try:
+            sigma = float(observation['sigma'])
+            covariance = np.asarray(observation.get('covariance', np.eye(2)*sigma*sigma), dtype=float)
+            point = np.asarray([observation['x'], observation['y']], dtype=float)
+            if (sigma <= 0 or covariance.shape != (2, 2)
+                    or not np.isfinite([sigma, *point, *covariance.ravel()]).all()
+                    or not np.allclose(covariance, covariance.T)
+                    or np.linalg.eigvalsh(covariance).min() <= 0):
+                return 'invalid_covariance'
+            if observation['label'] != self.label:
+                return 'different_target'
+            old = np.asarray(previous['likelihood_covariance'])
+            if np.linalg.eigvalsh(old-covariance).min() < -1e-9:
+                return 'weaker_covariance'
+            delta = point-np.asarray(previous['likelihood_mean'])
+            if float(delta@np.linalg.solve(old+covariance, delta)) > 16.:
+                return 'inconsistent_measurement'
+        except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
+            return 'invalid_measurement'
+        return None
 
     def update_factor(self, factor, now):
         """Replace correlated pixel projections with one joint geometric factor.
@@ -50,10 +83,15 @@ class MapMMSE:
         A. Confirmation uses their distinct source frames, not repeated factors.
         """
         sources = factor.get('source_frames', [])
+        self.last_factor_rejection = None
         if (len(set(sources)) < self.frames*2 or factor.get('sites', 0) < 2
                 or self.frozen is not None):
             return False
         if self.factor and factor['stamp'] <= self.factor['stamp']:
+            return False
+        rejection = self.replacement_rejection(factor, now)
+        if rejection is not None:
+            self.last_factor_rejection = rejection
             return False
         # All floor measurements of this locked object share the same images
         # and mount error. The joint intersection replaces that likelihood.
@@ -62,7 +100,7 @@ class MapMMSE:
         self.result = None
         self.streak = 0
         self.factor = None
-        if not self.update(factor, now):
+        if not self.update(factor, now, _joint_factor=True):
             self.samples, self.result, self.streak, self.label, self.factor = previous
             return False
         self.factor = dict(factor)
@@ -116,10 +154,24 @@ class MapMMSE:
         if not deferred or not self.samples or stamp-self.samples[-1][0]>self.max_gap:
             self.streak=0
 
-    def update(self,d,now):
+    def update(self,d,now,*,_joint_factor=False):
+        self.last_update_rejection = None
+        if self.frozen is not None:return False
         if self.factor is not None:
-            # Raw floor projections must not re-enter a joint bearing likelihood.
-            return False
+            rejection = self.replacement_rejection(d, now)
+            if rejection is not None:
+                self.last_update_rejection = rejection
+                return False
+            # A stronger fresh floor view replaces the joint factor. It is
+            # never counted as independent evidence from the same pixels.
+            previous = self.samples, self.result, self.streak, self.label, self.factor
+            self.samples = deque(maxlen=self.samples.maxlen)
+            self.result = self.factor = None
+            self.streak = 0
+            if not self.update(d, now):
+                self.samples, self.result, self.streak, self.label, self.factor = previous
+                return False
+            return True
         if self.frozen is not None or self.grid is None or not len(self.points):return False
         try:
             stamp,x,y,sigma,confidence=[float(d[k]) for k in ('stamp','x','y','sigma','confidence')]
@@ -145,19 +197,25 @@ class MapMMSE:
                 return False
         self.samples.append((stamp,x,y,covariance,confidence))
         self.streak+=1
-        self.result=self._posterior()
+        self.result=self._posterior(joint=_joint_factor)
         return True
 
-    def _posterior(self):
+    def _posterior(self, joint=False):
         positions=np.array([[s[1],s[2]] for s in self.samples])
         covariances=np.array([s[3] for s in self.samples])
-        precisions=np.linalg.inv(covariances*(1-self.common_fraction))
-        independent=np.linalg.inv(precisions.sum(axis=0))
-        mean=independent@np.einsum('nij,nj->i',precisions,positions)
-        common=max(np.linalg.eigvalsh(c).max() for c in covariances)*self.common_fraction
-        residual=positions-mean
-        # Retain model-mismatch scatter, rather than dividing it away with N.
-        likelihood=independent+np.eye(2)*common+(residual.T@residual)/len(residual)
+        if joint:
+            # This one A/B/C factor already models its source-frame and pose
+            # uncertainty. Preserve its full ellipse instead of adding another
+            # isotropic video-frame error envelope to both axes.
+            mean, likelihood = positions[0], covariances[0]
+        else:
+            precisions=np.linalg.inv(covariances*(1-self.common_fraction))
+            independent=np.linalg.inv(precisions.sum(axis=0))
+            mean=independent@np.einsum('nij,nj->i',precisions,positions)
+            common=max(np.linalg.eigvalsh(c).max() for c in covariances)*self.common_fraction
+            residual=positions-mean
+            # Retain model-mismatch scatter, rather than dividing it away with N.
+            likelihood=independent+np.eye(2)*common+(residual.T@residual)/len(residual)
         delta=self.points-mean
         quadratic=np.einsum('ni,ij,nj->n',delta,np.linalg.inv(likelihood),delta)
         # Broad likelihoods are uninformative, not evidence of a map conflict.
@@ -182,6 +240,7 @@ class MapMMSE:
         return dict(x=float(point[0]),y=float(point[1]),sigma=math.sqrt(variance),variance=variance,
             covariance=covariance.tolist(),posterior_mean=posterior_mean.tolist(),projected=projected,
             likelihood_mean=mean.tolist(),likelihood_covariance=likelihood.tolist(),
+            likelihood_model='joint_bearing_factor' if joint else 'correlated_floor_frames',
             prior_mass=float(math.exp(min(0.,log_mass))),prior_conflict=bool(support_distance>25.),support_mahalanobis_squared=support_distance,
             prior_scope='loaded map extent; unknown cells retained; uninflated connected space',
             map_signature=self.signature,label=self.label,method='map-constrained MMSE',

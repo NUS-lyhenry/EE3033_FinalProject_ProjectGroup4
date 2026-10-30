@@ -102,6 +102,7 @@ class VisualSearch(unittest.TestCase):
                     viewpoint_spacing=1., max_goals=2, observe_seconds=.3,
                     acquisition_seconds=12. if mode in ('temporary_loss','bearing_only') else 3.5,
                     acquisition_steps=5 if mode=='bearing_only' else 3,
+                    enable_ab_maneuver=mode=='bearing_only',
                     max_target_variance=.25**2 if mode=='tunable_precision' else .1**2,
                     verify_seconds=.25, verify_timeout=2., results_directory=root))
             robot.mission = mission

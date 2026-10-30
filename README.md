@@ -55,7 +55,8 @@ cancelling the search goal, the mission only reframes/centres this target and
 collects local observations; losing depth or the target does not restart map
 traversal. A fresh stable estimate meeting the selected soft precision goal
 returns immediately. Refinement is bounded to 45 seconds of observation, centering and local
-reacquisition, three observation positions. Motion counts are recorded but cannot end refinement
+reacquisition, with up to three deliberate A/B/C sites when that mode is enabled.
+Motion counts are recorded but cannot end refinement
 before its localization-work budget is used. Navigation
 to observation positions is timed separately; goal deadlines, the overall
 mission deadline and the return-time reserve still apply. A valid lower
@@ -66,7 +67,16 @@ At least four settled, horizontally centred frames are collected per bearing
 site. A/B/C geometry uses continuous odometry, camera offsets and residual
 pixel angles, rejects intersection angles below 15 degrees and map-to-odometry
 jumps, and replaces the correlated floor measurements in MMSE rather than
-counting the same images twice. Vertical clipping can preserve a bearing;
+counting the same images twice. Deliberate lateral A/B maneuvers are disabled by
+default (`project_mission.enable_ab_maneuver: false`); refinement instead uses
+map-safe 5–10 cm approach steps, centering and bounded crop recovery. Setting
+the parameter true explicitly enables the retained lateral-baseline planner.
+Passive bearing intersection remains available in either mode. A replacement
+source must be consistent and no weaker in any covariance direction before
+map conditioning; stronger floor views can replace a bearing factor. Joint
+factors retain their full covariance without a second isotropic video-error
+envelope. A small improvement between viewpoints does not end refinement early.
+Vertical clipping can preserve a bearing;
 horizontal clipping only supplies a bounded retreat hint. Detector class alone
 still cannot establish brand identity or distinguish arbitrary identical objects.
 
@@ -78,8 +88,15 @@ or explicit legacy profiles still take precedence; inspect the effective pitch
 and source in the console. The simulated world has its own explicit TF-only
 configuration and retains its independently specified 10-degree camera.
 
-Before target lock, a bounded three-step beam search ranks early new coverage,
-travel, turning and observations. It keeps diverse candidates, repairs coarse
+Before target lock, `project_mission.search_strategy` in `config/project.yaml`
+selects `greedy`, `lookahead` or the default `adaptive`. Greedy ranks new coverage
+per estimated second. Lookahead uses a bounded three-step beam search over a
+60-second coverage utility. Adaptive changes the greedy first action only when
+the best evaluated route improves on the best evaluated greedy-root route by
+at least `adaptive_margin` (default 0.08). Both routes use the same utility, and
+the beam retains a greedy-root branch. A planning deadline falls back to the
+greedy candidate. This is a heuristic, not a guarantee of faster completion.
+The planner keeps diverse candidates, repairs coarse
 coverage holes at 0.325/0.15 m spacing and asks Nav2 to verify disconnected
 components. Green/gold/red map overlays show observed/pending/blocked samples.
 Candidate exhaustion and failed navigation are not empty-space evidence.
@@ -90,8 +107,9 @@ These labels describe search evidence, not proof of object absence.
 
 Planner-only comparisons can be reproduced with
 `PYTHONPATH=src/ee3033_project python3 scripts/benchmark_search.py`.
-Results depend on layout: lookahead is not guaranteed faster than greedy.
-See `validation/search_benchmark_20261027.json` and `TESTING.md`.
+It compares all three modes under ideal observations and reports planning
+latency separately. Results depend on layout; they do not validate hardware.
+See `validation/search_benchmark_20261030.json` and `TESTING.md`.
 For a real-YOLO simulation workflow check, run
 `python3 scripts/verify_algorithm_preview.py --url http://127.0.0.1:8792`;
 this script refuses a physical-robot console.
@@ -314,9 +332,9 @@ evidence.
 
 Two consistent fresh detections interrupt coverage and select a single target.
 Reliable coordinates report directly after confirmation. Otherwise the mission
-tries a reachable, visible 0.6–1.0 m standoff observation. Bearing-only candidates
-may center and take a map-safe lateral baseline, without a blind forward
-approach. After visual lock, refinement uses a 45-second work budget
+centers or recovers framing and tries a short approach checked for footprint,
+connectivity and visibility. Deliberate lateral baselines require the explicit
+`enable_ab_maneuver` opt-in. After visual lock, refinement uses a 45-second work budget
 of localization work, excluding travel to observation positions. Temporary loss
 enters bounded local reacquisition and preserves the target lock. Exhausted
 recovery alternatives or budget ends refinement without restarting coverage. No overlapping motion goals are allowed.
@@ -420,7 +438,7 @@ Changing it requires **Apply settings & reload mission** and setting the initial
 pose again; it is locked during motion. The same setting reaches both the
 perception close-view preference and mission acceptance policy. Valid settled observations retain their measured uncertainty even above that
 value. Multi-frame consistency, freshness and map agreement still confirm the target.
-If uncertainty remains above the objective after bounded A/B/C refinement
+If uncertainty remains above the objective after bounded local refinement
 (45 seconds of localization work, excluding observation-point travel), a fresh stable estimate can be reported with
 `quality: best_available`, its actual `sigma` and the preferred sigma. The UI
 labels this as an approximate estimate; repeated correlated frames do not

@@ -125,7 +125,7 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
 
 def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10., x=2., y=1., sigma=.3)
     goal = target.observation_goal(planner, (1., 1., 0.))
     assert goal and planner.safe[planner.world_to_cell(*goal[:2])]
@@ -138,7 +138,7 @@ def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
 
 def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline():
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=detection(10.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=detection(10.)
     pose=(2.,2.,.5)
     first=target.observation_goal(planner,pose)
     assert first[:2]==pose[:2]
@@ -154,7 +154,7 @@ def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline()
 
 def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline():
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=detection(10.,x=20.,y=20.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=detection(10.,x=20.,y=20.)
     pose=(2.,2.,0.)
     target.candidate['origin']=list(pose[:2])
     # The north-side point is Nav2-blocked; south is usable.
@@ -175,7 +175,7 @@ def test_fast_profile_synchronizes_both_stages_and_search_estimates():
 
 def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
     planner = CoveragePlanner(np.zeros((60, 60)), .05, (0, 0, 0))
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10., x=2., y=1., sigma=.12, close_view=False)
     pose = (1.4, 1., 0.)
     goal = target.observation_goal(planner, pose)
@@ -186,7 +186,7 @@ def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
 
 
 def test_centered_bearing_only_target_does_not_spend_a_step_on_a_noop():
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10.)
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
     # An already centered target should acquire parallax, not another turn.

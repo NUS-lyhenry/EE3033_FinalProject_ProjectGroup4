@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "algorithm_source_sha": "b617a46202cf6f955cdac22a082c8d4a83dcb920",
+  "executed_runner_sha256": "feac16088fb84021f274282617c34036df3696f093171393cc93969b061428af",
+  "evidence_directory": "results/localization_comparison_20261030_b617a462_harness02",
+  "map_resolution_metres": 0.05,
+  "preferred_sigma_metres": 0.1,
+  "scene_size_metres": [
+    2.0,
+    1.8
+  ],
+  "cases": [
+    {
+      "case": "normal",
+      "mode": "ab_off",
+      "state": "COMPLETE",
+      "mission_wall_seconds": 91.44295616699674,
+      "total_wall_seconds": 149.72885604199837,
+      "primary_map_error_metres": 0.07272533286572817,
+      "first_report_dynamic_alignment_error_metres": 0.004339192769718502,
+      "motion_counts": {
+        "rotation": 3,
+        "retreat": 1,
+        "approach": 1
+      },
+      "source_updated_counts": {
+        "floor_projection": 61
+      },
+      "reported_sigma_metres": 0.09990233277474482,
+      "quality": "preferred_precision",
+      "frozen_map_world_gauge": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "return_verified": true,
+      "return_distance_metres": 0.11493015966450323,
+      "localization_work_seconds": 41.666485188999104,
+      "localization_travel_seconds": 7.990028529000483
+    },
+    {
+      "case": "normal",
+      "mode": "ab_on",
+      "state": "COMPLETE",
+      "mission_wall_seconds": 34.07564262500091,
+      "total_wall_seconds": 93.61533225000312,
+      "primary_map_error_metres": 0.07178325059317359,
+      "first_report_dynamic_alignment_error_metres": 0.0035284431450477555,
+      "motion_counts": {
+        "rotation": 1
+      },
+      "source_updated_counts": {
+        "floor_projection": 8
+      },
+      "reported_sigma_metres": 0.09985949223001962,
+      "quality": "preferred_precision",
+      "frozen_map_world_gauge": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "return_verified": true,
+      "return_distance_metres": 0.11286803104911439,
+      "localization_work_seconds": 5.48394924600052,
+      "localization_travel_seconds": 0.0
+    },
+    {
+      "case": "far_edge",
+      "mode": "ab_off",
+      "state": "COMPLETE",
+      "mission_wall_seconds": 78.35324495799432,
+      "total_wall_seconds": 134.56714675000694,
+      "primary_map_error_metres": 0.061074979226237856,
+      "first_report_dynamic_alignment_error_metres": 0.001446500263173861,
+      "motion_counts": {
+        "rotation": 2,
+        "approach": 6
+      },
+      "source_updated_counts": {
+        "floor_projection": 146
+      },
+      "reported_sigma_metres": 0.09982389959555778,
+      "quality": "preferred_precision",
+      "frozen_map_world_gauge": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "return_verified": true,
+      "return_distance_metres": 0.11468462852598985,
+      "localization_work_seconds": 28.45845957599977,
+      "localization_travel_seconds": 20.205838526998377
+    },
+    {
+      "case": "far_edge",
+      "mode": "ab_on",
+      "state": "COMPLETE",
+      "mission_wall_seconds": 48.34386204199109,
+      "total_wall_seconds": 101.24523608299205,
+      "primary_map_error_metres": 0.04973066104272933,
+      "first_report_dynamic_alignment_error_metres": 0.0064483133362951165,
+      "motion_counts": {
+        "rotation": 2,
+        "lateral": 1
+      },
+      "source_updated_counts": {
+        "floor_projection": 20
+      },
+      "reported_sigma_metres": 0.09940698812502304,
+      "quality": "preferred_precision",
+      "frozen_map_world_gauge": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "return_verified": true,
+      "return_distance_metres": 0.11917743363596862,
+      "localization_work_seconds": 14.009471306000705,
+      "localization_travel_seconds": 5.995411693999813
+    }
+  ],
+  "primary_error_reference": "Fixed pre-motion SLAM map/world gauge; includes subsequent localization drift. All four initial gauges are identity, with WAITING/physical start evidence retained.",
+  "conditional_error_reference": "Report-time estimated map/odom realignment removes localization drift; only conditional visual geometry consistency, not total coordinate accuracy.",
+  "limitations": [
+    "Two layouts, one attempt per mode; independent SLAM/search trajectories differ. Timing differences are not controlled causal A/B gains.",
+    "All final estimates came from floor_projection, including the one trial with active parallax movement.",
+    "Simulation only; fixed initial gauge assumes the saved map keeps that gauge, not a physical surveyed accuracy acceptance.",
+    "Initial harness readiness failures/interruption are preserved separately; the complete four-case run had no automatic retries."
+  ],
+  "recommendation": "Keep deliberate A/B default off and retain optional viewpoint selection/passive bearing intersection; these trials do not justify deleting triangulation. Investigate global map/pose drift separately.",
+  "native_regressions": {
+    "bearing_filter": "passed",
+    "visual_search_tests": 15,
+    "visual_search_seconds": 65.066,
+    "bearing_only_ab": "COMPLETE"
+  },
+  "analysis_runner_sha256": "dbeaa38355e4ddece31967242c5cd5a54d063840baaaee6fdf3178e910d0b669",
+  "python_regression_tests": 675,
+  "algorithm_ci": {
+    "sha": "b617a46202cf6f955cdac22a082c8d4a83dcb920",
+    "conclusion": "success",
+    "url": "https://github.com/NUS-lyhenry/EE3033_FinalProject_ProjectGroup4/actions/runs/40989623831",
+    "jobs": [
+      "algorithms",
+      "browser",
+      "native-navigation"
+    ]
+  }
+}

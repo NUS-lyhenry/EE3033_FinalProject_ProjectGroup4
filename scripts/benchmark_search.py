@@ -18,7 +18,7 @@ def run(grid,strategy):
         if strategy=='greedy':
             index=planner.next_viewpoint(*pose[:2],seen,attempted,yaw=pose[2],observation_seconds=.8)
         else:
-            index=planner.lookahead(*pose[:2],seen,attempted,yaw=pose[2],deadline=begin+1.5)
+            index=planner.lookahead(*pose[:2],seen,attempted,yaw=pose[2],deadline=begin+1.5, strategy=strategy)
         latencies.append(time.monotonic()-begin)
         if index is None:break
         v=planner.options[index];field,_=planner.travel_field(*pose[:2]);distance=float(field[planner.world_to_cell(v.x,v.y)])
@@ -40,7 +40,7 @@ def main():
         grid=np.zeros((45,65),dtype=int);grid[[0,-1],:]=100;grid[:,[0,-1]]=100
         if name!='open':grid[10:,30:32]=100
         if name=='alcove':grid[10:12,40:58]=100;grid[10:30,56:58]=100
-        output['scenarios'][name]={strategy:run(grid,strategy) for strategy in ('greedy','lookahead')}
+        output['scenarios'][name]={strategy:run(grid,strategy) for strategy in ('greedy','lookahead','adaptive')}
     print(json.dumps(output,indent=2))
 
 if __name__=='__main__':main()
