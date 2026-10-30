@@ -964,3 +964,31 @@ No accuracy or full physical-mission success is claimed by the software tests.
 | Return distance / required tolerance (m) | |
 | Search time / total completion time | |
 | Failures / interventions | |
+## Localization source selection and optional A/B — 2026-10-30
+
+Deliberate A/B maneuvers now default off; the retained mode is selected with
+`project_mission.enable_ab_maneuver`. Short approach steps use a dedicated
+2.5 cm goal checker and the existing footprint, connector and visibility gates.
+Joint bearing factors preserve their full covariance. Correlated floor/joint
+sources replace rather than accumulate, and replacement must be consistent
+and no weaker in any likelihood covariance direction before map conditioning.
+The former less-than-ten-percent improvement early exit has been removed.
+
+Local Python regressions: **665 passed**. Added coverage checks source ordering,
+stronger floor recovery, weaker/inconsistent factor rejection, anisotropic
+covariance, stale-source replacement, frozen results, default-off approach,
+connector rejection and continued refinement after a worse second site. A replay
+of the earlier divider-room records retains the approximately (0.952, 0.902)
+floor estimate instead of replacing it with the weaker joint result; this is
+record replay, not a new independent end-to-end accuracy measurement.
+
+`scripts/compare_localization_modes.py --sha <full SHA> --output <new directory>
+--run` performs four independent full SLAM/mission trials: two small open-room
+target layouts, each with A/B disabled and enabled. Exact committed snapshots
+differ only in the mode parameter. Camera, 0.05 m map resolution, detector,
+speed, safety and precision remain unchanged. It uses normal protected Console
+controls and read-only TF to transform simulator truth for error analysis;
+truth is never sent to localization. It saves every failed/censored attempt
+without automatic retries. Native ROS and live comparison outcomes must be
+reported separately from the Python checks.
+

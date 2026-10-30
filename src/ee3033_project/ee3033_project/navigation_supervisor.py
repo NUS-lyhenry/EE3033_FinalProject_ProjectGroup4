@@ -377,9 +377,10 @@ class NavigationSupervisor(Node):
         pose = self.pose()
         goal_pose = request.pose.pose
         observation = 'navigate_observation' in request.behavior_tree
+        approach = 'navigate_approach' in request.behavior_tree
         home = 'navigate_home' in request.behavior_tree
-        xy = .10 if observation else self.p['xy_tolerance']
-        yaw = .03 if observation else .20
+        xy = .025 if approach else .10 if observation else self.p['xy_tolerance']
+        yaw = .03 if observation or approach else .20
         return (pose is not None and math.hypot(
             pose[0]-goal_pose.position.x,pose[1]-goal_pose.position.y)<=xy
             and (home or abs(wrap(quaternion_yaw(goal_pose.orientation)-pose[2]))<=yaw))
@@ -430,11 +431,12 @@ class NavigationSupervisor(Node):
         goal = request.pose.pose
         distance = math.hypot(goal.position.x-pose[0], goal.position.y-pose[1])
         observation = 'navigate_observation' in request.behavior_tree
-        xy_tolerance = .10 if observation else self.p['xy_tolerance']
+        approach = 'navigate_approach' in request.behavior_tree
+        xy_tolerance = .025 if approach else .10 if observation else self.p['xy_tolerance']
         arrived = distance<=xy_tolerance
         # Explicit trees use the same tolerances as their controller checker.
         home = 'navigate_home' in request.behavior_tree
-        yaw_tolerance = .03 if observation else .20
+        yaw_tolerance = .03 if observation or approach else .20
         if arrived and home:
             heading = 0.
             reference = pose[2]

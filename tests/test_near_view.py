@@ -166,7 +166,7 @@ def test_legacy_coarse_far_point_remains_outside_the_accepted_measurement_range(
 
 
 def test_two_failed_framing_views_still_allow_valid_a_and_lateral_b():
-    target=SingleTarget();p=planner();pose=(2.,2.,0.)
+    target=SingleTarget(enable_ab_maneuver=True);p=planner();pose=(2.,2.,0.)
     for stamp in (10.,11.):
         d=near_detection();d['stamp']=stamp;d['origin']=list(pose[:2])
         target.candidate=d

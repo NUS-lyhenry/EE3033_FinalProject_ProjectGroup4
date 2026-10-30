@@ -71,6 +71,7 @@ class Mission(Node):
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
             'min_observe_seconds': .8, 'acquisition_seconds': 45.,
             'acquisition_steps': 5, 'navigation_profile': 'original',
+            'enable_ab_maneuver': False,
             'localize_wait_seconds': 2.,
             'home_behavior_tree': '',
         })
@@ -156,7 +157,8 @@ class Mission(Node):
         self.geometry_error = None
         self.geometry_fault_since = None
         self.search_cost_source = 'safe grid paths'
-        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'])
+        self.acquisition = SingleTarget(self.p['acquisition_steps'], self.p['acquisition_seconds'],
+                                        self.p['enable_ab_maneuver'])
         self.acquisition_wait = 0.
         self.acquisition_retry_after = 0.
         self.target_detected = False
@@ -509,7 +511,8 @@ class Mission(Node):
             goal.behavior_tree=self.p['home_behavior_tree']
         elif kind=='acquire' or (kind=='home' and not self.p['return_heading_required']):
             from ament_index_python.packages import get_package_share_directory
-            name='navigate_observation.xml' if kind=='acquire' else 'navigate_home.xml'
+            name=('navigate_approach.xml' if self.acquisition.last_goal_action=='approach'
+                  else 'navigate_observation.xml') if kind=='acquire' else 'navigate_home.xml'
             goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/'behavior_trees'/name)
         self.set_state('RETURNING' if kind == 'home' else 'ACQUIRING' if kind == 'acquire' else 'SEARCHING',
                        'Returning to recorded start' if kind == 'home'
@@ -533,7 +536,7 @@ class Mission(Node):
             # when travel ends, rather than this remaining-distance test.
             return self.goal_translation
         return bool(current and math.hypot(pose.pose.position.x-current[0],
-                                          pose.pose.position.y-current[1])>=.12)
+                                          pose.pose.position.y-current[1])>=(.04 if kind=='acquire' else .12))
 
     def goal_response(self, future, serial):
         try:
@@ -787,9 +790,6 @@ class Mission(Node):
             sites = int(data.get('sites', max(1, len(self.acquisition.positions))))
             if not self.local_sigmas or sites > self.local_sigmas[-1][0]:
                 self.local_sigmas.append((sites, math.sqrt(variance)))
-            if self.target_detected and len(self.local_sigmas)>=2 and sites>=2 and self.local_sigmas[-1][1]>=.9*self.local_sigmas[-2][1]:
-                self.finish_localization('Additional view improved uncertainty by less than ten percent')
-                return
             if variance<=self.p['max_target_variance'] or math.isclose(variance,self.p['max_target_variance'],rel_tol=1e-9):
                 self.report_target(estimate,'preferred_precision')
         except (ValueError,TypeError,KeyError):pass
@@ -1018,6 +1018,8 @@ class Mission(Node):
                 'localization_reason': self.localization_reason,
                 'localization_active_seconds':self.acquisition.active_seconds,
                 'localization_travel_seconds':self.acquisition.travel_seconds,
+                'enable_ab_maneuver':self.acquisition.enable_ab_maneuver,
+                'localization_budget_seconds':self.p['acquisition_seconds'],
                 'localization_stage':self.acquisition.phase,
                 'bearing_progress':(self.current_target_estimate or {}).get('bearing_progress'),
                 'navigation_recoveries':self.navigation_recoveries,

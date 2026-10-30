@@ -66,7 +66,16 @@ At least four settled, horizontally centred frames are collected per bearing
 site. A/B/C geometry uses continuous odometry, camera offsets and residual
 pixel angles, rejects intersection angles below 15 degrees and map-to-odometry
 jumps, and replaces the correlated floor measurements in MMSE rather than
-counting the same images twice. Vertical clipping can preserve a bearing;
+counting the same images twice. Deliberate lateral A/B maneuvers are disabled by
+default (`project_mission.enable_ab_maneuver: false`); refinement instead uses
+map-safe 5–10 cm approach steps, centering and bounded crop recovery. Setting
+the parameter true explicitly enables the retained lateral-baseline planner.
+Passive bearing intersection remains available in either mode. A replacement
+source must be consistent and no weaker in any covariance direction before
+map conditioning; stronger floor views can replace a bearing factor. Joint
+factors retain their full covariance without a second isotropic video-error
+envelope. A small improvement between viewpoints does not end refinement early.
+Vertical clipping can preserve a bearing;
 horizontal clipping only supplies a bounded retreat hint. Detector class alone
 still cannot establish brand identity or distinguish arbitrary identical objects.
 
@@ -322,9 +331,9 @@ evidence.
 
 Two consistent fresh detections interrupt coverage and select a single target.
 Reliable coordinates report directly after confirmation. Otherwise the mission
-tries a reachable, visible 0.6–1.0 m standoff observation. Bearing-only candidates
-may center and take a map-safe lateral baseline, without a blind forward
-approach. After visual lock, refinement uses a 45-second work budget
+centers or recovers framing and tries a short approach checked for footprint,
+connectivity and visibility. Deliberate lateral baselines require the explicit
+`enable_ab_maneuver` opt-in. After visual lock, refinement uses a 45-second work budget
 of localization work, excluding travel to observation positions. Temporary loss
 enters bounded local reacquisition and preserves the target lock. Exhausted
 recovery alternatives or budget ends refinement without restarting coverage. No overlapping motion goals are allowed.
@@ -428,7 +437,7 @@ Changing it requires **Apply settings & reload mission** and setting the initial
 pose again; it is locked during motion. The same setting reaches both the
 perception close-view preference and mission acceptance policy. Valid settled observations retain their measured uncertainty even above that
 value. Multi-frame consistency, freshness and map agreement still confirm the target.
-If uncertainty remains above the objective after bounded A/B/C refinement
+If uncertainty remains above the objective after bounded local refinement
 (45 seconds of localization work, excluding observation-point travel), a fresh stable estimate can be reported with
 `quality: best_available`, its actual `sigma` and the preferred sigma. The UI
 labels this as an approximate estimate; repeated correlated frames do not

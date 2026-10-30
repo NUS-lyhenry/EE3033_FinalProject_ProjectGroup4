@@ -37,6 +37,7 @@ project_mission:
     sensor_timeout: 1.0
     perception_timeout: 3.0
     localize_wait_seconds: 2.0  # Allow exposure-time motion window + distinct frames.
+    enable_ab_maneuver: false  # Explicitly opt in to deliberate lateral A/B moves.
     results_directory: ~/ee3033_results
 
 project_perception:

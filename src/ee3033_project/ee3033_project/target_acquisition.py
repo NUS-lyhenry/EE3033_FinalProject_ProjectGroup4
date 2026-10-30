@@ -4,11 +4,13 @@ import time
 from .core import angle_difference
 from .near_view import requires_reframing, retreat_goal
 from .visibility import observation_visibility
+from .motion_safety import polyline_map_clearance
 
 
 class SingleTarget:
-    def __init__(self, max_steps=5, timeout=45.):
+    def __init__(self, max_steps=5, timeout=45., enable_ab_maneuver=False):
         self.max_steps, self.timeout = max_steps, timeout
+        self.enable_ab_maneuver = bool(enable_ab_maneuver)
         self.reset()
 
     def reset(self):
@@ -184,6 +186,8 @@ class SingleTarget:
                 goal=self.turn_goal(pose,desired,'Center locked target')
                 if goal is not None:return goal
             # A repeated correction is not a reason to abandon the baseline.
+        if not self.enable_ab_maneuver:
+            return self.approach_goal(planner, pose, deadline, cancel, allowed)
         # Retain up to three distinct capture positions across local moves.
         if not any(math.dist(pose[:2], p) < .12 for p in self.positions):
             if len(self.positions)>=3:
@@ -243,6 +247,50 @@ class SingleTarget:
         self.visited.add(cell)
         self.last_goal_reason='Change observation position for parallax'
         return goal
+
+    def approach_goal(self, planner, pose, deadline=None, cancel=None, allowed=None):
+        """Try a short, continuously checked advance toward the observed ray.
+
+        Image bearings select an action, never an invented range measurement.
+        The normal Nav2 route proxy and final gate still check the action.
+        """
+        d=self.candidate
+        if d is None or 'bearing' not in d or 'origin' not in d:
+            self.last_goal_reason='A fresh target direction is required before approaching'
+            return None
+        if not any(math.dist(pose[:2],p)<.04 for p in self.positions):
+            self.positions.append(tuple(pose[:2]))
+        camera=getattr(planner,'camera_model',None)
+        bearing=d['bearing']
+        yaw=bearing-(camera.yaw if camera else 0.)
+        for step in (.10,.075,.05):
+            if (deadline is not None and time.monotonic()>=deadline) or (cancel is not None and cancel.is_set()):
+                return None
+            x,y=pose[0]+step*math.cos(bearing),pose[1]+step*math.sin(bearing)
+            cell=planner.world_to_cell(x,y)
+            if (not planner.in_bounds(*cell) or not planner.safe[cell] or cell in self.visited
+                    or any(math.dist((x,y),p)<.04 for p in self.positions)):
+                continue
+            # Check the whole physical envelope, not just the destination cell.
+            check=polyline_map_clearance(planner.grid,planner.resolution,planner.origin,[pose[:2],(x,y)])
+            if not check.allowed:continue
+            count=max(2,math.ceil(step/max(.005,planner.resolution/2))+1)
+            if allowed is not None and any(allowed(pose[0]+i/(count-1)*(x-pose[0]),
+                    pose[1]+i/(count-1)*(y-pose[1])) is not True for i in range(count)):
+                continue
+            if all(k in d for k in ('x','y')) and d.get('projection_valid') is True:
+                visible=observation_visibility(planner,(x,y,yaw),target=(d['x'],d['y']),
+                    camera_model=camera,require_floor=camera is not None,deadline=deadline,cancel=cancel)
+            else:
+                visible=observation_visibility(planner,(x,y,yaw),source_origin=d['origin'],
+                    bearing=bearing,camera_model=camera,require_range=False,deadline=deadline,cancel=cancel)
+            if not visible.visible:continue
+            self.visited.add(cell)
+            self.last_goal_action='approach'
+            self.last_goal_reason='Advance toward locked target and resample'
+            return (x,y,yaw)
+        self.last_goal_reason='No safe visible short approach; continue observing'
+        return None
 
     def bearing_baseline(self, planner, pose, deadline=None, cancel=None, allowed=None):
         """Rank safe lateral baselines by conservative parallax and path cost.

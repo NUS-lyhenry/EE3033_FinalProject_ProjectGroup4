@@ -316,7 +316,7 @@ def test_mission_home_heading_requirement_selects_the_correct_navigation_tree(mo
                 send_goal_async=lambda goal:(sent.append(goal) or NS(add_done_callback=lambda cb:None))),
             defer_for_costmap=lambda *a:False,navigation_map=NS(allowed=lambda *a:True),
             goal_serial=0,pose=lambda:(0.,0.,0.),goal_requires_translation=lambda *a:True,
-            localization_motion_log=[],acquisition=NS(last_goal_reason='Observation'),
+            localization_motion_log=[],acquisition=NS(last_goal_reason='Observation',last_goal_action=None),
             get_clock=lambda:NS(now=lambda:NS(nanoseconds=100_000_000_000)),
             p={'home_behavior_tree':override,'return_heading_required':heading},
             set_state=lambda *a:None,index=0,route=[1],heartbeat=lambda *a:None)

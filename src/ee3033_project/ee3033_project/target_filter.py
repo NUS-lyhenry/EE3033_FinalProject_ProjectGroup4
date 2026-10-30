@@ -107,7 +107,7 @@ class TargetFilter(Node):
             bearings = [d for d in data.get('bearings', []) if d.get('stamp') == stamp
                         and (not self.p['target_class'] or d.get('label') == self.p['target_class'])]
             updated=False
-            selected=None
+            selected=factor=None
             if self.tracker.factor and now-self.tracker.factor['stamp'] > self.p['max_observation_age']:
                 self.tracker.reset()
                 codes.append('mmse_intersection_expired_recollecting')
@@ -133,11 +133,7 @@ class TargetFilter(Node):
                             floor=candidates[0]
                             distance=math.hypot(floor['x']-factor['x'], floor['y']-factor['y'])
                             self.geometry_conflict=distance>max(.20,3*math.hypot(floor['sigma'],factor['sigma']))
-                        if not self.geometry_conflict:
-                            event['mmse']['attempted']=True
-                            updated=self.tracker.update_factor(factor,now)
-                            if not updated:codes.append('mmse_intersection_factor_rejected')
-                        else:codes.append('bearing_floor_geometry_conflict')
+                        if self.geometry_conflict:codes.append('bearing_floor_geometry_conflict')
                 # Floor and bearing factors must refer to the same detection,
                 # not simply whichever same-class box has highest confidence.
                 if selected and selected['stamp']==stamp and 'box' in selected:
@@ -148,15 +144,26 @@ class TargetFilter(Node):
                 codes.append('no_bearing_measurement')
             elif bearings:
                 codes.append('bearing_waiting_for_target_lock')
-            if not updated and self.tracker.factor is None:
-                if candidates:
-                    event['mmse']['attempted']=True
-                    floor=candidates[0]
-                    updated=self.tracker.update(floor,now)
-                    if not updated:codes.append(mmse_rejection_reason(self.tracker,floor,now))
-                else:codes.append('no_usable_floor_measurement')
-            elif not updated and candidates:
-                codes.append('mmse_floor_evidence_replaced_by_intersection')
+            # Offer this frame's floor evidence before comparing a joint factor.
+            # MapMMSE keeps one source: a stronger source replaces, never adds
+            # correlated pixels to an existing bearing likelihood.
+            if candidates:
+                event['mmse']['attempted']=True
+                floor=candidates[0]
+                updated=self.tracker.update(floor,now)
+                event['mmse']['floor_updated']=updated
+                if not updated:
+                    codes.append(mmse_rejection_reason(self.tracker,floor,now))
+                    event['mmse']['floor_rejection']=self.tracker.last_update_rejection
+            else:codes.append('no_usable_floor_measurement')
+            if factor and not self.geometry_conflict:
+                event['mmse']['attempted']=True
+                accepted=self.tracker.update_factor(factor,now)
+                if accepted:
+                    updated=True
+                else:
+                    codes.append('mmse_intersection_factor_rejected')
+                    event['mmse']['factor_rejection']=self.tracker.last_factor_rejection
             if not updated:self.tracker.miss(stamp,data.get('deferred') is True)
             self.publish()
             estimate=self.tracker.snapshot(now)
