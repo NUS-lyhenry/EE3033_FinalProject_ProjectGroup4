@@ -53,6 +53,7 @@ class Mission(Node):
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
             'max_candidates': 250, 'max_goals': 120, 'coverage_fraction': 0.98,
             'candidate_limit': 1000, 'map_partial': False,
+            'search_strategy': 'adaptive', 'adaptive_margin': 0.08,
             'observe_seconds': 3.0, 'min_observation_frames': 3,
             'search_linear_speed': 0.12, 'search_angular_speed': 0.4,
             'max_observation_retries': 2, 'goal_timeout': 75.0, 'mission_timeout': 900.0,
@@ -73,6 +74,10 @@ class Mission(Node):
             'localize_wait_seconds': 2.,
             'home_behavior_tree': '',
         })
+        if self.p['search_strategy'] not in ('greedy', 'lookahead', 'adaptive'):
+            raise ValueError('search_strategy must be greedy, lookahead or adaptive')
+        if not isinstance(self.p['adaptive_margin'], (int, float)) or not 0. <= self.p['adaptive_margin'] <= 1.:
+            raise ValueError('adaptive_margin must be between 0 and 1')
         if self.p['navigation_profile'] == 'fast':
             from rclpy.parameter import Parameter
             self.set_parameters([Parameter('search_linear_speed', value=.16),
@@ -722,13 +727,18 @@ class Mission(Node):
             raise RuntimeError('Search planning canceled')
         if time.monotonic() >= deadline:
             return next((index for _,index in ranked if math.isfinite(lengths.get(index,0.))),None)
-        # Leave the final beam search a cooperative deadline as well.
+        if self.p['search_strategy'] == 'greedy':
+            refined = ranks(lengths)
+            return refined[0][1] if refined else next((i for _, i in ranked if math.isfinite(lengths.get(i, 0.))), None)
+        # The adaptive selector compares the best beam route to the
+        # best greedy-root route using the same coverage-time utility.
         return self.planner.lookahead(*current[:2], self.seen,
             self.attempted | self.failed_options, yaw=current[2],
             linear_speed=self.get_parameter('search_linear_speed').value,
             angular_speed=self.get_parameter('search_angular_speed').value,
             observation_seconds=min(self.p['observe_seconds'], self.p['min_observe_seconds']),
-            path_lengths=lengths, deadline=deadline, cancel=self.plan_cancel)
+            path_lengths=lengths, deadline=deadline, cancel=self.plan_cancel,
+            strategy=self.p['search_strategy'], adaptive_margin=self.p['adaptive_margin'])
 
     def dispatch_viewpoint(self, choice):
         if self.target_detected or self.plan_cancel.is_set():

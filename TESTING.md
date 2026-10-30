@@ -1,5 +1,31 @@
 # Validation record
 
+## Frontier, bearing baseline and adaptive search selection — 2026-10-30
+
+This branch starts from main `fbef8d5`; it does not include the unmerged
+attitude/localization work in PR #9. All 633 Python checks and source compilation
+passed locally with Python 3.13. New regressions exercise the actual mission
+selector for all three modes, adaptive gain/deadline/cancellation behavior,
+native path rejection, a wall-detour frontier and baseline parallax/path costs
+with visibility, connectivity and allowed-position rejection. Existing baseline
+reason strings remain compatible. No YOLO, camera calibration or chassis safety
+control was changed.
+
+`validation/search_benchmark_20261030.json` records a single planner-only run of
+greedy/lookahead/adaptive in the existing open/divider/alcove layouts, under ideal
+observations and identical speed estimates. All nine routes covered every target
+cell. Greedy versus adaptive mean first visibility was 107.18/102.91 s (open),
+125.19/121.29 s (divider), and 136.10/131.17 s (alcove). Estimated full coverage
+route times were 506.31/522.50 s, 631.11/598.26 s, and 770.44/621.85 s,
+respectively: adaptive is not uniformly faster. Planning p95 was about
+0.106–0.120 s for adaptive versus 0.006–0.007 s for greedy on this Mac.
+Route timing excludes planning latency, inference, localization, mapping and
+return; the result is not an end-to-end mission or hardware measurement.
+
+Native ROS integration remains subject to current-head CI. No physical robot
+deployment or motion test, and no local ROS world simulation, was performed for
+this change.
+
 ## Supervised RPP navigation development — 2026-10-28
 
 This supersedes the first-revision restoration below. Fixed and random scene

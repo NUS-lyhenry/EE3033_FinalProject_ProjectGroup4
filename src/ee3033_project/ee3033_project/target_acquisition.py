@@ -245,35 +245,65 @@ class SingleTarget:
         return goal
 
     def bearing_baseline(self, planner, pose, deadline=None, cancel=None, allowed=None):
-        d=self.candidate
-        if d is None or 'bearing' not in d:return None
-        distances,_=planner.travel_field(*pose[:2],deadline=deadline,cancel=cancel)
-        camera_yaw=planner.camera_model.yaw if planner.camera_model else 0.
-        for radius in (.4,-.4,.6,-.6,.8,-.8,-.3):
-            if (deadline is not None and time.monotonic()>=deadline) or (cancel is not None and cancel.is_set()):return None
-            angle=d['bearing']+(math.pi/2 if radius != -.3 else 0.)
-            x,y=pose[0]+radius*math.cos(angle),pose[1]+radius*math.sin(angle)
-            cell=planner.world_to_cell(x,y)
+        """Rank safe lateral baselines by conservative parallax and path cost.
+
+        The target has unknown range. Use multiple depths along the *measured*
+        source ray for scoring; a midpoint only aims the camera and never becomes
+        a coordinate measurement. Keep the existing map/camera visibility gate.
+        """
+        d = self.candidate
+        if d is None or 'bearing' not in d:
+            return None
+        source = d.get('origin')
+        if source is None:
+            self.last_goal_reason = 'Baseline requires the last image camera origin'
+            return None
+        distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
+        camera = planner.camera_model
+        camera_yaw = camera.yaw if camera else 0.
+        near, far = (camera.min_range, camera.max_range) if camera else (.3, 2.)
+        bearing = d['bearing']
+        mid = (near + far) / 2.
+        tx = source[0] + mid * math.cos(bearing)
+        ty = source[1] + mid * math.sin(bearing)
+        options = []
+        for radius in (.4, -.4, .6, -.6, .8, -.8, -.3):
+            if (deadline is not None and time.monotonic() >= deadline) or (cancel is not None and cancel.is_set()):
+                return None
+            angle = bearing + (math.pi / 2 if radius != -.3 else 0.)
+            x, y = pose[0] + radius * math.cos(angle), pose[1] + radius * math.sin(angle)
+            cell = planner.world_to_cell(x, y)
             if (not planner.in_bounds(*cell) or not planner.safe[cell]
                     or not math.isfinite(distances[cell]) or cell in self.visited
-                    or any(math.dist((x,y),p)<.25 for p in self.positions)
-                    or (allowed is not None and allowed(x,y) is False)):continue
-            source=d.get('origin')
-            if source is None:
-                self.last_goal_reason='Baseline requires the last image camera origin'
+                    or any(math.dist((x, y), p) < .25 for p in self.positions)
+                    or (allowed is not None and allowed(x, y) is False)):
                 continue
-            nominal=(planner.camera_model.min_range+planner.camera_model.max_range)/2 if planner.camera_model else 1.
-            # This midpoint chooses heading only. Visibility evaluates the full
-            # depth wedge anchored at the last image's real camera origin.
-            tx=source[0]+nominal*math.cos(d['bearing']);ty=source[1]+nominal*math.sin(d['bearing'])
-            yaw=math.atan2(ty-y,tx-x)-camera_yaw
-            visibility=observation_visibility(planner,(x,y,yaw),source_origin=source,
-                bearing=d['bearing'],camera_model=planner.camera_model,deadline=deadline,cancel=cancel)
+            yaw = math.atan2(ty - y, tx - x) - camera_yaw
+            visibility = observation_visibility(planner, (x, y, yaw), source_origin=source,
+                bearing=bearing, camera_model=camera, deadline=deadline, cancel=cancel)
             if not visibility.visible:
-                self.last_goal_reason='Baseline visibility rejected: '+visibility.reason
+                self.last_goal_reason = 'Baseline visibility rejected: ' + visibility.reason
                 continue
-            self.visited.add(cell)
-            self.last_goal_reason='Depth-free lateral baseline' if radius != -.3 else 'Reframe by moving away'
-            return (x,y,yaw)
-        self.last_goal_reason='No map-safe connected baseline candidate'
-        return None
+            # At longer unknown ranges the same baseline gives weaker parallax.
+            # Reward the worst of near/mid/far hypotheses, not just a fabricated
+            # target at the range midpoint.
+            camera_origin = visibility.camera_origin or (x, y)
+            parallax = []
+            for depth in (near, mid, far):
+                px = source[0] + depth * math.cos(bearing)
+                py = source[1] + depth * math.sin(bearing)
+                new_bearing = math.atan2(py - camera_origin[1], px - camera_origin[0])
+                parallax.append(abs(math.sin(angle_difference(new_bearing, bearing))))
+            turn = abs(angle_difference(yaw, pose[2]))
+            path_length = float(distances[cell])
+            score = (2.0 * min(parallax) + .25 * visibility.support
+                     + .15 * visibility.range_support - .10 * path_length - .025 * turn)
+            options.append((score, -path_length, cell, (x, y, yaw), min(parallax), radius))
+        if not options:
+            self.last_goal_reason = 'No map-safe connected baseline candidate'
+            return None
+        _, _, cell, goal, _, radius = max(options)
+        self.visited.add(cell)
+        self.last_goal_reason = ('Depth-free lateral baseline' if radius != -.3
+                                 else 'Reframe by moving away')
+        return goal

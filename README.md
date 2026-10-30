@@ -78,8 +78,15 @@ or explicit legacy profiles still take precedence; inspect the effective pitch
 and source in the console. The simulated world has its own explicit TF-only
 configuration and retains its independently specified 10-degree camera.
 
-Before target lock, a bounded three-step beam search ranks early new coverage,
-travel, turning and observations. It keeps diverse candidates, repairs coarse
+Before target lock, `project_mission.search_strategy` in `config/project.yaml`
+selects `greedy`, `lookahead` or the default `adaptive`. Greedy ranks new coverage
+per estimated second. Lookahead uses a bounded three-step beam search over a
+60-second coverage utility. Adaptive changes the greedy first action only when
+the best evaluated route improves on the best evaluated greedy-root route by
+at least `adaptive_margin` (default 0.08). Both routes use the same utility, and
+the beam retains a greedy-root branch. A planning deadline falls back to the
+greedy candidate. This is a heuristic, not a guarantee of faster completion.
+The planner keeps diverse candidates, repairs coarse
 coverage holes at 0.325/0.15 m spacing and asks Nav2 to verify disconnected
 components. Green/gold/red map overlays show observed/pending/blocked samples.
 Candidate exhaustion and failed navigation are not empty-space evidence.
@@ -90,7 +97,8 @@ These labels describe search evidence, not proof of object absence.
 
 Planner-only comparisons can be reproduced with
 `PYTHONPATH=src/ee3033_project python3 scripts/benchmark_search.py`.
-Results depend on layout: lookahead is not guaranteed faster than greedy.
+It compares all three modes under ideal observations and reports planning
+latency separately. Results depend on layout; they do not validate hardware.
 See `validation/search_benchmark_20261027.json` and `TESTING.md`.
 For a real-YOLO simulation workflow check, run
 `python3 scripts/verify_algorithm_preview.py --url http://127.0.0.1:8792`;

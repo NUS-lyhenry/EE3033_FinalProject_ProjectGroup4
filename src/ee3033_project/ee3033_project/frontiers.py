@@ -69,6 +69,13 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                   safe_mask=None, visited=()):
     planner = CoveragePlanner(data,resolution,origin,clearance=max(FOOTPRINT_RADIUS,clearance))
     reachable = reachable_space(planner,robot,safe_mask)
+    # Use one footprint-safe shortest-path field instead of straight-line
+    # distance through walls. The true robot-to-anchor connector was
+    # independently checked by reachable_space().
+    anchor = connection_cell(planner,robot,safe_mask)
+    if anchor is None:
+        raise ValueError('No connected footprint-safe frontier start')
+    path_distances, _ = planner.travel_field(*planner.cell_to_world(*anchor))
     frontier = planner.free & binary_dilation(planner.grid<0,
                                                structure=[[0,1,0],[1,1,1],[0,1,0]])
     # Slanted SLAM boundaries form diagonal chains. Four-neighbour grouping
@@ -122,8 +129,11 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                     distance=math.hypot(x-robot[0],y-robot[1])
                     if distance<0.35:
                         continue
+                    path_distance=float(path_distances[int(row),int(col)])
+                    if not math.isfinite(path_distance):
+                        continue
                     turn=abs(angle_difference(math.atan2(y-robot[1],x-robot[0]),robot[2]))
-                    score=len(cells)*resolution/(0.5+distance+0.4*turn)
+                    score=len(cells)*resolution/(0.5+path_distance+0.4*turn)
                     if toward is not None:
                         score/=0.25+math.hypot(cx-toward[0],cy-toward[1])
                     options.append((-tier,score,(x,y,yaw)))
