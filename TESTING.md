@@ -1,5 +1,25 @@
 # Validation record
 
+## Simulation mapping inherits assessment defaults — 2026-10-30
+
+The preview entry no longer overrides mapping resolution with 0.0125 m. It
+inherits Console's 0.05 m default and forwards it through the same managed
+mapping launch as assessment. The sensor/chassis simulator still supplies
+synthetic inputs; mapping, frontier selection, navigation and safety logic are
+the project implementations.
+
+The operator's initial two attempts sent zero frontier goals and saved partial
+maps while remaining at the origin. An isolated, stationary replay of the same
+450-beam scan exactly reproduced the 0.0125 m map: only 0.159 m of footprint-safe
+reach, below the selector's 0.35 m goal exclusion. At 0.05 m with the same SLAM
+observation threshold, reach extended to 0.978 m and a frontier goal was selected.
+Original-main and optimized selectors both rejected the captured fine-grid map.
+This establishes the startup configuration mismatch, not full mission success.
+
+All 81 assessment, simulator-control/geometry, scan and preview checks passed,
+along with preview source compilation. Restarting the clean UI leaves mapping
+and mission Start to the operator; previous maps and logs are preserved.
+
 ## Frontier, bearing baseline and adaptive search selection — 2026-10-30
 
 This branch starts from main `fbef8d5`; it does not include the unmerged

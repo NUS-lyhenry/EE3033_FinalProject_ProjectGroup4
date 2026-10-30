@@ -132,8 +132,10 @@ def main():
     def interrupt(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupt)
+    # Inherit Console's mapping defaults, as the physical assessment entry does.
+    # A separate fine-grid override can prevent stationary SLAM bootstrapping.
     console = SimulationConsole(parameter_overrides=[Parameter(k, value=v) for k, v in dict(
-        port=8765, phase='mapping', allow_motion=True, manage_stages=True, mapping_resolution=.0125,
+        port=8765, phase='mapping', allow_motion=True, manage_stages=True,
         stage_base=False, stage_lidar=False, stage_camera=False, model=args.model,
         map_directory=root+'/maps', session_directory=root+'/results',
         software_version=os.environ.get('PREVIEW_MAIN_COMMIT', 'main'),
