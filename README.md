@@ -55,7 +55,8 @@ cancelling the search goal, the mission only reframes/centres this target and
 collects local observations; losing depth or the target does not restart map
 traversal. A fresh stable estimate meeting the selected soft precision goal
 returns immediately. Refinement is bounded to 45 seconds of observation, centering and local
-reacquisition, three observation positions. Motion counts are recorded but cannot end refinement
+reacquisition, with up to three deliberate A/B/C sites when that mode is enabled.
+Motion counts are recorded but cannot end refinement
 before its localization-work budget is used. Navigation
 to observation positions is timed separately; goal deadlines, the overall
 mission deadline and the return-time reserve still apply. A valid lower

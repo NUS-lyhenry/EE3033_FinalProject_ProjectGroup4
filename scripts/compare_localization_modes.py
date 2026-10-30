@@ -177,11 +177,45 @@ def docker(args, *command, **kwargs):
                           check=True, text=True, **kwargs)
 
 
-def parameter(args, container, node, name):
-    result = docker(args, 'exec', container, 'bash', '-lc',
-        'source /opt/ros/humble/setup.bash; ros2 param get '+node+' '+name,
-        capture_output=True, timeout=15)
-    return result.stdout.strip()
+def parameter(args, container, node, name, output, timeout=20.):
+    """Wait only for diagnostic service discovery; never restart an algorithm."""
+    deadline = time.monotonic()+timeout
+    last = None
+    while time.monotonic() < deadline:
+        row = dict(captured_wall=time.time(), node=node, parameter=name)
+        try:
+            result = docker(args, 'exec', container, 'bash', '-lc',
+                'source /opt/ros/humble/setup.bash; ros2 param get '+node+' '+name,
+                capture_output=True, timeout=min(8., max(1., deadline-time.monotonic())))
+            row.update(returncode=0, stdout=result.stdout, stderr=result.stderr)
+        except subprocess.CalledProcessError as exc:
+            row.update(returncode=exc.returncode, stdout=exc.stdout or '', stderr=exc.stderr or '')
+        except subprocess.TimeoutExpired as exc:
+            row.update(returncode=None, stdout=str(exc.stdout or ''), stderr=str(exc.stderr or ''),
+                       diagnostic_error='ROS parameter discovery timed out')
+        with (Path(output)/'parameter-readbacks.jsonl').open('a') as stream:
+            stream.write(json.dumps(row)+'\n')
+        if row['returncode'] == 0:
+            return row['stdout'].strip()
+        last = row
+        time.sleep(.3)
+    raise RuntimeError('Parameter service did not become readable: '+json.dumps(last))
+
+
+def wait_labels(api, timeout=35.):
+    deadline = time.monotonic()+timeout
+    last = None
+    while time.monotonic() < deadline:
+        require_simulated(api.state())
+        last = api.get('labels')
+        with (api.output/'model-labels.jsonl').open('a') as stream:
+            stream.write(json.dumps(dict(captured_wall=time.time(), response=last))+'\n')
+        if last.get('ready') is True:
+            if 'cup' not in last.get('labels', []):
+                raise RuntimeError('Configured model does not support the physical cup target')
+            return last
+        time.sleep(.5)
+    raise TimeoutError('Configured model labels were not ready: '+str(last))
 
 
 def prepare(args, root):
@@ -279,6 +313,8 @@ echo '9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef  /tmp/ee3
 exec python3 scripts/run_algorithm_preview.py --model /tmp/ee3033_sim/assets/yolo26n.pt --texture /tmp/ee3033_sim/assets/cup.png --public-port '''+str(args.port)+''' --output-directory /tmp/ee3033_comparison_session'''
     result = {}
     try:
+        summary['image_id'] = docker(args, 'image', 'inspect', args.image,
+            '--format', '{{.Id}}', capture_output=True, timeout=15).stdout.strip()
         docker(args, 'run', '-d', '--name', container, '-p', '127.0.0.1:'+str(args.port)+':8790',
             '--mount', 'type=bind,source='+source['source']+',target=/work,readonly',
             '--mount', 'type=bind,source='+str(output/'session')+',target=/tmp/ee3033_comparison_session',
@@ -311,7 +347,7 @@ exec python3 scripts/run_algorithm_preview.py --model /tmp/ee3033_sim/assets/yol
         observer = observe_tf(args, container, output)
         api.post('stage', {'phase': 'mapping'})
         api.wait(lambda s: s.get('mission', {}).get('ready') is True, 60, 'Mapping readiness')
-        summary['mapping_resolution_readback'] = parameter(args, container, '/slam_toolbox', 'resolution')
+        summary['mapping_resolution_readback'] = parameter(args, container, '/slam_toolbox', 'resolution', output)
         if summary['mapping_resolution_readback'] != 'Double value is: 0.05':
             raise RuntimeError('Actual SLAM parameter is not 0.05 m')
         api.post('start')
@@ -332,15 +368,21 @@ exec python3 scripts/run_algorithm_preview.py --model /tmp/ee3033_sim/assets/yol
         save(output/'mapping-end-state.json', state)
         save(output/'saved-map-entry.json', entry)
         api.post('review_map', {'map_id': entry['id']})
+        summary['model_labels'] = wait_labels(api)
         api.post('stage', dict(phase='mission', map_id=entry['id'], target_class='cup',
             localization_method='hybrid', return_tolerance=.2, preferred_target_sigma=.1))
         api.wait(lambda s: s.get('phase') == 'mission' and s.get('mission', {}).get('state') == 'WAITING'
                  and s.get('health', {}).get('Mission', {}).get('ok'), 60, 'Mission stack')
         api.post('initial_pose', dict(zip(('x', 'y', 'yaw'), pose)))
         api.wait(lambda s: s.get('mission', {}).get('ready') is True, 60, 'Mission readiness')
-        summary['ab_readback'] = parameter(args, container, '/project_mission', 'enable_ab_maneuver')
+        summary['ab_readback'] = parameter(args, container, '/project_mission', 'enable_ab_maneuver', output)
         if summary['ab_readback'] != 'Boolean value is: '+str(source['enabled']):
             raise RuntimeError('A/B runtime parameter did not match the intended mode')
+        for node in ('project_mission', 'project_perception'):
+            dump = docker(args, 'exec', container, 'bash', '-lc',
+                'source /opt/ros/humble/setup.bash; ros2 param dump /'+node,
+                capture_output=True, timeout=15)
+            (output/(node+'-runtime-parameters.yaml')).write_text(dump.stdout)
         mission_start = time.monotonic()
         api.post('start')
         final = api.wait(lambda s: s.get('mission', {}).get('state') in TERMINAL,
@@ -351,6 +393,9 @@ exec python3 scripts/run_algorithm_preview.py --model /tmp/ee3033_sim/assets/yol
         summary.update(outcome='algorithm_terminal', state=final['mission'].get('state'),
                        mission_wall_seconds=time.monotonic()-mission_start,
                        mission=sanitized(final['mission']))
+    except KeyboardInterrupt:
+        summary.update(outcome='runner_interrupted', error='Runner interrupted; not an algorithm verdict')
+        raise
     except Exception as exc:
         summary.update(outcome='runner_error', exception_type=type(exc).__name__, error=str(exc),
                        traceback=traceback.format_exc())
@@ -406,12 +451,14 @@ def main():
     modes = prepare(args, root)
     save(root/'protocol.json', dict(source_sha=args.sha, scenarios=scenarios(), modes=['ab_off', 'ab_on'],
         trials=4, each_trial='independent full SLAM + mission', algorithm_thresholds_unchanged=True,
+        runner_sha256=sha_file(__file__), container_image=args.image, docker_context=args.context, port=args.port,
         run_requested=args.run, mapping_runner_deadline=args.mapping_timeout,
         mission_runner_deadline=args.mission_timeout,
         failure_policy='Save every attempt; no automatic retry; runner deadlines censor the outcome'))
     if not args.run:
         print('Prepared four cases; no containers or workflows started:', root)
         return
+    (root/'runner-executed.py').write_bytes(Path(__file__).read_bytes())
     summaries = []
     for name, scene in scenarios().items():
         for mode, source in modes.items():

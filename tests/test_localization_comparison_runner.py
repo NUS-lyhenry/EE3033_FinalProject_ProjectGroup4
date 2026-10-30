@@ -87,3 +87,28 @@ def test_reference_error_uses_only_fresh_recorded_tf(tmp_path, age, expected):
 def test_state_artifacts_remove_nested_session_tokens():
     value = dict(token='secret', mission=dict(target={'x': 1.}, token='nested'))
     assert runner.sanitized(value) == {'mission': {'target': {'x': 1.}}}
+
+
+def test_parameter_diagnostic_wait_records_discovery_failure_before_success(monkeypatch, tmp_path):
+    import subprocess
+    results = [subprocess.CalledProcessError(1, ['ros2'], output='', stderr='Node not found'),
+               SimpleNamespace(stdout='Double value is: 0.05\n', stderr='')]
+    def call(*args, **kwargs):
+        result = results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+    monkeypatch.setattr(runner, 'docker', call)
+    monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
+    assert runner.parameter(None, 'container', '/slam_toolbox', 'resolution', tmp_path) == 'Double value is: 0.05'
+    text = (tmp_path/'parameter-readbacks.jsonl').read_text()
+    assert 'Node not found' in text and '0.05' in text
+
+
+def test_model_label_readiness_populates_cache_before_mission_setup(monkeypatch, tmp_path):
+    replies = [dict(ready=False, labels=[], error='Reading model labels'), dict(ready=True, labels=['cup'])]
+    api = SimpleNamespace(output=tmp_path, state=lambda: dict(simulated=True, preview_backend='main-ros'),
+                          get=lambda path: replies.pop(0) if path == 'labels' else pytest.fail(path))
+    monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
+    assert runner.wait_labels(api) == dict(ready=True, labels=['cup'])
+    assert len((tmp_path/'model-labels.jsonl').read_text().splitlines()) == 2
