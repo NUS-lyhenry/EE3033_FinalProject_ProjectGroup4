@@ -8,7 +8,12 @@ slam_toolbox:
     scan_topic: /scan_fixed
     resolution: 0.0125
     max_laser_range: 8.0
-    minimum_time_interval: 0.25
+    # Require repeat occupancy evidence; single-view edge scatter must not
+    # permanently add a cell across a measured narrow opening.
+    occupancy_threshold: 0.25
+    # Refresh scan-matched pose/covariance even while stopped. Recovery may
+    # start after a long hold; TF alone must not revive stale /pose evidence.
+    minimum_time_interval: 0.5
     transform_publish_period: 0.05
     map_update_interval: 1.0
     transform_timeout: 0.3
@@ -16,12 +21,32 @@ slam_toolbox:
     stack_size_to_use: 40000000
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_travel_distance: 0.10
-    minimum_travel_heading: 0.10
+    minimum_travel_distance: 0.0
+    minimum_travel_heading: 0.0
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0
     do_loop_closing: true
-    loop_search_maximum_distance: 3.0
+    # Repeated parallel walls must not pull a scan into a different corridor.
+    # Keep scan matching and loop closure, bounded around odometry prediction.
+    correlation_search_space_dimension: 0.16
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.03
+    distance_variance_penalty: 0.04
+    angle_variance_penalty: 0.04
+    coarse_search_angle_offset: 0.08727
+    coarse_angle_resolution: 0.01745
+    fine_search_angle_offset: 0.00349
+    minimum_angle_penalty: 0.5
+    minimum_distance_penalty: 0.5
+    use_response_expansion: false
+    loop_search_maximum_distance: 1.0
+    loop_search_space_dimension: 0.5
+    loop_search_space_resolution: 0.025
+    loop_search_space_smear_deviation: 0.03
+    loop_match_minimum_chain_size: 15
+    loop_match_maximum_variance_coarse: 0.1
+    loop_match_minimum_response_coarse: 0.65
+    loop_match_minimum_response_fine: 0.7
     solver_plugin: solver_plugins::CeresSolver
     ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
     ceres_preconditioner: SCHUR_JACOBI

@@ -119,6 +119,9 @@ class FloorCamera:
 
     @classmethod
     def from_metadata(cls, values):
+        if values.get('model') == 'bottom_inverse_17pt_20261031':
+            from .bottom_range import BottomCamera
+            return BottomCamera(**{k:v for k,v in values.items() if k!='model'})
         return cls(**values)
 
     @property

@@ -1,20 +1,21 @@
 """Temporary narrow-passage policy; never changes sensing or the physical floor."""
 import math
 
-from .robot_geometry import (BODY_RADIUS, ROBOT_WIDTH, FOOTPRINT_PADDING,
+from .robot_geometry import (NAVIGATION_RADIUS, ROBOT_WIDTH, FOOTPRINT_PADDING, FOOTPRINT_RADIUS,
                              ROTATION_CLEARANCES, geometry_metadata)
 
-BASE_RADIUS = BODY_RADIUS
+BASE_RADIUS = NAVIGATION_RADIUS
 SIDE_RESERVE = 0.08
 RESERVED_RADIUS = max(BASE_RADIUS, ROBOT_WIDTH / 2 + SIDE_RESERVE)
-BASE_CLEARANCE = 0.22
+BASE_CLEARANCE = 0.10
 AUDACITY = {
     'cautious': ('Cautious', BASE_CLEARANCE),
-    'balanced': ('Balanced', 0.18),
-    'bold': ('Bold', 0.14),
+    'balanced': ('Balanced', 0.08),
+    'bold': ('Bold', 0.04),
 }
 DEFAULT_AUDACITY = 'bold'
 DEFAULT_CLEARANCE = AUDACITY[DEFAULT_AUDACITY][1]
+DEFAULT_INFLATION_RADIUS = 0.12
 TURNING = {level:dict(stop=distance) for level,distance in ROTATION_CLEARANCES.items()}
 PROGRESS_PLUGIN = 'nav2_controller::SimpleProgressChecker'
 COSTMAPS = ('global_costmap/global_costmap', 'local_costmap/local_costmap')
@@ -34,7 +35,9 @@ def parameter_plan(enabled, phase, audacity=DEFAULT_AUDACITY):
     validate_audacity(audacity)
     radius = RESERVED_RADIUS if enabled else BASE_RADIUS
     turn = TURNING[audacity]
-    return {**{name: {'robot_radius': radius} for name in COSTMAPS},
+    inflation = max(DEFAULT_INFLATION_RADIUS, radius + FOOTPRINT_PADDING)
+    return {**{name: {'robot_radius': radius,
+                     'inflation_layer.inflation_radius': inflation} for name in COSTMAPS},
             'project_mapper' if phase == 'mapping' else 'project_mission': {
                 'clearance': AUDACITY[audacity][1] + (radius - BASE_RADIUS)},
             'controller_server': {},
@@ -52,7 +55,7 @@ def describe(actual, phase):
         if (p['footprint'].replace(' ', '') not in ('', '[]')
                 or p['inflation_layer.enabled'] is not True
                 or p['footprint_padding'] < FOOTPRINT_PADDING
-                or p['inflation_layer.inflation_radius'] < RESERVED_RADIUS + p['footprint_padding']):
+                or p['inflation_layer.inflation_radius'] < p['robot_radius'] + p['footprint_padding']):
             raise ValueError(f'{name}: unsupported footprint/inflation configuration')
     if actual['controller_server']['progress_checker.plugin'] != PROGRESS_PLUGIN:
         raise ValueError('Reload navigation with the original translation progress checker before configuring audacity')
@@ -67,7 +70,7 @@ def describe(actual, phase):
     reserve = radius - BASE_RADIUS
     options = [dict(id=level, label=label, clearance=clearance+reserve,
                     turn_stop_distance=TURNING[level]['stop'],
-                    nominal_min_opening=2*max(clearance+reserve, radius+padding))
+                    nominal_min_opening=2*max(clearance+reserve, radius+padding, FOOTPRINT_RADIUS))
                for level, (label, clearance) in AUDACITY.items()]
     return {'enabled': enabled, 'audacity': audacity, 'audacity_options': options,
             'synchronized': audacity is not None,
@@ -90,7 +93,7 @@ def guard_clearance(node, inactive):
                 return SetParametersResult(successful=False, reason='Stop before changing clearance')
             if (type(p.value) is not float or not math.isfinite(p.value)
                     or not AUDACITY['bold'][1] <= p.value <= 0.5):
-                return SetParametersResult(successful=False, reason='clearance must be 0.14–0.50 m')
+                return SetParametersResult(successful=False, reason=f"clearance must be {AUDACITY['bold'][1]:.6f}–0.50 m")
         return SetParametersResult(successful=True)
     node.add_on_set_parameters_callback(validate)
 

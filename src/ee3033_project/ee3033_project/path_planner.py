@@ -22,13 +22,14 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from .core import quaternion_yaw, stamp_seconds
-from .path_validation import guarded_plan, costmap_mask
+from .robot_geometry import ROUTE_RADIUS, FOOTPRINT_RADIUS
+from .mapping_heading import MAPPING_PLANNER_ID, terminal_path_yaw
+from .path_validation import guarded_plan, costmap_mask, path_search_grid, validate_path
 from .ros_utils import LATCHED, parameters, set_yaw
 
 
 @dataclass
 class PlanningRequest:
-    publish_plan: bool = True
     created: float = field(default_factory=time.monotonic)
     stop: threading.Event = field(default_factory=threading.Event)
     accepted: threading.Event = field(default_factory=threading.Event)
@@ -57,6 +58,8 @@ class PathPlanner(Node):
         self.map=None
         self.revision=0
         self.map_signature=None
+        self.mapping_heading_key=None
+        self.mapping_heading_yaw=None
         self.tf=Buffer();self.listener=TransformListener(self.tf,self)
         self.raw=ActionClient(self,ComputePathToPose,'/project/nav2_compute_path_to_pose',
                               callback_group=self.group)
@@ -69,13 +72,6 @@ class PathPlanner(Node):
         self.server=ActionServer(self,ComputePathToPose,'/compute_path_to_pose',
             execute_callback=self.execute,goal_callback=self.goal,
             cancel_callback=self.cancel,handle_accepted_callback=self.accepted,
-            callback_group=self.group)
-        # Candidate scoring must use identical safety checks without repainting
-        # the route the robot is actually following.
-        self.evaluation_server=ActionServer(self,ComputePathToPose,'/project/evaluate_path_to_pose',
-            execute_callback=self.execute,goal_callback=self.goal,
-            cancel_callback=self.cancel,
-            handle_accepted_callback=lambda handle:self.accepted(handle,publish_plan=False),
             callback_group=self.group)
         self.create_timer(.02,self.start_next,callback_group=self.group)
 
@@ -113,9 +109,9 @@ class PathPlanner(Node):
             self.count+=1
         return GoalResponse.ACCEPT
 
-    def accepted(self,handle,publish_plan=True):
+    def accepted(self,handle):
         with self.guard:
-            self.contexts[bytes(handle.goal_id.uuid)]=PlanningRequest(publish_plan=publish_plan)
+            self.contexts[bytes(handle.goal_id.uuid)]=PlanningRequest()
             self.queue.append(handle)
 
     def start_next(self):
@@ -205,6 +201,8 @@ class PathPlanner(Node):
         return True
 
     def status(self,handle,state,reason,**extra):
+        if state=='FAILED':
+            self.get_logger().warning('Route rejected: '+reason)
         self.status_pub.publish(String(data=json.dumps(dict(stage=state,reason=reason,
             goal_id=bytes(handle.goal_id.uuid).hex(),stamp=self.get_clock().now().nanoseconds*1e-9,**extra))))
 
@@ -246,11 +244,25 @@ class PathPlanner(Node):
                 result.path=path
                 result.planning_time.sec=int(elapsed)
                 result.planning_time.nanosec=int((elapsed-int(elapsed))*1e9)
-                visible=context is None or getattr(context,'publish_plan',True)
-                if visible:self.publisher.publish(path)
+                self.publisher.publish(path)
                 handle.succeed();self.status(handle,'VALIDATED',reason,replaced=replaced,
-                    purpose='navigation' if visible else 'candidate_evaluation')
+                    heading_policy='path_tangent' if handle.request.planner_id==MAPPING_PLANNER_ID else 'assigned',
+                    terminal_yaw=quaternion_yaw(path.poses[-1].pose.orientation))
         return result
+
+    def mapping_terminal_yaw(self,request,points):
+        stamp=request.goal.header.stamp
+        goal=request.goal.pose.position
+        key=(request.goal.header.frame_id,stamp.sec,stamp.nanosec,goal.x,goal.y)
+        yaw=terminal_path_yaw(points)
+        if yaw is not None:
+            self.mapping_heading_key,self.mapping_heading_yaw=key,yaw
+        elif key==self.mapping_heading_key:
+            # A zero-length replan at the endpoint retains this same goal's
+            # previous validated tangent; it cannot reuse another goal's yaw.
+            yaw=self.mapping_heading_yaw
+        if yaw is None:raise ValueError('No nonzero mapping path segment defines a final heading')
+        return yaw
 
     def execute(self,handle):
         key=bytes(handle.goal_id.uuid)
@@ -269,7 +281,8 @@ class PathPlanner(Node):
             forwarded.goal=handle.request.goal
             forwarded.start=handle.request.start
             forwarded.use_start=handle.request.use_start
-            forwarded.planner_id=handle.request.planner_id
+            mapping=handle.request.planner_id==MAPPING_PLANNER_ID
+            forwarded.planner_id='GridBased' if mapping else handle.request.planner_id
             context.future=self.raw.send_goal_async(forwarded)
             context.future.add_done_callback(lambda f:self.raw_accepted(f,context))
             if (not self.wait(context.future,deadline,context)
@@ -315,35 +328,53 @@ class PathPlanner(Node):
             origin=(msg.info.origin.position.x,msg.info.origin.position.y,
                     quaternion_yaw(msg.info.origin.orientation))
             co=cost.metadata.origin
-            mask=costmap_mask(grid.shape,msg.info.resolution,origin,
+            search_grid,search_resolution,_=path_search_grid(grid,msg.info.resolution)
+            mask=costmap_mask(search_grid.shape,search_resolution,origin,
                 np.asarray(cost.data).reshape(cost.metadata.size_y,cost.metadata.size_x),
                 cost.metadata.resolution,(co.position.x,co.position.y,quaternion_yaw(co.orientation)))
-            checked=guarded_plan(grid,msg.info.resolution,origin,start,goal,candidate,mask=mask,
-                deadline=min(deadline,time.monotonic()+self.p['fallback_timeout']),cancel=context.stop.is_set)
+            # Prefer room for pose/tracking error around wall tips. The measured
+            # footprint remains the hard minimum for proven narrow connectors.
+            radius=ROUTE_RADIUS
+            checked=guarded_plan(search_grid,search_resolution,origin,start,goal,candidate,mask=mask,
+                radius=radius,deadline=min(deadline,time.monotonic()+self.p['fallback_timeout']),
+                cancel=context.stop.is_set)
+            if not checked.allowed and not context.stop.is_set() and time.monotonic()<deadline:
+                radius=FOOTPRINT_RADIUS
+                checked=guarded_plan(search_grid,search_resolution,origin,start,goal,candidate,mask=mask,
+                    radius=radius,deadline=min(deadline,time.monotonic()+self.p['fallback_timeout']),
+                    cancel=context.stop.is_set)
             if not checked.allowed:return self.terminal(handle,checked.reason)
+            # The native navigation mask was already checked at search spacing.
+            # Reprojecting it onto coarse raw cell centres expands blocked cells
+            # a second time when map and costmap origins/resolutions differ.
+            if not validate_path(grid,msg.info.resolution,origin,checked.path,radius=radius).allowed:
+                return self.terminal(handle,'Route failed original-map footprint checks')
             if context.stop.is_set():return self.terminal(handle,'Planning canceled')
             with self.guard:
                 latest,latest_revision=self.map,self.revision
             validated_revision=revision
             if latest_revision!=revision:
                 # A changing SLAM map cannot invalidate safety after validation.
-                from .path_validation import validate_path
                 lo=latest.info.origin
                 latest_origin=(lo.position.x,lo.position.y,quaternion_yaw(lo.orientation))
                 latest_grid=np.asarray(latest.data).reshape(latest.info.height,latest.info.width)
-                latest_mask=costmap_mask(latest_grid.shape,latest.info.resolution,latest_origin,
+                latest_search,latest_resolution,_=path_search_grid(latest_grid,latest.info.resolution)
+                latest_mask=costmap_mask(latest_search.shape,latest_resolution,latest_origin,
                     np.asarray(cost.data).reshape(cost.metadata.size_y,cost.metadata.size_x),
                     cost.metadata.resolution,(co.position.x,co.position.y,quaternion_yaw(co.orientation)))
-                if not validate_path(latest_grid,latest.info.resolution,latest_origin,
-                                     checked.path,mask=latest_mask).allowed:
+                if (not validate_path(latest_grid,latest.info.resolution,latest_origin,checked.path,radius=radius).allowed
+                        or not validate_path(latest_search,latest_resolution,latest_origin,
+                                             checked.path,mask=latest_mask,radius=radius).allowed):
                     return self.terminal(handle,'Map changed and invalidated the route')
                 validated_revision=latest_revision
+            final_yaw=self.mapping_terminal_yaw(handle.request,checked.path) if mapping else None
             path=Path();path.header.frame_id=self.p['map_frame'];path.header.stamp=self.get_clock().now().to_msg()
             for i,xy in enumerate(checked.path):
                 p=PoseStamped();p.header=path.header;p.pose.position.x,p.pose.position.y=xy
                 if i+1<len(checked.path):
                     nxt=checked.path[i+1]
                     set_yaw(p.pose.orientation,math.atan2(nxt[1]-xy[1],nxt[0]-xy[0]))
+                elif mapping:set_yaw(p.pose.orientation,final_yaw)
                 else:p.pose.orientation=target.orientation
                 path.poses.append(p)
             return self.terminal(handle,checked.reason,path,checked.replaced,time.monotonic()-started,
@@ -364,7 +395,6 @@ class PathPlanner(Node):
         for context in contexts:
             context.stop.set();self.cancel_raw(context)
         self.server.destroy()
-        self.evaluation_server.destroy()
         super().destroy_node()
 
 

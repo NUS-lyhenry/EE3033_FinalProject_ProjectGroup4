@@ -100,6 +100,7 @@ def main():
                     and statuses and statuses[-1].get('geometry_ready')), (statuses[-1:], detections[-1:])
         assert fixture.count_subscribers('/scan_fixed') == 0
         assert statuses[-1]['geometry_ready'] and statuses[-1]['camera_model']
+        assert detections[-1]['detections'][0]['image_width']==640
         assert observations[-1]['observations'][0]['method'] == os.environ.get('GROUP4_VISION_METHOD','ground_plane')
         assert observations[-1]['observations'][0]['sigma'] <= .10
         # Preferred precision is soft: preserve a stable high-sigma observation,

@@ -135,13 +135,13 @@ class ConsoleTests(unittest.TestCase):
                 time.sleep(.05)
             state=json.load(urlopen(base+'/api/trial',timeout=12))
             self.assertEqual(state['values'],initial)
-            changed=dict(max_linear=.18,max_angular=.6,goal_timeout=90.)
+            changed=dict(max_linear=.30,max_angular=1.0,goal_timeout=300.)
             response=post(changed)
             self.assertTrue(response['synchronized'])
             self.assertEqual(response['values'],changed)
             time.sleep(.2)
-            self.assertEqual(gate.p['max_linear'],.18)
-            self.assertEqual(mapper.p['goal_timeout'],90.)
+            self.assertEqual(gate.p['max_linear'],.30)
+            self.assertEqual(mapper.p['goal_timeout'],300.)
             self.assertEqual(gate.p['rotation_clearance'],gap.TURNING['bold']['stop'])
             with self.assertRaises(HTTPError):
                 post({**changed,'max_linear':1.})
@@ -204,7 +204,8 @@ class ConsoleTests(unittest.TestCase):
                 namespace,node_name=name.split('/')
                 node=Node(node_name,namespace=namespace)
                 for key,value in dict(robot_radius=gap.BASE_RADIUS,footprint='[]',footprint_padding=.01,resolution=.05,
-                        **{'inflation_layer.enabled':True,'inflation_layer.inflation_radius':.24}).items():
+                        **{'inflation_layer.enabled':True,
+                           'inflation_layer.inflation_radius':gap.parameter_plan(False,phase)[name]['inflation_layer.inflation_radius']}).items():
                     node.declare_parameter(key,value)
                 costmaps.append(node)
             costmaps[-1].add_on_set_parameters_callback(accept)
@@ -238,13 +239,13 @@ class ConsoleTests(unittest.TestCase):
                 self.assertFalse(defaults['enabled'])
                 self.assertEqual(defaults['audacity'],'bold')
                 self.assertTrue(defaults['synchronized'])
-                self.assertAlmostEqual(consumer.get_parameter('clearance').value,.14)
+                self.assertAlmostEqual(consumer.get_parameter('clearance').value,gap.DEFAULT_CLEARANCE)
                 with self.assertRaises(HTTPError): post(True,token='')
                 for invalid in (None,1,'true'):
                     with self.assertRaises(HTTPError): post(invalid)
                 with self.assertRaises(HTTPError): post(False,audacity='fast')
                 for enabled in (False,True):
-                    for level,clearance in [('cautious',.22),('balanced',.18),('bold',.14)]:
+                    for level,clearance in [('cautious',.10),('balanced',.08),('bold',.04)]:
                         response=post(enabled,audacity=level)
                         self.assertEqual(response['audacity'],level)
                         self.assertTrue(response['synchronized'])
@@ -256,6 +257,9 @@ class ConsoleTests(unittest.TestCase):
                         for node in costmaps:
                             self.assertAlmostEqual(node.get_parameter('robot_radius').value,
                                                    gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)
+                            self.assertAlmostEqual(node.get_parameter('inflation_layer.inflation_radius').value,
+                                max(gap.DEFAULT_INFLATION_RADIUS,
+                                    (gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)+.01))
                         reject[0]=True
                         with self.assertRaises(HTTPError): post(not enabled,audacity='balanced' if level!='balanced' else 'bold')
                         restored=json.load(urlopen(base+'/api/gap',timeout=15))
@@ -276,10 +280,10 @@ class ConsoleTests(unittest.TestCase):
                 self.assertTrue(post(False,audacity='cautious')['synchronized'])
                 self.assertTrue(post(True)['synchronized'])
                 self.assertAlmostEqual(consumer.get_parameter('clearance').value,
-                                       .22+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
+                                       .10+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
                 if phase=='mapping':
                     time.sleep(.2);self.assertAlmostEqual(consumer.p['clearance'],
-                                                        .22+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
+                                                        .10+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
                 reject[0]=True
                 with self.assertRaises(HTTPError): post(False)
                 self.assertTrue(json.load(urlopen(base+'/api/gap',timeout=15))['enabled'])

@@ -21,8 +21,9 @@ def test_trial_plan_keeps_controller_and_gate_in_sync():
 
 
 @pytest.mark.parametrize('key,bad',[
-    ('max_linear',.19),('max_linear',0.),('max_angular',math.nan),
-    ('max_angular',math.inf),('goal_timeout',121),('max_linear',True),
+    ('max_linear',.31),('max_linear',0.),('max_angular',math.nan),
+    ('max_angular',math.inf),('max_angular',1.05),
+    ('goal_timeout',301),('max_linear',True),
     ('max_linear','0.12'),
 ])
 def test_trial_rejects_invalid_values(key,bad):
@@ -30,6 +31,27 @@ def test_trial_rejects_invalid_values(key,bad):
     trial[key]=bad
     with pytest.raises(ValueError):
         validate_trial(trial)
+
+
+@pytest.mark.parametrize('phase',['mapping','mission'])
+@pytest.mark.parametrize('linear,angular,timeout',[
+    (.19,.65,125.), (.30,1.00,300.),
+])
+def test_higher_limits_apply_consistently(phase,linear,angular,timeout):
+    requested=values(max_linear=linear,max_angular=angular,goal_timeout=timeout)
+    assert validate_trial(requested)==requested
+    plan=parameter_plan(requested,phase)
+    assert plan['project_velocity_gate']=={'max_linear':linear,'max_angular':angular}
+    assert plan['controller_server']['FollowPath.desired_linear_vel']==linear
+    assert plan['controller_server']['FollowPath.max_linear_vel']==linear
+    assert plan['controller_server']['FollowPath.rotate_to_heading_angular_vel']==angular
+    assert plan['controller_server']['FollowPath.max_angular_vel']==angular
+    assert plan['project_navigation_supervisor']=={'goal_timeout':timeout}
+    if phase=='mapping':
+        assert plan['project_mapper']=={'goal_timeout':timeout}
+    else:
+        assert plan['project_mission']=={'goal_timeout':timeout,
+            'search_linear_speed':linear,'search_angular_speed':angular}
 
 
 def test_trial_requires_exact_fields():

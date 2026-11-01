@@ -44,6 +44,43 @@ class MapMMSE:
         self.frozen=None
         self.label=None
         self.factor = None
+        self.batch_support = None
+        self.last_factor_rejection = self.last_update_rejection = None
+
+    def replacement_rejection(self, observation, now):
+        """Compare measurement information before conditioning on the map.
+
+        Correlated sources replace one another, never accumulate. Require a
+        replacement to be no less informative in every direction; map-induced
+        posterior shrinkage must not make a weak measurement appear precise.
+        """
+        previous = self.result
+        # A bearing-only map posterior is not an unconditioned Cartesian
+        # likelihood. Its joint refit replaces those same raw rays.
+        if (previous is None or previous.get('source')=='bearing_only' or previous.get('prior_conflict')
+                or not 0 <= now-previous['stamp'] <= self.max_age):
+            return None
+        try:
+            sigma = float(observation['sigma'])
+            covariance = np.asarray(observation.get('covariance', np.eye(2)*sigma*sigma), dtype=float)
+            point = np.asarray([observation['x'], observation['y']], dtype=float)
+            if (sigma <= 0 or covariance.shape != (2, 2)
+                    or not np.isfinite([sigma, *point, *covariance.ravel()]).all()
+                    or not np.allclose(covariance, covariance.T)
+                    or np.linalg.eigvalsh(covariance).min() <= 0):
+                return 'invalid_covariance'
+            if observation['label'] != self.label:
+                return 'different_target'
+            old = np.asarray(previous['likelihood_covariance'])
+            if np.linalg.eigvalsh(old-covariance).min() < -1e-9:
+                return 'weaker_covariance'
+            delta = point-np.asarray(previous['likelihood_mean'])
+            if float(delta@np.linalg.solve(old+covariance, delta)) > 16.:
+                return 'inconsistent_measurement'
+        except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
+            return 'invalid_measurement'
+        return None
+
 
     def update_factor(self, factor, now):
         """Replace correlated pixel projections with one joint geometric factor.
@@ -51,6 +88,7 @@ class MapMMSE:
         A/B/C are jointly refitted, never appended as independent pairs sharing
         A. Confirmation uses their distinct source frames, not repeated factors.
         """
+        self.last_factor_rejection = None
         try:
             sources=sorted(set(float(s) for s in factor.get('source_frames',[])))
             stamp=float(factor['stamp'])
@@ -62,6 +100,10 @@ class MapMMSE:
         if stamp<self._latest_stamp():return False
         if self.factor and (stamp <= self.factor['stamp'] or sources==self.factor['source_frames']):
             return False
+        rejection=self.replacement_rejection(factor,now)
+        if rejection is not None:
+            self.last_factor_rejection=rejection
+            return False
         factor=dict(factor,source_frames=sources)
         # All floor measurements of this locked object share the same images
         # and mount error. The joint intersection replaces that likelihood.
@@ -71,13 +113,88 @@ class MapMMSE:
         self.result = None
         self.streak = 0
         self.factor = None
-        if not self.update(factor, now):
+        if not self.update(factor, now, _joint_factor=True):
             self.samples, self.bearings, self.result, self.streak, self.label, self.factor = previous
             return False
         self.factor = dict(factor)
         self.streak = len(set(sources))
         self.result.update({k: factor[k] for k in ('source', 'source_frames', 'sites', 'crossing_angle', 'baseline') if k in factor})
         self.result.update(first_source_stamp=float(min(sources)),last_source_stamp=float(max(sources)))
+        return True
+
+    def replace_visual_observation(self, observation, now):
+        """Replace the correlated bottle likelihood with exactly one exposure."""
+        try:
+            stamp=float(observation['stamp'])
+            if (self.frozen is not None or observation.get('source')!='bottom_inverse_single'
+                    or observation.get('source_frames')!=[stamp]
+                    or observation.get('measurement_valid') is not True
+                    or stamp<=self._latest_stamp()):return False
+            previous=(self.samples,self.bearings,self.result,self.streak,self.label,self.factor,self.batch_support)
+            self.samples=deque(maxlen=self.samples.maxlen);self.bearings=deque(maxlen=self.bearings.maxlen)
+            self.result=self.factor=None;self.streak=0;self.label=observation.get('label')
+            self.batch_support=observation
+            if not self.update(observation,now,_joint_factor=True):
+                self.samples,self.bearings,self.result,self.streak,self.label,self.factor,self.batch_support=previous
+                return False
+            self.factor=dict(observation);self.streak=1
+            covariance=np.asarray(self.result['covariance'],float)
+            raw=np.asarray(observation['covariance'],float)
+            # Map conditioning may move the mean, but cannot erase measured error.
+            covariance+=np.eye(2)*max(0.,-float(np.linalg.eigvalsh(covariance-raw).min()))
+            variance=float(np.linalg.eigvalsh(covariance).max())
+            self.result.update({k:observation[k] for k in ('source','source_frames','single_frame','measurement_valid',
+                'reportable','centered','center_error_px','capture_pose','capture_heading','origin','bearing',
+                'quality_flags','engineering_sigma_floor','near_guess','observation_quality') if k in observation})
+            self.result.update(samples=1,frames=1,first_source_stamp=stamp,last_source_stamp=stamp,
+                likelihood_model='single_exposure_shared_error',covariance=covariance.tolist(),
+                variance=variance,sigma=math.sqrt(variance))
+            return True
+        except (ValueError,TypeError,KeyError,np.linalg.LinAlgError):return False
+
+    def replace_batch(self, batch, now):
+        """One robust stationary bottle batch replaces all correlated evidence."""
+        try:
+            sources=list(map(float,batch['source_frames']))
+            if (self.frozen is not None or len(sources)<8 or len(set(sources))!=len(sources)
+                    or sources!=sorted(sources) or max(sources)!=batch['stamp']
+                    or min(sources)>max(sources) or not np.isfinite(sources).all()
+                    or batch.get('source')!='bottom_inverse_batch'
+                    or batch['stamp']<=self._latest_stamp()):
+                return False
+            if self.result is not None:
+                delta=np.array([batch['x'],batch['y']])-self.result['likelihood_mean']
+                innovation=np.asarray(batch['covariance'])+self.result['likelihood_covariance']
+                if float(delta@np.linalg.solve(innovation,delta))>16.:
+                    return False
+        except (ValueError,TypeError,KeyError,np.linalg.LinAlgError):
+            return False
+        previous=self.samples,self.bearings,self.result,self.streak,self.label,self.factor
+        self.samples=deque(maxlen=self.samples.maxlen)
+        self.bearings=deque(maxlen=self.bearings.maxlen)
+        self.result=self.factor=None
+        self.streak=0
+        previous_support=self.batch_support
+        self.batch_support=batch if batch.get('depth_bounds_m') else None
+        self.label=batch.get('label')  # Avoid clearing range support on the first label assignment.
+        if not self.update(batch,now,_joint_factor=True):
+            self.batch_support=previous_support
+            self.samples,self.bearings,self.result,self.streak,self.label,self.factor=previous
+            return False
+        self.factor=dict(batch)
+        self.streak=len(sources)
+        # Shared 2 cm engineering floor survives map conditioning and repeated frames.
+        covariance=np.asarray(self.result['covariance'])
+        minimum=float(np.linalg.eigvalsh(covariance).min())
+        covariance+=np.eye(2)*max(0.,float(batch.get('engineering_sigma_floor',.02))**2-minimum)
+        variance=float(np.linalg.eigvalsh(covariance).max())
+        self.result.update(source='bottom_inverse_batch',source_frames=sources,
+            samples=len(sources),frames=len(sources),first_source_stamp=min(sources),
+            last_source_stamp=max(sources),likelihood_model='robust_stationary_batch_shared_error',
+            engineering_sigma_floor=batch.get('engineering_sigma_floor',.02),
+            quality_flags=batch.get('quality_flags',[]),near_guess=batch.get('near_guess',False),
+            observation_quality=batch.get('observation_quality','calibrated'),covariance=covariance.tolist(),
+            variance=variance,sigma=math.sqrt(variance))
         return True
 
     def set_map(self, grid, resolution, origin):
@@ -186,10 +303,28 @@ class MapMMSE:
         self.result=result
         return True
 
-    def update(self,d,now):
+    def update(self,d,now,*,_joint_factor=False):
+        self.last_update_rejection=None
+        if self.frozen is not None:return False
         if self.factor is not None:
-            # Raw floor projections must not re-enter a joint bearing likelihood.
-            return False
+            try:
+                stamp=float(d['stamp']);source=float(d.get('source_frame',stamp))
+                if stamp<=self._latest_stamp() or source<=self._latest_stamp():return False
+            except (ValueError,TypeError,KeyError,OverflowError):return False
+            rejection=self.replacement_rejection(d,now)
+            if rejection is not None:
+                self.last_update_rejection=rejection
+                return False
+            # Replace correlated evidence; retain native source-frame checks.
+            previous=self.samples,self.bearings,self.result,self.streak,self.label,self.factor
+            self.samples=deque(maxlen=self.samples.maxlen)
+            self.bearings=deque(maxlen=self.bearings.maxlen)
+            self.result=self.factor=None
+            self.streak=0
+            if not self.update(d,now):
+                self.samples,self.bearings,self.result,self.streak,self.label,self.factor=previous
+                return False
+            return True
         if self.frozen is not None or self.grid is None or not len(self.points):return False
         try:
             stamp,x,y,sigma,confidence=[float(d[k]) for k in ('stamp','x','y','sigma','confidence')]
@@ -218,7 +353,7 @@ class MapMMSE:
                 self.streak=0
                 return False
         self.samples.append((stamp,x,y,covariance,confidence,source))
-        result=self._posterior()
+        result=self._posterior(joint=_joint_factor)
         if result is None:
             self.samples,self.bearings,self.result,self.streak,self.label=previous
             return False
@@ -226,18 +361,22 @@ class MapMMSE:
         self.result=result
         return True
 
-    def _posterior(self):
+    def _posterior(self, joint=False):
         mean=likelihood=None
         if self.samples:
             positions=np.array([[s[1],s[2]] for s in self.samples])
             covariances=np.array([s[3] for s in self.samples])
-            precisions=np.linalg.inv(covariances*(1-self.common_fraction))
-            independent=np.linalg.inv(precisions.sum(axis=0))
-            mean=independent@np.einsum('nij,nj->i',precisions,positions)
-            common=max(np.linalg.eigvalsh(c).max() for c in covariances)*self.common_fraction
-            residual=positions-mean
-            # Retain model-mismatch scatter, rather than dividing it away with N.
-            likelihood=independent+np.eye(2)*common+(residual.T@residual)/len(residual)
+            if joint:
+                # The refitted factor already contains its joint uncertainty.
+                mean,likelihood=positions[0],covariances[0]
+            else:
+                precisions=np.linalg.inv(covariances*(1-self.common_fraction))
+                independent=np.linalg.inv(precisions.sum(axis=0))
+                mean=independent@np.einsum('nij,nj->i',precisions,positions)
+                common=max(np.linalg.eigvalsh(c).max() for c in covariances)*self.common_fraction
+                residual=positions-mean
+                # Retain model-mismatch scatter, rather than dividing it away with N.
+                likelihood=independent+np.eye(2)*common+(residual.T@residual)/len(residual)
             delta=self.points-mean
             quadratic=np.einsum('ni,ij,nj->n',delta,np.linalg.inv(likelihood),delta)
             # Broad likelihoods are uninformative, not evidence of a map conflict.
@@ -257,6 +396,16 @@ class MapMMSE:
                 support_distance=ray_distance
         # Broad likelihoods are uninformative, not evidence of a map conflict.
         # Cell quantization also prevents rejecting a precise point between centres.
+        if self.batch_support:
+            support=self.batch_support
+            delta=self.points-np.asarray(support['origin'])
+            ranges=np.linalg.norm(delta,axis=1)
+            bearing=np.arctan2(delta[:,1],delta[:,0])-support['bearing']
+            bearing=np.arctan2(np.sin(bearing),np.cos(bearing))
+            low,high=support['depth_bounds_m']
+            supported=(ranges>=low)&(ranges<=high)&(np.abs(bearing)<=math.radians(25.))
+            if not np.any(supported):return None
+            log_likelihood=np.where(supported,log_likelihood,-np.inf)
         log_weights=np.log(self.prior)+log_likelihood
         normalizer=logsumexp(log_weights)
         if not math.isfinite(float(normalizer)):return None
@@ -286,6 +435,7 @@ class MapMMSE:
             covariance=covariance.tolist(),posterior_mean=posterior_mean.tolist(),projected=projected,
             likelihood_mean=(mean if mean is not None else posterior_mean).tolist(),
             likelihood_covariance=(likelihood if likelihood is not None else covariance).tolist(),
+            likelihood_model='joint_bearing_factor' if joint else 'correlated_floor_frames' if self.samples else 'bearing_only',
             prior_mass=prior_mass,prior_conflict=bool(support_distance>25.),support_mahalanobis_squared=support_distance,
             prior_scope='loaded map extent; unknown cells retained; uninflated connected space',
             map_signature=self.signature,label=self.label,method='map-constrained MMSE',
@@ -336,8 +486,10 @@ class MapMMSE:
         if source is None:return None
         age=now-source['stamp']
         if self.frozen is None and not 0<=age<=30:return None
-        return dict(source,age=max(0.,age),stale=self.frozen is None and age>self.max_age,
-            stable=self.frozen is not None or (self.streak>=self.frames and (len(self.samples)+len(self.bearings)>=self.frames or self.factor is not None) and 0<=age<=self.max_age and not source['prior_conflict']),
+        return dict(source,age=max(0.,age),stale=(self.frozen is None or source.get('single_frame',False)) and age>self.max_age,
+            stable=False if source.get('single_frame') else self.frozen is not None or (self.streak>=self.frames and (len(self.samples)+len(self.bearings)>=self.frames or self.factor is not None) and 0<=age<=self.max_age and not source['prior_conflict']),
+            reportable=bool(source.get('measurement_valid') and not source.get('prior_conflict') and 0<=age<=self.max_age) if source.get('single_frame')
+                else self.frozen is not None or (self.streak>=self.frames and 0<=age<=self.max_age and not source['prior_conflict']),
             frames=source.get('frames',source.get('confirmation_frames',self.streak)) if self.frozen is not None else self.streak,confirmed=self.frozen is not None,frame_id='map')
 
     def freeze(self,estimate):

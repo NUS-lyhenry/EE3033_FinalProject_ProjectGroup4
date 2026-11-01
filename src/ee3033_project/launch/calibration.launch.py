@@ -85,7 +85,7 @@ def start(context):
 
 
 def generate_launch_description():
-    defaults = dict(allow_motion='false', base='true', lidar='true', camera='true', self_mask_radius='.08', port='8780',
+    defaults = dict(allow_motion='false', base='true', lidar='true', camera='true', self_mask_radius='.14', port='8780',
                     model='/home/ros2_ws/weights/yolo26n.pt', target_class='bottle',
                     output_directory='~/ee3033_calibrations', parent_port='8765', map='',
                     seed_pose='false', initial_x='0', initial_y='0', initial_yaw='0')

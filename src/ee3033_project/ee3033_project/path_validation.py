@@ -9,6 +9,55 @@ from scipy.ndimage import binary_dilation, distance_transform_edt
 
 from .motion_safety import FOOTPRINT_RADIUS, OCCUPIED_THRESHOLD, polyline_map_clearance
 
+PATH_SEARCH_SPACING = 0.02
+
+
+def path_samples(points, spacing=PATH_SEARCH_SPACING/2):
+    """Add collinear samples without changing any segment, corner or endpoint.
+
+    The swept-disc validator pads by half its actual sample gap. Supply the
+    same fine gaps to both the search map and original map so a second coarse
+    validation cannot add a larger, resolution-dependent reserve.
+    """
+    points = np.asarray(points, dtype=float)
+    if (points.ndim != 2 or points.shape[1] != 2 or not len(points)
+            or not np.isfinite(points).all() or not math.isfinite(spacing) or spacing <= 0):
+        raise ValueError('Invalid route samples')
+    counts = [max(1, math.ceil(math.dist(a,b)/spacing)) for a,b in zip(points[:-1],points[1:])]
+    if sum(counts)+1 > 1_000_000:
+        raise ValueError('Route exceeds sample limit')
+    samples = [tuple(points[0])]
+    for a,b,count in zip(points[:-1],points[1:],counts):
+        samples.extend(map(tuple,np.linspace(a,b,count+1)[1:]))
+    return tuple(samples)
+
+
+def path_search_grid(grid, resolution, mask=None):
+    """Subdivide cells for <=2.5 cm path search; never infer new free space.
+
+    Every child retains the parent's occupancy and optional navigation mask.
+    The origin and complete occupied/unknown cell-square geometry are unchanged.
+    Already finer maps are retained. Native costmaps should be projected onto
+    the returned geometry by callers that have the original costmap snapshot.
+    """
+    grid = np.asarray(grid)
+    if (grid.ndim != 2 or not grid.size or not math.isfinite(resolution)
+            or resolution <= 0):
+        raise ValueError('Invalid path search geometry')
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != grid.shape:
+            raise ValueError('Invalid navigation mask')
+    # ROS resolutions are float32, e.g. 0.050000000745 rather than exact .05.
+    factor = max(1, math.ceil(resolution/PATH_SEARCH_SPACING-1e-6))
+    if grid.size*factor*factor > 4_000_000:
+        raise ValueError('Path search grid exceeds cell limit')
+    if factor > 1:
+        grid = np.repeat(np.repeat(grid, factor, axis=0), factor, axis=1)
+        if mask is not None:
+            mask = np.repeat(np.repeat(mask, factor, axis=0), factor, axis=1)
+    return grid, resolution/factor, mask
+
 
 @dataclass(frozen=True)
 class PlanCheck:
@@ -112,9 +161,17 @@ def guarded_plan(grid,resolution,origin,start,goal,candidate=(),*,mask=None,
     points=tuple(tuple(map(float,p[:2])) for p in candidate)
     if points:
         # The endpoint connector belongs to the route and must be checked too.
-        points=(start,)+points+(goal,)
-        if validate_path(grid,resolution,origin,points,mask=mask,radius=radius).allowed:
+        try:
+            points=path_samples((start,)+points+(goal,),min(resolution,PATH_SEARCH_SPACING)/2)
+        except (ValueError,OverflowError):
+            points=()
+        if points and validate_path(grid,resolution,origin,points,mask=mask,radius=radius).allowed:
             return PlanCheck(points,'Original route passed full-footprint validation')
+    original_grid, original_resolution, original_mask = grid, resolution, mask
+    try:
+        grid, resolution, mask = path_search_grid(grid, resolution, mask)
+    except ValueError as exc:
+        return PlanCheck((), str(exc))
     safe=safe_grid(grid,resolution,radius)
     if mask is not None:
         mask=np.asarray(mask,dtype=bool)
@@ -164,8 +221,9 @@ def guarded_plan(grid,resolution,origin,start,goal,candidate=(),*,mask=None,
     route=[]
     while best is not None:
         route.append(cell_world(best,resolution,origin));best=parents[best]
-    points=(start,)+tuple(reversed(route))+(goal,)
+    points=path_samples((start,)+tuple(reversed(route))+(goal,),resolution/2)
     if stopped():return PlanCheck((),'Planning canceled or time limit exceeded')
-    if not validate_path(grid,resolution,origin,points,mask=mask,radius=radius).allowed:
+    if not validate_path(original_grid,original_resolution,origin,points,
+                         mask=original_mask,radius=radius).allowed:
         return PlanCheck((),'Computed route failed continuous-footprint validation')
     return PlanCheck(points,'Replaced unsafe route with footprint-clear A* route',True)

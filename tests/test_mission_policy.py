@@ -47,11 +47,13 @@ def test_detection_without_any_geometry_locks_and_cancels_global_navigation():
 
 
 @pytest.mark.parametrize('reason',['Target lost','Localization timeout','Approach rejected','Expired MMSE'])
-def test_locked_target_never_resumes_map_search(reason):
+def test_locked_target_can_request_bounded_map_research(reason):
     m=mission();m.target_detected=True;m.state='LOCALIZING';m.report_best_target=lambda:False
+    m.p={'max_search_restarts':2,'max_goals':120};m.index=3
+    m.return_budget_exhausted=lambda:False;m.pose=lambda:(0.,0.,0.)
     m.resume_search(reason)
-    assert m.cancellations==['RETURN']
-    assert m.localization_reason==reason
+    assert m.cancellations==['RESEARCH']
+    assert m.plan_cancel.is_set()
 
 
 def test_late_selection_cannot_dispatch_after_lock_or_stop():
@@ -238,141 +240,42 @@ def test_best_same_map_posterior_survives_worse_frames_and_temporary_loss():
     assert not m.report_best_target()  # a changed coordinate/map context invalidates it
 
 
-def navigation_mission(state='SEARCHING',accepted=True,pending=False):
-    m=mission();del m.cancel
-    m.state=state;m.goal_serial=9;m.goal_pending=pending
-    m.goal_pending_serial=9 if pending else None
-    m.goal_handle_serial=9 if accepted else None
-    m.raw_cancels=[]
-    m.goal_handle=(NS(goal_id=NS(uuid=bytes(range(16))),
-        cancel_goal_async=lambda:m.raw_cancels.append(True)) if accepted else None)
-    m.navigation_status={};m.navigation_lock_reason=None
-    m.goal_requested_stamp=10.;m.cancel_next=None;m.reason='Following route'
-    m.p={'cancel_timeout':10.};m.goal_kind='search';m.goal_started=time.monotonic()
-    m.index=0;m.failures=[];m.failed_options=set();m.current_option=0
-    m.heartbeat=lambda *args:None;m.persist=lambda:None
-    m.summary=lambda:dict(state=m.state,reason=m.reason)
-    m.result_pub=NS(publish=lambda _:None)
-    m.set_state=lambda state,reason:(setattr(m,'state',state),setattr(m,'reason',reason))
-    m.next_viewpoint=lambda:pytest.fail('Safety lock/rejection must not advance the route')
-    return m
+def test_small_box_blocks_early_precision_report_but_allows_honest_budget_result():
+    m=mission();m.state='LOCALIZING';m.acquisition.small_box_pending=True
+    estimate=dict(x=1.,y=1.,variance=.01,covariance=[[.01,0],[0,.01]],
+        posterior_mean=[1.,1.],projected=False,estimate_id='test',method='map-constrained MMSE',
+        map_signature='test-map',stamp=10.)
+    m.report_target(estimate,'preferred_precision')
+    assert m.target is None and not m.cancellations
+    m.p=dict(target_class='cup',map_frame='map',max_target_variance=.01,max_target_age=2.)
+    m.localization_reason='Visual localization budget exhausted'
+    m.attach_details=lambda:None;m.persist=lambda:None
+    m.make_pose=lambda *a:None;m.target_pub=NS(publish=lambda _:None)
+    m.result_pub=NS(publish=lambda _:None);m.get_logger=lambda:NS(info=lambda _:None)
+    m.report_target(estimate,'approximate')
+    assert m.target['quality']=='approximate' and m.cancellations==['RETURN']
 
 
-def navigation_message(**changes):
-    event=dict(stamp=10.5,goal_id=bytes(range(16)).hex(),recovery_count=0,
-        stage='FAILED',locked=True,reason='Actual stationary stop was not verified; navigation locked')
-    event.update(changes)
-    return NS(data=json.dumps(event))
-
-
-@pytest.mark.parametrize('state',['WAITING','STOPPED'])
-def test_fresh_global_lock_is_latched_without_handle_and_blocks_start(state):
-    m=navigation_mission(state,accepted=False)
-    m.on_navigation_status(navigation_message(goal_id='ff'*16))
-    assert 'Actual stationary stop was not verified' in m.navigation_lock_reason
-    assert m.plan_cancel.is_set() and m.state==state
-    assert m.readiness_error()==m.navigation_lock_reason
-    response=NS(success=False,message='')
-    assert not m.start(NS(),response).success
-    assert response.message==m.navigation_lock_reason
-    m.on_navigation_status(navigation_message(locked=False,stage='IDLE',reason='Ready'))
-    assert m.readiness_error()==response.message  # No heartbeat clears a lockout.
-
-
-@pytest.mark.parametrize('changes',[
-    {'stamp':8.},{'stamp':12.},{'stamp':math.nan},{'goal_id':'not-a-goal'},
-    {'recovery_count':True},{'reason':None},{'locked':'true'},
-])
-def test_invalid_or_stale_global_status_cannot_latch_lock(changes):
-    m=navigation_mission('WAITING',accepted=False)
-    m.on_navigation_status(navigation_message(**changes))
-    assert m.navigation_lock_reason is None and not m.plan_cancel.is_set()
-
-
-def test_global_lock_cancels_active_goal_until_terminal_without_counting_failed_views(monkeypatch):
-    m=navigation_mission()
-    m.on_navigation_status(navigation_message())
-    assert m.state=='CANCELING' and m.cancel_next=='FAILED' and m.raw_cancels==[True]
-    deadline=m.cancel_deadline
-    m.on_navigation_status(navigation_message())
-    assert m.cancel_deadline==deadline and m.raw_cancels==[True]
-    m.goal_result(NS(result=lambda:NS(status=6)),9)
-    assert m.state=='STOPPED' and m.goal_handle is None
-    assert m.internal_error==m.termination_reason==m.navigation_lock_reason
-    assert m.failures==[] and m.failed_options==set() and m.index==0
-
-
-def test_operator_stop_remains_primary_when_locked_diagnostic_arrives_during_cancel():
-    m=navigation_mission()
-    m.stop(NS(),NS())
-    deadline=m.cancel_deadline
-    m.on_navigation_status(navigation_message())
-    assert m.cancel_next=='STOPPED' and m.reason=='Stop requested' and m.cancel_deadline==deadline
-    m.goal_result(NS(result=lambda:NS(status=6)),9)
-    assert m.state=='STOPPED' and m.reason=='Stop requested'
-    assert m.navigation_lock_reason and m.failures==[]
-
-
-@pytest.mark.parametrize('kind',['search','acquire','home'])
-def test_public_rejection_stops_once_without_consuming_viewpoints_or_retrying(kind):
-    m=navigation_mission(accepted=False,pending=True);m.goal_kind=kind
-    m.goal_response(NS(result=lambda:NS(accepted=False)),9)
-    assert m.state=='STOPPED' and not m.goal_pending
-    assert 'rejected the goal' in m.internal_error
-    assert m.failures==[] and m.failed_options==set() and m.index==0
-
-
-def test_rejection_during_operator_cancellation_preserves_stop_priority():
-    m=navigation_mission(accepted=False,pending=True)
-    m.stop(NS(),NS())
-    m.goal_response(NS(result=lambda:NS(accepted=False)),9)
-    assert m.state=='STOPPED' and m.reason=='Stop requested' and m.failures==[]
-
-
-def test_goal_request_transport_failure_during_stop_preserves_operator_reason():
-    m=navigation_mission(accepted=False,pending=True)
-    m.stop(NS(),NS())
-    def unavailable():raise RuntimeError('Action transport failed')
-    m.goal_response(NS(result=unavailable),9)
-    assert m.state=='STOPPED' and m.reason=='Stop requested' and m.failures==[]
-
-
-def test_lock_during_pending_acceptance_waits_for_late_handle_terminal_before_finishing():
-    from concurrent.futures import Future
-    m=navigation_mission(accepted=False,pending=True)
-    m.on_navigation_status(navigation_message())
-    assert m.state=='CANCELING' and m.goal_pending and m.cancel_next=='FAILED'
-    result=Future()
-    handle=NS(accepted=True,goal_id=NS(uuid=bytes(range(16))),get_result_async=lambda:result,
-        cancel_goal_async=lambda:m.raw_cancels.append(True))
-    m.goal_response(NS(result=lambda:handle),9)
-    assert m.state=='CANCELING' and m.goal_handle is handle and not m.goal_pending
-    assert m.raw_cancels==[True]
-    result.set_result(NS(status=5))
-    assert m.state=='STOPPED' and m.goal_handle is None and m.failures==[]
-    assert m.reason==m.navigation_lock_reason
-
-
-def test_cached_lock_prevents_direct_dispatch_and_goal_failure_replanning():
-    m=navigation_mission(accepted=False)
-    m.navigation_lock_reason='Navigation supervisor locked: cancellation unconfirmed'
-    m.send_goal(object(),'search')
-    assert m.state=='STOPPED' and m.index==0
-    m.goal_finished(False)
-    assert m.state=='STOPPED' and m.index==0 and m.failures==[]
-
-
-def test_accepted_navigation_failure_still_marks_only_its_viewpoint_when_not_locked():
-    m=navigation_mission(accepted=False)
-    selected=[];m.next_viewpoint=lambda:selected.append(True)
-    m.goal_finished(False)
-    assert m.failures==[0] and m.failed_options=={0} and m.index==1 and selected==[True]
-
-
-def test_mission_cancel_budget_covers_raw_cancel_and_actual_stationary_verification():
-    defaults=next(n.value for n in ast.walk(cls) if isinstance(n,ast.Assign)
-        and any(isinstance(t,ast.Attribute) and t.attr=='p' for t in n.targets))
-    values=defaults.args[1]
-    timeout=next(value for key,value in zip(values.keys,values.values)
-        if isinstance(key,ast.Constant) and key.value=='cancel_timeout')
-    assert ast.literal_eval(timeout)>=10.
+@pytest.mark.parametrize('fresh', [True, False])
+def test_small_box_skips_long_station_wait_and_never_advances_on_stale_detection(monkeypatch, fresh):
+    m=mission();m.state='LOCALIZING';m.target_detected=True
+    m.p=dict(goal_timeout=75.,mission_timeout=900.,localize_wait_seconds=2.)
+    m.get_parameter=lambda name:NS(value=m.p[name])
+    m.navigation_map=NS(poll=lambda now:None,allowed=lambda *a:True)
+    m.update_localization_clock=lambda:None;m.heartbeat=lambda *a:None
+    m.publish_status=lambda:None;m.goal_handle=None;m.started=0.;m.last_status=0.
+    m.return_budget_exhausted=lambda:False;m.readiness_error=lambda **k:None
+    m.acquisition_wait=1.;m.acquisition_decision_after=0.;m.current_target_estimate={}
+    m.pose=lambda:(1.,1.,0.);m.acquisition.started=1.
+    m.acquisition.candidate=dict(stamp=11. if fresh else 8.,bearing=0.,origin=[1.,1.],
+        confidence=.8,label='cup',center_error=0.)
+    m.acquisition.small_box_pending=True
+    m.planner=CoveragePlanner(np.zeros((80,80)),.05,(0.,0.,0.))
+    goals=[];m.make_pose=lambda *a:a;m.send_goal=lambda pose,kind:goals.append((pose,kind))
+    monkeypatch.setattr(time,'monotonic',lambda:4.)
+    m.tick()
+    if fresh:
+        assert goals and goals[0][0]==pytest.approx((1.1,1.,0.))
+        assert 'Approaching small target' in m.acquisition.phase
+    else:
+        assert all(math.dist(g[0][:2],(1.,1.))==0 for g in goals)

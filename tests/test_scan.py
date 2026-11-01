@@ -1,4 +1,5 @@
 import math
+import pytest
 from ee3033_project.scan_core import resample
 
 
@@ -56,7 +57,8 @@ def test_explicit_eight_centimetre_exclusion_preserves_boundary_and_all_farther_
     assert math.isinf(ranges[2])
 
 
-def test_node_mask_uses_committed_parameter_and_float32_equality_boundary():
+@pytest.mark.parametrize("cutoff", [.08, .14])
+def test_node_mask_uses_committed_parameter_and_float32_equality_boundary(cutoff):
     import ast,struct
     from pathlib import Path
     from types import SimpleNamespace
@@ -66,13 +68,13 @@ def test_node_mask_uses_committed_parameter_and_float32_equality_boundary():
     exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),env)
     node=env['ScanResampler'].__new__(env['ScanResampler'])
     node.p={'bins':450,'self_mask_radius':.2}  # Deliberately stale initialization cache.
-    committed=[.08];node.get_parameter=lambda _:SimpleNamespace(value=committed[0])
+    committed=[cutoff];node.get_parameter=lambda _:SimpleNamespace(value=committed[0])
     output=[];node.pub=SimpleNamespace(publish=output.append)
     f32=lambda value:struct.unpack('f',struct.pack('f',value))[0]
     scan=SimpleNamespace(header=object(),range_min=0.,range_max=12.,scan_time=.1,
-        angle_min=0.,angle_increment=2*math.pi/450,ranges=[f32(.079),f32(.08),f32(.081)])
+        angle_min=0.,angle_increment=2*math.pi/450,ranges=[f32(cutoff-.001),f32(cutoff),f32(cutoff+.001)])
     node.on_scan(scan)
     assert math.isnan(output[-1].ranges[225])
-    assert output[-1].ranges[226]==f32(.08) and output[-1].ranges[227]==f32(.081)
+    assert output[-1].ranges[226]==f32(cutoff) and output[-1].ranges[227]==f32(cutoff+.001)
     committed[0]=0.;node.on_scan(scan)
-    assert output[-1].ranges[225]==f32(.079) and output[-1].range_min==0.
+    assert output[-1].ranges[225]==f32(cutoff-.001) and output[-1].range_min==0.

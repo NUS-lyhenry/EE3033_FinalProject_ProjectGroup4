@@ -67,16 +67,31 @@ def test_perception_uses_exposure_attitude_and_moves_camera_origin():
     assert node.attitude_check['valid']
 
 
-def test_no_legacy_fallback_when_source_missing_or_mount_changed():
+def test_missing_attitude_source_remains_explicit():
     node, image, camera = perception()
     node.attitude_buffer.samples.clear()
     with pytest.raises(ValueError, match='missing_or_stale'):
         node.camera_geometry(image, camera)
     assert not node.attitude_check['valid']
+
+
+@pytest.mark.parametrize('pitch,height,yaw',[(.4,.33,0.),(.48118727477483664,.305,.1)])
+def test_camera_settings_edits_apply_with_existing_controller_reference(pitch,height,yaw):
     node, image, camera = perception()
-    node.p['camera_pitch'] = .4
-    with pytest.raises(ValueError, match='mount_changed'):
-        node.camera_geometry(image, camera)
+    node.p.update(camera_pitch=pitch,camera_height=height,camera_yaw=yaw)
+    model=node.camera_geometry(image,camera)
+    r,t=compensated_mount(mounting_rotation(pitch,yaw),[-.01,0.,height],
+                         [0.,0.,.033],(0.,0.),(0.,.05))
+    assert model.rotation == pytest.approx(r)
+    assert model.translation == pytest.approx(t)
+    assert node.attitude_check['valid']
+
+
+def test_missing_reference_is_distinct_from_editable_camera_settings():
+    node,image,camera=perception()
+    node.attitude_config['reference']=None
+    with pytest.raises(ValueError,match='attitude_reference_missing'):
+        node.camera_geometry(image,camera)
 
 
 def test_fixed_mode_preserves_existing_mount_without_any_attitude_source():

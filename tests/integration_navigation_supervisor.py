@@ -31,7 +31,7 @@ def until(predicate, seconds=8):
     raise AssertionError('Timed out waiting for supervisor fixture')
 
 
-def result(future,seconds=20):
+def result(future,seconds=8):
     until(future.done,seconds)
     return future.result()
 
@@ -74,15 +74,29 @@ class Fixture(Node):
         set_yaw(t.transform.rotation,self.pose[2]);self.tf.sendTransform(t)
         o=Odometry();o.header=t.header;o.child_frame_id='base_footprint'
         o.pose.pose.position.x,o.pose.pose.position.y=self.pose[:2]
-        set_yaw(o.pose.pose.orientation,self.pose[2]);self.odom.publish(o)
+        set_yaw(o.pose.pose.orientation,self.pose[2])
+        o.twist.twist.linear.x=getattr(self,'reported_linear',0.)
+        o.twist.twist.angular.z=getattr(self,'reported_angular',0.)
+        self.odom.publish(o)
         self.command.publish(Twist())
         self.gate.publish(String(data='{"reason":"passing","output":[0,0]}'))
+        if self.mode in ('mapping_success','mapping_wrong_heading','mapping_wrong_endpoint') and hasattr(self,'mapping_request'):
+            self.publish_mapping_path()
         if self.mode in ('recover','frozen'):
             p=Path();p.header.frame_id='map';p.header.stamp=stamp
             for x in (0.,.2,.4):
                 v=PoseStamped();v.header=p.header;v.pose.position.x=x;v.pose.orientation.w=1.
                 p.poses.append(v)
             self.path.publish(p)
+
+    def publish_mapping_path(self):
+        goal=self.mapping_request.pose.pose.position
+        end=goal.x+(1. if self.mode=='mapping_wrong_endpoint' else 0.)
+        p=Path();p.header.frame_id='map';p.header.stamp=self.get_clock().now().to_msg()
+        for x in (0.,end):
+            v=PoseStamped();v.header=p.header;v.pose.position.x=x;v.pose.position.y=goal.y
+            v.pose.orientation.w=1.;p.poses.append(v)
+        self.path.publish(p)
 
     def accept(self,request):
         if self.mode=='late':time.sleep(.4)
@@ -101,6 +115,12 @@ class Fixture(Node):
         number=self.nav_count
         self.active+=1;self.max_active=max(self.max_active,self.active)
         try:
+            if self.mode.startswith('mapping_'):
+                self.mapping_request=h.request
+                self.pose=[h.request.pose.pose.position.x,h.request.pose.pose.position.y,
+                           math.pi/2 if self.mode=='mapping_wrong_heading' else 0.]
+                if self.mode!='mapping_missing_path':self.publish_mapping_path()
+                time.sleep(.15);h.succeed();return NavigateToPose.Result()
             if self.mode=='no_path':
                 h.abort();return NavigateToPose.Result()
             if self.mode=='success' or (self.mode=='recover' and number==3):
@@ -133,8 +153,8 @@ class SupervisorTests(unittest.TestCase):
         rclpy.init()
         self.fixture=Fixture()
         self.supervisor=NavigationSupervisor(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
-            goal_timeout=20.,translation_window=.35,translation_distance=.08,
-            heading_window=.2,stationary_seconds=2.,stationary_timeout=5.,
+            goal_timeout=6.,translation_window=.35,translation_distance=.08,
+            heading_window=.2,stationary_seconds=.06,stationary_timeout=.8,
             sensor_timeout=.2,enable_grace=.5).items()])
         self.executor=MultiThreadedExecutor(num_threads=8)
         for node in (self.fixture,self.supervisor):self.executor.add_node(node)
@@ -148,19 +168,54 @@ class SupervisorTests(unittest.TestCase):
         self.executor.shutdown(timeout_sec=3);self.thread.join(timeout=3)
         self.supervisor.destroy_node();self.fixture.destroy_node();rclpy.shutdown()
 
-    def begin(self,mode):
+    def begin(self,mode,behavior_tree='',x=.4,yaw=0.):
         self.fixture.mode=mode
         time.sleep(.08)
         g=NavigateToPose.Goal();g.pose.header.frame_id='map'
-        g.pose.pose.position.x=.4;g.pose.pose.orientation.w=1.
+        g.pose.pose.position.x=x;set_yaw(g.pose.pose.orientation,yaw)
+        g.behavior_tree=behavior_tree
         h=result(self.client.send_goal_async(g));self.assertTrue(h.accepted)
         return h
+
+    def test_mapping_accepts_path_tangent_instead_of_original_frontier_yaw(self):
+        h=self.begin('mapping_success',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)
+        r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED,self.supervisor.status)
+        self.assertEqual(self.supervisor.status['goal_heading_policy'],'path_tangent')
+
+    def test_mapping_cannot_pass_by_facing_only_the_original_frontier(self):
+        h=self.begin('mapping_wrong_heading',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)
+        r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_ABORTED,self.supervisor.status)
+
+    def test_mapping_does_not_accept_another_goal_path(self):
+        h=self.begin('mapping_wrong_endpoint',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)
+        r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_ABORTED,self.supervisor.status)
+
+    def test_mapping_requires_a_matching_path_before_success(self):
+        h=self.begin('mapping_missing_path',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)
+        r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_ABORTED,self.supervisor.status)
 
     def test_success_is_proxied_with_verified_pose(self):
         h=self.begin('success');r=result(h.get_result_async())
         self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED)
         self.assertEqual(self.fixture.nav_count,1)
         self.assertEqual(self.fixture.back_count,0)
+
+    def test_search_scan_uses_ordinary_tolerance_without_reverse_or_retries(self):
+        h=self.begin('success',behavior_tree='navigate_search_scan.xml',x=0.,yaw=.18)
+        r=result(h.get_result_async())
+        self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED,self.supervisor.status)
+        self.assertEqual(self.fixture.nav_count,1)
+        self.assertEqual(self.fixture.back_count,0)
+
+    def test_failed_search_scan_cancels_before_skipping_without_recovery(self):
+        h=self.begin('frozen',behavior_tree='navigate_search_scan.xml',x=0.,yaw=1.)
+        r=result(h.get_result_async())
+        self.assertEqual(r.status,GoalStatus.STATUS_ABORTED,self.supervisor.status)
+        self.assertEqual(self.fixture.nav_count,1)
+        self.assertEqual(self.fixture.back_count,0)
+        self.assertEqual(self.fixture.clear_count,0)
+        until(lambda:self.fixture.active==0)
+        self.assertEqual(self.supervisor.status['recovery_count'],0)
 
     def test_false_success_outside_goal_tolerance_is_refused(self):
         h=self.begin('false_success');r=result(h.get_result_async())
@@ -175,6 +230,26 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(self.fixture.back_count,1)
         self.assertEqual(self.fixture.max_active,1)
         self.assertEqual(self.supervisor.status['recovery_count'],2)
+
+    def test_disabled_reverse_retries_successfully_without_backup_action(self):
+        self.fixture.enabled=False
+        until(lambda:not self.supervisor.drive)
+        answer=self.supervisor.set_parameters_atomically([Parameter('allow_reverse_recovery',value=False)])
+        self.assertTrue(answer.successful,answer.reason)
+        self.fixture.enabled=True
+        h=self.begin('recover');r=result(h.get_result_async())
+        self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED,self.supervisor.status)
+        self.assertEqual(self.fixture.nav_count,3)
+        self.assertEqual(self.fixture.back_count,0)
+        self.assertEqual(self.fixture.max_active,1)
+        self.assertEqual(self.supervisor.status['recovery_count'],2)
+
+    def test_recovery_switch_cannot_change_during_navigation(self):
+        h=self.begin('frozen');until(lambda:self.fixture.active==1)
+        answer=self.supervisor.set_parameters_atomically([Parameter('allow_reverse_recovery',value=False)])
+        self.assertFalse(answer.successful)
+        self.assertTrue(self.supervisor.get_parameter('allow_reverse_recovery').value)
+        result(h.cancel_goal_async());result(h.get_result_async())
 
     def test_unreachable_goal_never_triggers_blind_reverse(self):
         h=self.begin('no_path');r=result(h.get_result_async())

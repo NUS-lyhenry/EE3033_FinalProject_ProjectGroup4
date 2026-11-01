@@ -6,13 +6,19 @@ from .core import angle_difference
 
 class StationaryWindow:
     def __init__(self, seconds=2.0, linear_limit=.035, angular_limit=.10,
-                 position_limit=.05, heading_limit=.12, max_gap=.25):
+                 position_limit=.05, heading_limit=.12, max_gap=.25, position_only=False):
         values=(seconds,linear_limit,angular_limit,position_limit,heading_limit,max_gap)
         if not all(math.isfinite(v) and v>0 for v in values):
             raise ValueError('Stationary window limits must be finite and positive')
         self.seconds,self.linear_limit,self.angular_limit=seconds,linear_limit,angular_limit
         self.position_limit,self.heading_limit,self.max_gap=position_limit,heading_limit,max_gap
+        self.position_only=bool(position_only)
         self.samples=deque()
+
+    @classmethod
+    def position_hold(cls, seconds=.5, position_limit=.02, max_gap=.25):
+        """Short XY hold; retain measured yaw/twist for diagnostics only."""
+        return cls(seconds=seconds,position_limit=position_limit,max_gap=max_gap,position_only=True)
 
     def reset(self):
         self.samples.clear()
@@ -36,7 +42,7 @@ class StationaryWindow:
             self.samples.popleft()
 
     def evaluate(self, now):
-        result=dict(verified=False,duration=0.,samples=len(self.samples),
+        result=dict(verified=False,duration=0.,samples=len(self.samples),position_only=self.position_only,
                     linear_mean=None,angular_mean=None,position_span=None,heading_span=None,
                     reason='Collecting a complete stationary window',
                     limits=dict(seconds=self.seconds,linear_mean=self.linear_limit,
@@ -68,6 +74,9 @@ class StationaryWindow:
                 (means[1]<=self.angular_limit,'Mean angular speed is too high'),
                 (position_span<=self.position_limit,'Position is still drifting'),
                 (heading_span<=self.heading_limit,'Heading is still drifting')]
-        result['reason']=next((reason for passed,reason in checks if not passed),'Stationary window verified')
+        if self.position_only:
+            checks=[(position_span<=self.position_limit,'Position is still drifting')]
+        success_reason='XY position hold verified' if self.position_only else 'Stationary window verified'
+        result['reason']=next((reason for passed,reason in checks if not passed),success_reason)
         result['verified']=all(passed for passed,_ in checks)
         return result

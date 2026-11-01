@@ -1,0 +1,28 @@
+{
+  "single_frame_patch_reconstructed": true,
+  "all_single_frame_manifest_files_verified": true,
+  "single_frame_source_sha256": "59da039bc106dda36972a09fc5c5bb8c99d86fb7ceabe7e64612123e8cb880d5",
+  "overlapping_single_frame_source_with_later_edits": [
+    "src/ee3033_project/ee3033_project/mission.py"
+  ],
+  "all_source_changes_since_single_frame": [
+    "src/ee3033_project/behavior_trees/navigate_mapping.xml",
+    "src/ee3033_project/config/navigation.yaml",
+    "src/ee3033_project/config/navigation_rpp_native.yaml",
+    "src/ee3033_project/config/slam.yaml",
+    "src/ee3033_project/ee3033_project/frontiers.py",
+    "src/ee3033_project/ee3033_project/mapper.py",
+    "src/ee3033_project/ee3033_project/mapping_heading.py",
+    "src/ee3033_project/ee3033_project/mission.py",
+    "src/ee3033_project/ee3033_project/motion_safety.py",
+    "src/ee3033_project/ee3033_project/navigation_supervision.py",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py",
+    "src/ee3033_project/ee3033_project/path_planner.py",
+    "src/ee3033_project/ee3033_project/robot_geometry.py"
+  ],
+  "robot_baseline_source_files_verified": 90,
+  "robot_baseline_unmerged_edits": [],
+  "merged_source_sha256": "513edd17512edc6a819301ce8a5f4c04952c26762c67b1bba3c14f1326e5da4d",
+  "shared_simulation_core_files": 87,
+  "shared_simulation_core_identical": true
+}

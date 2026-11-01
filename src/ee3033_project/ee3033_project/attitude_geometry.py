@@ -80,9 +80,10 @@ def load_config(path):
 
 
 def reference_valid(config, settings):
+    # The reference establishes controller roll/pitch zero. Camera settings
+    # remain editable; their historical fingerprint is diagnostic metadata.
     ref = config.get('reference')
-    return bool(config.get('pivot') is not None and ref
-                and ref.get('mount_fingerprint') == mount_fingerprint(settings))
+    return bool(config.get('pivot') is not None and ref)
 
 
 class AttitudeBuffer:

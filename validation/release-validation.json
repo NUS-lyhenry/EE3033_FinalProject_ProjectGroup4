@@ -1,0 +1,49 @@
+{
+  "release": "merged_single_frame_wall_tip_20261101_513edd1751",
+  "source_sha256": "513edd17512edc6a819301ce8a5f4c04952c26762c67b1bba3c14f1326e5da4d",
+  "source_files_verified": 93,
+  "shared_non_ui_core_files": 87,
+  "shared_core_matches_validated_simulation": true,
+  "python_tests_passed": 987,
+  "native_tests_passed": {
+    "single_frame_mission": 8,
+    "moving_frame_coverage": 2,
+    "return_home": 10,
+    "path_planner": 17
+  },
+  "runtime_parameters": {
+    "slam": {
+      "resolution": 0.05,
+      "use_scan_matching": true,
+      "do_loop_closing": true,
+      "correlation_search_space_dimension": 0.16,
+      "coarse_search_angle_offset": 0.08727,
+      "occupancy_threshold": 0.25
+    },
+    "controller": {
+      "FollowPath.lookahead_dist": 0.12,
+      "FollowPath.rotate_to_heading_min_angle": 0.2,
+      "home_goal_checker.xy_goal_tolerance": 0.06
+    },
+    "mapper": {
+      "clearance": 0.04,
+      "goal_timeout": 75.0,
+      "allow_motion": true
+    },
+    "gate": {
+      "rotation_clearance": 0.116801,
+      "stop_distance": 0.12
+    }
+  },
+  "web_assets_verified": true,
+  "active_controller_library_verified": true,
+  "deployment_waiting_ready_zero_output_verified": true,
+  "physical_end_to_end_acceptance_complete": false,
+  "simulation_acceptance": {
+    "full_workflow_completed": true,
+    "contact_rejections": 0,
+    "opening34_bidirectional": true,
+    "six_free_5cm_cells_native_planning": true
+  },
+  "private_runtime_evidence_excluded": true
+}

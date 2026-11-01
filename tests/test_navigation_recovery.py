@@ -249,6 +249,7 @@ def test_mission_does_not_run_another_stall_detector_during_supervisor_recovery(
             readiness_error=lambda **kw:None,pending_navigation=None,
             acquisition=NS(active_seconds=0.,expired=lambda now:False),return_budget_exhausted=lambda:False,
             goal_started=99.,last_status=100.)
+    node.localization_watchdog=lambda now:False
     mission_callbacks()['tick'](node)
     assert node.state=='ACQUIRING'
 

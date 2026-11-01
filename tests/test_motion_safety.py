@@ -186,3 +186,14 @@ def test_reenable_requires_a_new_command_after_stop():
     gate.tick()
     assert outputs[-1].linear.x==outputs[-1].angular.z==0.
     assert statuses[-1]['reason']=='command_stale'
+
+
+def test_coarse_map_safe_departure_does_not_deadlock_from_sample_padding():
+    data=np.zeros((80,80),dtype=int);resolution=.05;origin=(-2.,-2.,0.)
+    data[40,40]=100  # occupied square [0,.05] by [0,.05]
+    pose=(.05+motion.FOOTPRINT_RADIUS+.004,.025,0.)
+    assert motion.polyline_map_clearance(data,resolution,origin,[pose[:2]]).allowed
+    assert motion.swept_map_clearance(data,resolution,origin,pose,.16,0.,1.).allowed
+    assert not motion.swept_map_clearance(data,resolution,origin,pose,-.16,0.,1.).allowed
+    data[40,40]=-1
+    assert not motion.swept_map_clearance(data,resolution,origin,pose,-.16,0.,1.).allowed

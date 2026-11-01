@@ -37,7 +37,7 @@ class Workflow(CameraSetup):
             allow_motion=self.p['allow_motion'], model=self.p['model'],
             calibration_file=self.p['calibration_file'],
             hardware={name:self.p['stage_'+name] for name in ('base','lidar','camera')}) if self.p['manage_stages'] else None
-        self.vision_settings = dict(camera_height=0., camera_pitch=.4991641660703783, use_pitch_override=True, camera_yaw=0.,
+        self.vision_settings = dict(camera_height=0., camera_pitch=0., use_pitch_override=False, camera_yaw=0.,
             camera_x=0., camera_y=0., horizontal_fov=0., camera_min_range=.35, camera_max_range=2.)
         saved = Path(self.p['vision_config']).expanduser() if self.p['vision_config'] else Path(self.p['session_directory']).expanduser()/'vision.yaml'
         if saved.is_file():
@@ -155,8 +155,8 @@ class Workflow(CameraSetup):
                 raise ValueError('Mission status is stale; wait for fresh localization and sensors')
             if not self.state.get('ready'):
                 raise ValueError(self.state.get('readiness_reason') or 'Wait for valid localization and sensors')
-            if self.trial_fault or self.gap_fault or self.workflow_fault:
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault or self.recovery_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.recovery_fault)
             if self.selected_map.get('path'):require_preserved_unknown(self.selected_map['path'])
             previous=json.loads(json.dumps(self.record.data))
             cutoff=self.retry_after_stamp
@@ -183,6 +183,7 @@ class Workflow(CameraSetup):
                     return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
                 self.control_generation+=1
                 self.result_data=self.target_estimate=None
+                if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
                 self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
                 self.events.clear()
             return dict(result,message='Searching again on the loaded map; previous attempt saved')
@@ -288,6 +289,7 @@ class Workflow(CameraSetup):
                     self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None
                     self.target_estimate=None
+                    if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
                     self.gate_status=None
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
                     self.selected_map=selected;self.mission_options=options

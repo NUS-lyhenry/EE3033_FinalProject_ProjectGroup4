@@ -72,12 +72,13 @@ def test_reference_permits_measured_bounded_balance_but_refuses_sustained_speed(
         assert node.attitude_config['reference'] is None
 
 
-def test_mount_or_pivot_change_invalidates_reference(tmp_path):
+def test_camera_edits_keep_controller_reference_and_pivot_change_requires_new_zero(tmp_path):
     node = console(tmp_path)
     node.attitude_settings(dict(action='configure', mode='controller', pivot=[0., 0., .033]), 3)
     node.attitude_settings(dict(action='reference'), 3)
     node.vision_settings['camera_pitch'] += .01
-    assert not node.attitude_snapshot()['reference']['valid']
+    assert node.attitude_snapshot()['reference']['valid']
+    assert node.attitude_snapshot()['ready']
     node.attitude_settings(dict(action='configure', mode='controller', pivot=[0., 0., .04]), 3)
     assert node.attitude_snapshot()['reference'] is None
 

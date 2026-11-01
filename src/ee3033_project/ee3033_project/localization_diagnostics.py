@@ -4,11 +4,25 @@ import math
 import numpy as np
 
 
+# Detection dictionaries contain more than forty fields in production. Keep
+# the measurement and rejection evidence before optional rendering metadata.
+EVIDENCE_KEYS = ('stamp', 'published_stamp', 'mission_stamp', 'search_epoch',
+    'reason_codes', 'frame', 'selected', 'association', 'mmse', 'intersection',
+    'label', 'confidence', 'x', 'y', 'sigma', 'covariance', 'projection_valid',
+    'projection_error', 'settled', 'motion_check', 'capture_covariance',
+    'capture_covariance_timing', 'capture_pose_covariance', 'capture_pose',
+    'covariance_timing', 'origin', 'bearing',
+    'centered', 'center_error_px', 'attitude', 'source', 'source_frames',
+    'measurement_valid', 'reportable', 'observation_quality', 'quality_flags')
+
+
 def finite_json(value, depth=0):
     """Keep diagnostics valid JSON and bounded, including exceptional frames."""
     if depth>7:return None
     if isinstance(value,dict):
-        return {str(k)[:80]:finite_json(v,depth+1) for k,v in list(value.items())[:40]}
+        keys = [k for k in EVIDENCE_KEYS if k in value]
+        keys.extend(k for k in value if k not in keys)
+        return {str(k)[:80]:finite_json(value[k],depth+1) for k in keys[:40]}
     if isinstance(value,(list,tuple,np.ndarray)):
         return [finite_json(v,depth+1) for v in list(value)[:16]]
     if isinstance(value,(float,np.floating)):

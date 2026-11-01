@@ -101,7 +101,11 @@ def polyline_map_clearance(grid, resolution, origin, points, radius=FOOTPRINT_RA
 def swept_map_clearance(grid, resolution, origin, pose, linear, angular, horizon,
                         radius=FOOTPRINT_RADIUS):
     try:
-        arc = swept_arc(linear, angular, horizon, resolution/4., pose)
+        # Coarse maps must not add a larger sample-gap allowance than the
+        # fine validated path: that can reject the current safe pose itself at
+        # a corner, even when the entire requested arc moves away from it.
+        # Retain full cell-square geometry, footprint and half-gap proof.
+        arc = swept_arc(linear, angular, horizon, min(resolution/4., .005), pose)
         return polyline_map_clearance(grid, resolution, origin, arc[:, :2], radius)
     except (ValueError, TypeError, OverflowError):
         return MotionCheck(False, 'invalid_motion_geometry')

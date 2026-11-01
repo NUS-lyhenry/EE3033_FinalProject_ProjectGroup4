@@ -64,7 +64,7 @@ class AttitudeSettings:
             if config.get('pivot') is None:
                 codes.append('attitude_pivot_missing')
             if not valid:
-                codes.append('attitude_reference_missing_or_mount_changed')
+                codes.append('attitude_reference_missing')
             editable = self.state.get('state') not in ACTIVE and not (self.stage and self.stage.loading)
             ready = config['mode'] == 'fixed' or not codes
             return dict(success=True, mode=config['mode'], topic=ATTITUDE_TOPIC,
@@ -76,6 +76,12 @@ class AttitudeSettings:
                 message='Saved settings apply when the mission is loaded again. No motion is started.')
 
     def attitude_settings(self, body=None, generation=None):
+        bottle=getattr(self,'mission_options',{}).get('target_class','').casefold()=='bottle'
+        if bottle:
+            if body is not None:
+                raise ValueError('Bottle ranging uses stability telemetry only; angle calibration is retired')
+            return dict(success=True,mode='stability_only',editable=False,ready=True,
+                reason='No angle reference or pitch compensation is used for calibrated bottle ranging')
         if body is None:
             return self.attitude_snapshot()
         if not isinstance(body, dict) or body.get('action') not in ('configure', 'reference'):

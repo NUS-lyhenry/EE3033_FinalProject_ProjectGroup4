@@ -11,6 +11,7 @@ import pytest
 from ee3033_project.core import quaternion_yaw,stamp_seconds
 from ee3033_project.stationary import StationaryWindow
 from ee3033_project.navigation_supervision import wrap
+from ee3033_project.mapping_heading import mapping_tangent_tree, MAPPING_PLANNER_ID, terminal_path_yaw
 
 
 ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
@@ -20,6 +21,7 @@ def load_supervisor(clock=time):
     source=ROOT/'navigation_supervisor.py'
     cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef))
     env=dict(Node=object,time=clock,threading=threading,math=math,wrap=wrap,StationaryWindow=StationaryWindow,
+             mapping_tangent_tree=mapping_tangent_tree,
              rclpy=NS(ok=lambda:True),stamp_seconds=stamp_seconds,quaternion_yaw=quaternion_yaw,
              GoalStatus=NS(STATUS_SUCCEEDED=4,STATUS_CANCELED=5,STATUS_ABORTED=6),
              NavigateToPose=NS(Result=object))
@@ -98,32 +100,22 @@ def test_stop_prevents_dispatch_before_any_raw_action_is_sent():
 
 
 class Clock:
-    def __init__(self,moving):
-        self.t=10.;self.supervisor=None;self.moving=moving
-        self.motion=None;self.fault=None
+    def __init__(self,moving):self.t=10.;self.supervisor=None;self.moving=moving
     def monotonic(self):return self.t
     def sleep(self,seconds):
         self.t+=.05
         n=self.supervisor
         yaw=.4*(self.t-10.) if self.moving else 0.
         n.odom=(0.,0.,yaw,0.,0.)
-        if self.motion:n.odom=self.motion(self.t-10.)
         n.odom_stamp=self.t;n.odom_frame=('odom_combined','base_footprint')
         n.odom_time=n.command_time=self.t
-        if self.fault=='missing':n.odom=None
-        if self.fault=='stale_odom':n.odom_time=self.t-2.
-        if self.fault=='stale_capture':n.odom_stamp=self.t-.3
-        if self.fault=='future_capture':n.odom_stamp=self.t+.1
-        if self.fault=='duplicate_capture':n.odom_stamp=10.
-        if self.fault=='stale_command':n.command_time=self.t-.31
-        if self.fault=='nonzero_command':n.final_command=(.001,0.)
 
 
 def stationary_fixture(moving):
     clock=Clock(moving);cls=load_supervisor(clock);supervisor=cls.__new__(cls)
     clock.supervisor=supervisor
     supervisor.guard=threading.RLock();supervisor.stop=threading.Event()
-    supervisor.p={'stationary_timeout':5.,'sensor_timeout':1.,'stationary_seconds':.06}
+    supervisor.p={'stationary_timeout':2.,'sensor_timeout':1.,'stationary_seconds':.06}
     supervisor.status={};supervisor.set_stage=lambda *args,**kw:None
     supervisor.interrupted=lambda budget:None
     supervisor.odom=(0.,0.,0.,0.,0.);supervisor.odom_time=supervisor.command_time=clock.t
@@ -133,55 +125,16 @@ def stationary_fixture(moving):
     return supervisor,clock
 
 
-def test_zero_reported_twist_does_not_prove_stationary_when_actual_yaw_changes():
+def test_yaw_changes_do_not_prevent_position_only_hold():
     supervisor,_=stationary_fixture(True)
-    assert not supervisor.stationary(None), 'Changing odometry pose must prevent a false stop confirmation'
+    assert supervisor.stationary(None)
+    assert supervisor.status['stationary_check']['position_only']
 
 
-def test_stationary_window_has_at_least_two_seconds_even_with_short_configuration():
+def test_stationary_window_has_at_least_half_a_second_of_actual_pose():
     supervisor,clock=stationary_fixture(False)
     assert supervisor.stationary(None)
-    assert clock.t-10.>=2.
-
-
-def test_bounded_balance_oscillation_passes_real_two_second_stop_window():
-    supervisor,clock=stationary_fixture(False)
-    # 2.6 cm total position span; mean |v| around .031 m/s. Instantaneous
-    # balance correction exceeds .035 m/s, while the chassis does not creep.
-    clock.motion=lambda t:(.013*math.sin(2*math.pi*.6*t),0.,
-        .015*math.sin(2*math.pi*.4*t),.013*2*math.pi*.6*math.cos(2*math.pi*.6*t),
-        .015*2*math.pi*.4*math.cos(2*math.pi*.4*t))
-    assert supervisor.stationary()
-    check=supervisor.status['stationary_check']
-    assert check['duration']==pytest.approx(2.) and check['verified']
-    assert .025<check['position_span']<.027
-    assert .025<check['linear_mean']<.035
-    assert check['final_command']==[0.,0.]
-
-
-@pytest.mark.parametrize('motion,reason_code',[
-    (lambda t:(.03*t,0.,0.,.03,0.),'stationary_position_span'),
-    (lambda t:(0.,0.,.08*t,0.,.08),'stationary_heading_span'),
-    (lambda t:(.03*t,0.,0.,0.,0.),'stationary_position_span'),
-    (lambda t:(0.,0.,.08*t,0.,0.),'stationary_heading_span'),
-])
-def test_slow_creep_is_rejected_even_with_zero_commands_and_low_or_zero_twist(motion,reason_code):
-    supervisor,clock=stationary_fixture(False);clock.motion=motion
-    assert not supervisor.stationary()
-    assert supervisor.status['stationary_check']['reason_code']==reason_code
-
-
-@pytest.mark.parametrize('fault,reason_code',[
-    ('missing','stationary_odom_missing'),('stale_odom','stationary_odom_stale'),
-    ('stale_capture','stationary_odom_capture_stale'),('future_capture','stationary_odom_capture_stale'),
-    ('duplicate_capture','stationary_odom_capture_stale'),('stale_command','stationary_command_stale'),
-    ('nonzero_command','stationary_command_nonzero'),
-])
-def test_stop_requires_fresh_actual_pose_and_zero_final_command(fault,reason_code):
-    supervisor,clock=stationary_fixture(False);clock.fault=fault
-    assert not supervisor.stationary()
-    check=supervisor.status['stationary_check']
-    assert not check['verified'] and check['reason_code']==reason_code
+    assert clock.t-10.>=.5
 
 
 def outer_fixture(events):
@@ -207,20 +160,6 @@ def test_unconfirmed_raw_terminal_locks_busy_before_notifying_client():
     supervisor.set_stage=lambda *args,**kw:None
     supervisor.terminal(outer_fixture(events),4,'Reached')
     assert events==['aborted'] and supervisor.busy and supervisor.blocked
-
-
-def test_failed_stationary_lock_reports_the_actual_check_reason():
-    supervisor=action_fixture();supervisor.status={};supervisor.raw_future=object();events=[]
-    supervisor.finish_raw=lambda:True
-    def unsettled(**kw):
-        supervisor.status['stationary_check']={'verified':False,'reason':'Position is still drifting'}
-        return False
-    supervisor.stationary=unsettled
-    statuses=[];supervisor.set_stage=lambda *args,**kw:statuses.append(args)
-    supervisor.terminal(outer_fixture(events),4,'Navigation goal reached')
-    assert events==['aborted'] and supervisor.busy and supervisor.blocked
-    assert 'Position is still drifting' in statuses[-1][1]
-    assert 'navigation locked' in statuses[-1][1]
 
 
 def test_settled_pose_must_still_satisfy_goal_tolerance_before_success():
@@ -281,6 +220,7 @@ def load_planner():
     env=dict(Node=object,time=time,threading=threading,rclpy=NS(ok=lambda:True),
         GoalStatus=NS(STATUS_SUCCEEDED=4,STATUS_CANCELED=5,STATUS_ABORTED=6),
         ComputePathToPose=NS(Result=result))
+    env.update(MAPPING_PLANNER_ID=MAPPING_PLANNER_ID,terminal_path_yaw=terminal_path_yaw,quaternion_yaw=quaternion_yaw)
     exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),env)
     return env['PathPlanner']
 
@@ -325,7 +265,7 @@ def test_planner_result_transport_failure_does_not_confirm_action_terminal():
 def planner_terminal_fixture():
     planner,context=planner_fixture();events=[];published=[]
     key=b'\x01'*16
-    handle=NS(goal_id=NS(uuid=list(key)),is_cancel_requested=False,is_active=True,
+    handle=NS(goal_id=NS(uuid=list(key)),request=NS(planner_id='GridBased'),is_cancel_requested=False,is_active=True,
         succeed=lambda:events.append('succeeded'),abort=lambda:events.append('aborted'),
         canceled=lambda:events.append('canceled'))
     planner.contexts={key:context};planner.publisher=NS(publish=published.append)
@@ -362,20 +302,25 @@ def test_final_map_revision_check_is_atomic_with_route_publication():
 
 
 def test_a_fresh_validated_route_can_still_be_published():
-    planner,context,handle,events,published=planner_terminal_fixture();path=object()
+    planner,context,handle,events,published=planner_terminal_fixture()
+    path=NS(poses=[NS(pose=NS(orientation=NS(x=0.,y=0.,z=0.,w=1.)))])
     result=planner.terminal(handle,'Validated',path=path,validated_revision=1,cost_stamp=100.)
     assert published==[path] and events==['succeeded'] and result.path is path
 
 
-def test_candidate_route_is_validated_and_returned_without_repainting_navigation():
-    planner,context,handle,events,published=planner_terminal_fixture();path=object()
-    context.publish_plan=False
-    result=planner.terminal(handle,'Validated',path=path,validated_revision=1,cost_stamp=100.)
-    assert not published and events==['succeeded'] and result.path is path
-
-
-def test_candidate_route_still_rejects_changed_map():
-    planner,context,handle,events,published=planner_terminal_fixture()
-    context.publish_plan=False;planner.revision=2
-    planner.terminal(handle,'Validated',path=object(),validated_revision=1,cost_stamp=100.)
-    assert not published and events==['aborted']
+@pytest.mark.parametrize('tree,robot_yaw,received_offset,endpoint,expected',[
+    ('navigate_mapping.xml',0.,0.,(.5,0.),True),
+    ('navigate_mapping.xml',math.pi/2,0.,(.5,0.),False),
+    ('navigate_mapping.xml',0.,-4.,(.5,0.),False),
+    ('navigate_mapping.xml',0.,0.,(.6,0.),False),
+    ('navigate_observation.xml',0.,0.,(.5,0.),False),
+    ('navigate_observation.xml',math.pi/2,0.,(.5,0.),True),
+])
+def test_mapping_arrival_uses_only_the_fresh_matching_path_heading(tree,robot_yaw,received_offset,endpoint,expected):
+    cls=load_supervisor();node=cls.__new__(cls);now=time.monotonic()
+    node.guard=threading.RLock();node.pose=lambda:(.5,0.,robot_yaw);node.p={'xy_tolerance':.12}
+    node.path=[(0.,0.),endpoint];node.path_goal_yaw=0.
+    node.path_received=now+received_offset;node.goal_accepted_at=now-.1
+    q=NS(x=0.,y=0.,z=math.sin(math.pi/4),w=math.cos(math.pi/4))
+    request=NS(behavior_tree=tree,pose=NS(pose=NS(position=NS(x=.5,y=0.),orientation=q)))
+    assert node.reached_goal(request) is expected

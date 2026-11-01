@@ -44,7 +44,7 @@ def generate_launch_description():
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('camera', default_value='true'),
-        DeclareLaunchArgument('self_mask_radius', default_value='.08'),
+        DeclareLaunchArgument('self_mask_radius', default_value='.14'),
         OpaqueFunction(function=setup),
         Node(package='ee3033_project', executable='scan_resampler', output='screen',
              parameters=[{'self_mask_radius':ParameterValue(LaunchConfiguration('self_mask_radius'),value_type=float)}]),

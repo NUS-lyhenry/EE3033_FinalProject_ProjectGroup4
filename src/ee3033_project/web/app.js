@@ -1,13 +1,13 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING']);
+const ACTIVE=new Set(['PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING']);
 const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d):'—';
 const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;};
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
+let recoveryBusy=false;
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
 let modelLabels=null,labelKey='',labelsBusy=false;
 let scanFilter=null,scanFilterDirty=false,scanFilterBusy=false,scanFilterError=null,scanFilterRequest=0;
-let attitude=null,attitudeDirty=false,attitudeBusy=false;
 let waypointDraft=null;
 let coordinateMethodChosen=false,lastSavedMapId=null;
 let measuring=false,measurement=null;
@@ -16,6 +16,124 @@ const PAGES={overview:['Robot overview','Live map, camera and robot status.'],ma
 PAGES.workflow=['Map, find & return','Build the map, confirm it, set the start, then run the autonomous mission.'];
 let currentPage='workflow',workflowSerial=0,visionDirty=false;
 const visionFields={camera_height:['visionHeight',1],camera_pitch:['visionPitch',180/Math.PI],camera_yaw:['visionYaw',180/Math.PI],camera_x:['visionX',1],camera_y:['visionY',1],horizontal_fov:['visionFov',180/Math.PI],camera_min_range:['visionMin',1],camera_max_range:['visionMax',1]};
+function validCoordinate(target){return !!target&&[target.x,target.y].every(Number.isFinite);}
+function targetReported(m){return validCoordinate(m.target)&&m.target_reported!==false;}
+function sourceFrameCount(target){
+  if(Array.isArray(target?.source_frames))return new Set(target.source_frames.filter(Number.isFinite)).size;
+  return [target?.frames,target?.samples,target?.confirmation_frames].find(value=>Number.isInteger(value)&&value>0)??null;
+}
+function displayTarget(s){
+  const m=s.mission||{};
+  if(validCoordinate(m.target))return {...m.target,label:m.target.class,
+    sigma:m.target.sigma??Math.sqrt(m.target.variance),samples:sourceFrameCount(m.target),
+    stable:m.target.measurement_stable??m.target.stable??false,
+    confirmed:targetReported(m),accepted:true,display_only:!targetReported(m)};
+  const fused=s.target_estimate,preview=s.target_preview;
+  const valid=t=>validCoordinate(t)&&Number.isFinite(t.sigma)&&t.sigma>0;
+  if(valid(fused)&&!fused.stale)return {...fused,confirmed:false,display_only:true};
+  if(valid(preview)&&!preview.stale)return {...preview,confirmed:false,display_only:true};
+  const retained=[fused,preview].filter(valid).sort((a,b)=>(b.stamp??0)-(a.stamp??0))[0];
+  return retained?{...retained,confirmed:false,display_only:true}:null;
+}
+function renderResultEvidence(s,estimate,distance){
+  const m=s.mission||{},coordinate=validCoordinate(m.target)?m.target:null,reported=targetReported(m);
+  const ended=['COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'].includes(m.state);
+  const detected=!!coordinate||m.target_detected===true||m.target_ever_detected===true;
+  const candidate=(s.perception?.detected_candidates??0)>0&&s.perception?.frame_age<=1.5;
+  $('resultDetection').textContent=detected?'Target detected':candidate?'Candidate visible':ended?'Target not detected':'Not detected yet';
+  const approximate=['best_available','approximate'].includes(coordinate?.quality);
+  $('resultTarget').textContent=coordinate?`(${fmt(coordinate.x)}, ${fmt(coordinate.y)}) m${approximate?' · approximate estimate':''}`:'No coordinate reported';
+  $('resultCoordinateStatus').textContent=reported?(approximate?'Reported · approximate':'Reported')
+    :coordinate?'Accepted estimate · not reported':estimate?'Preview only · not reported':'No coordinate reported';
+  const frames=sourceFrameCount(coordinate),sigma=coordinate?.sigma??(Number.isFinite(coordinate?.variance)?Math.sqrt(coordinate.variance):null);
+  if(coordinate)$('resultCoordinateStatus').textContent+=`${frames!=null?' · '+frames+' source exposure'+(frames===1?'':'s'):''}${Number.isFinite(sigma)?' · σ '+fmt(sigma)+' m':''}${Number.isFinite(coordinate.age)?' · '+fmt(coordinate.age,1)+' s old':''}${coordinate.stale?' · retained record':''}`;
+  const positionConfidence=coordinate?.position_confidence,confidenceRadius=coordinate?.confidence_radius_m??.2;
+  $('resultPositionConfidence').textContent=reported&&Number.isFinite(positionConfidence)&&positionConfidence>=0&&positionConfidence<=1
+    ?`${Math.round(positionConfidence*100)}% within ${fmt(confidenceRadius)} m${coordinate.stale?' · stale':''}${Number.isFinite(coordinate.age)?' · '+fmt(coordinate.age,1)+' s old':''}`:'Unavailable';
+  $('resultReturn').textContent=m.return_verified?`Verified · ${fmt(distance)} m`:m.state==='RETURNING'?'Returning…':m.state==='VERIFYING'?'Checking home position…':ended?'Return not verified':'Pending';
+  $('resultStop').textContent=m.return_verified?'Verified position hold':m.state==='VERIFYING'?`Checking ${fmt(m.stationary_check?.duration??0,1)} / ${fmt(m.stationary_required_seconds??.5,1)} s…`:ended?'Not verified':'Pending';
+  const estimatedOutcome=approximate&&Number.isFinite(positionConfidence)&&positionConfidence>=0&&positionConfidence<=1
+    ?`Complete · estimated confidence ${Math.round(positionConfidence*100)}% within ${fmt(confidenceRadius)} m`:'Complete';
+  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified&&reported?estimatedOutcome
+    :m.state==='FOUND_UNLOCALIZED'?'Target found · position unavailable':m.state==='SEARCH_INCOMPLETE'?'Search incomplete'
+    :m.state==='NOT_FOUND'?'Search completed · target not found':m.state==='FAILED'?'Failed'
+    :m.state==='STOPPED'?(m.internal_error||m.safety_error||m.safety_errors?.length?'Stopped · safety error':'Stopped'):'Trial not complete';
+  $('resultReason').textContent=m.internal_error||m.termination_reason||(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a reported coordinate and verified return.';
+  if(coordinate&&approximate)$('resultReason').textContent+=` · Approximate estimate: uncertainty σ ${fmt(sigma)} m; preferred ${fmt(coordinate.preferred_sigma)} m.`;
+  else if(Number.isFinite(sigma))$('resultReason').textContent+=` · Position σ ${fmt(sigma)} m.`;
+}
+function renderVisualDetails(s,estimate){
+  const p=s.perception||{},details=s.perception_details||{},d=details.selected||{},last=details.last_detection;
+  const motion=d.motion_check||p.motion_check||{},attitude=d.attitude||p.attitude||{};
+  const mmse=details.diagnostic?.mmse||{},count=sourceFrameCount(estimate)??mmse.batch_frames??0;
+  const single=estimate?.source==='bottom_inverse_single'||estimate?.single_frame===true||mmse.required_frames===1;
+  const raw=details.raw_count??p.raw_detected_candidates??p.detected_candidates;
+  const eligible=details.in_range_count??p.detected_candidates;
+  const fresh=p.ready&&Number.isFinite(p.frame_age)&&p.frame_age<=1.5;
+  const limits=s.mission_options||{},near=limits.bottle_min_range??p.camera_model?.min_range??.35,far=limits.bottle_max_range??p.camera_model?.max_range??.95;
+  $('visionLimits').textContent=`Active range ${fmt(near*100,0)}–${fmt(far*100,0)} cm · detector threshold ${fmt((p.detector_confidence_threshold??.60)*100,0)}%`;
+  const state=estimate?.confirmed?'Reported target':estimate?.accepted?'Accepted estimate':estimate?.stale?'Last known estimate':estimate?.display_only?'Unconfirmed preview':raw>0&&eligible===0?'Outside range':raw>0?'Target visible':fresh?'No target this frame':'Waiting for camera';
+  setPill('visionState',state,estimate?.confirmed?'good':estimate||raw>0?'warn':'');
+  $('visionMapPosition').textContent=estimate?`(${fmt(estimate.x)}, ${fmt(estimate.y)}) m`:'No map coordinate';
+  $('visionMapQuality').textContent=estimate?.confirmed?'Reported target':estimate?.accepted?'Accepted estimate · not reported':estimate?.stale?`Last seen ${fmt(estimate.age,1)} s ago · retained on map`:estimate?.display_only?'Single-frame preview · not confirmed':estimate?'Map-fused estimate · not confirmed':s.pose?'Waiting for a valid coordinate observation':'Set the robot position and heading first';
+  $('visionSigma').textContent=estimate?`σ ≈ ${fmt(estimate.sigma*100,1)} cm`:'—';
+  $('visionFrames').textContent=single?`${count} source exposure${count===1?'':'s'} · single-frame estimate`:mmse.required_frames?`${mmse.batch_frames??count} / ${mmse.required_frames} valid frames${mmse.updated?' · fusion updated':''}`:`${count} source exposure${count===1?'':'s'}`;
+  $('visionConfidence').textContent=Number.isFinite(d.confidence)?`${fmt(d.confidence*100,0)}%`:raw===0?'No target':last?`${fmt(last.confidence*100,0)}% · last seen`:'—';
+  $('visionCounts').textContent=raw!=null?`${raw} YOLO box${raw===1?'':'es'} · ${eligible??0} in range · ${p.localized_candidates??0} usable`:'No fresh detection frame';
+  $('visionRange').textContent=Number.isFinite(d.range_m)?`${fmt(d.range_m*100,1)} cm`:d.range_state==='too_far'?`>${fmt(far*100,0)} cm`:d.range_state==='below_selected_minimum'?`<${fmt(near*100,0)} cm`:'—';
+  $('visionRangeKind').textContent=d.ranging_mode==='near_guess'?'Near-field guess · 12–35 cm prior':d.range_state==='too_far'?'Outside range · direction only':Number.isFinite(d.range_m)?'Original-image bottom-edge estimate':'No range observation';
+  const box=d.box;
+  $('visionBottom').textContent=box?`${fmt(box[3],1)} px`:'—';
+  $('visionBox').textContent=box?`Box ${fmt(box[2]-box[0],1)} × ${fmt(box[3]-box[1],1)} px · original ${d.image_width??640} × ${d.image_height??480}`:'Original image coordinates; not inference pixels';
+  const error=d.center_error_px??(box?(box[0]+box[2])/2-(d.image_width??640)/2:null);
+  $('visionCenter').textContent=Number.isFinite(error)?`${error>0?'+':''}${fmt(error,1)} px`:'—';
+  const centerLimit=32*(d.image_width??640)/640;
+  $('visionAlignment').textContent=Number.isFinite(error)?Math.abs(error)<=centerLimit?`Within preferred ±${fmt(centerLimit,0)} px`:'Off-center · bounded correction; uncertainty retained':'Prefer ±32 px at 640 px width; bounded correction';
+  $('visionMotion').textContent=motion.samples?'Motion recorded':'Waiting for motion data';
+  $('visionMotionDetail').textContent=Number.isFinite(motion.linear_mean)?`${fmt(motion.linear_mean,3)} m/s · yaw ${fmt((motion.angular_mean??0)*180/Math.PI,1)}°/s · span ${fmt((motion.position_span??0)*100,1)} cm`:motion.reason||'Waiting for odometry';
+  $('visionPosture').textContent=attitude.valid?'Stable':'Unverified';
+  $('visionPostureDetail').textContent=attitude.span?`Roll / pitch span ${attitude.span.map(v=>fmt(v*180/Math.PI,1)+'°').join(' / ')} · no angle correction`:attitude.reason?'Conservative uncertainty · '+attitude.reason:'Stability telemetry is unavailable';
+  $('visionTiming').textContent=Number.isFinite(p.frame_age)?`${fmt(p.frame_age,2)} s · ${fmt(p.latency*1000,0)} ms`:'—';
+  $('visionFreshness').textContent=raw>0&&details.age!=null?`Detection update ${fmt(details.age,2)} s ago`:details.last_seen_age!=null?`Target last seen ${fmt(details.last_seen_age,1)} s ago`:fresh?'Camera live · no target visible':'Frame unavailable or stale';
+  $('visionRobotPose').textContent=s.pose?`(${fmt(s.pose[0])}, ${fmt(s.pose[1])}) m`:'Pose unavailable';
+  const covariance=s.amcl_covariance;
+  $('visionRobotUncertainty').textContent=covariance?`Position σ ${fmt(Math.sqrt(Math.max(covariance[0],covariance[1]))*100,1)} cm · heading σ ${fmt(Math.sqrt(covariance[2])*180/Math.PI,1)}°`:s.pose?'Capture-time transform available':'Map coordinates need robot localization';
+  const reasons=[];
+  if(!online)reasons.push('Connection lost; displayed values are retained observations.');
+  else if(!fresh)reasons.push('Waiting for a fresh camera frame.');
+  if(!s.pose)reasons.push('Set the robot position and heading to place the estimate on the map.');
+  if(raw===0)reasons.push('No target above the detector confidence threshold in this frame.');
+  if(raw>0&&eligible===0)reasons.push('Visible target is outside the selected detection range; it cannot count as found.');
+  if(d.projection_error)reasons.push(d.projection_error);
+  if(d.ranging_mode==='near_guess')reasons.push('Bottom is close or cropped; the map shows a conservative near-field guess.');
+  if(estimate?.display_only&&!estimate?.accepted)reasons.push('The map marker is a provisional visual estimate; a preview is not a mission coordinate report.');
+  if(estimate?.prior_conflict)reasons.push('Map and observation disagree; the estimate is shown but cannot be accepted.');
+  if(!reasons.length)reasons.push(estimate?.confirmed?'Target coordinates reported.':estimate?.accepted?'Valid coordinate accepted; bounded centering may still be in progress.':'Waiting for a valid timestamped coordinate observation.');
+  $('visionReason').textContent=[...new Set(reasons)].join(' ');
+  $('visionReason').classList.toggle('good',!!estimate?.confirmed);
+}
+const SIMULATION_CAMERA_FORM="<section id=\"simulationCameraPanel\" class=\"panel\"><div class=\"panel-body\"><h3 id=\"cameraMountTitle\">Camera mounting · one-time setup</h3><p id=\"simulationGeometryHelp\" class=\"notice amber\" hidden></p><p id=\"cameraMountHelp\" class=\"muted\">Zero height uses the installed camera TF. Zero FOV uses CameraInfo. Fill measured values only; no bottle collection is required. Angles below are degrees.</p><div class=\"form-grid\">\n<label>Camera height (m)<input id=\"visionHeight\" type=\"number\" min=\"0\" max=\"1.5\" step=\"0.001\" value=\"0\"></label><label>Downward pitch (°)<input id=\"visionPitch\" type=\"number\" min=\"-60\" max=\"60\" step=\"0.5\" value=\"0\"></label><label>Camera yaw (°)<input id=\"visionYaw\" type=\"number\" min=\"-180\" max=\"180\" step=\"0.5\" value=\"0\"></label>\n<label>Forward mount offset (m)<input id=\"visionX\" type=\"number\" min=\"-0.5\" max=\"0.5\" step=\"0.001\" value=\"0\"></label><label>Left mount offset (m)<input id=\"visionY\" type=\"number\" min=\"-0.5\" max=\"0.5\" step=\"0.001\" value=\"0\"></label><label>Explicit horizontal FOV (°; 0 = CameraInfo)<input id=\"visionFov\" type=\"number\" min=\"0\" max=\"160\" step=\"0.5\" value=\"0\"></label>\n<label>Minimum usable range (m)<input id=\"visionMin\" type=\"number\" min=\"0.2\" max=\"1\" step=\"0.05\" value=\"0.35\"></label><label>Maximum usable range (m)<input id=\"visionMax\" type=\"number\" min=\"0.5\" max=\"3\" step=\"0.1\" value=\"2\"></label>\n</div><button id=\"saveVision\" class=\"secondary\">Save camera geometry</button><p id=\"cameraMountSavedHint\" class=\"muted\">Saved settings apply the next time the mission loads.</p></div></section>";
+function renderSimulationMount(s){
+  if(!physicalCameraMode()){$('simulationCameraPanel')?.remove();return;}
+  if(!$('simulationCameraPanel')){
+    $('toolsBody').insertAdjacentHTML('beforeend',SIMULATION_CAMERA_FORM);
+    Object.values(visionFields).forEach(([id])=>$(id).oninput=()=>{visionDirty=true;});
+    $('saveVision').onclick=()=>{
+      if(!simulationEditable())return;
+      const values=Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale]));
+      action('simulation_camera',values).then(response=>{visionDirty=false;if(response.camera)snapshot.simulation_camera=response.camera;render();}).catch(()=>{});
+    };
+  }
+  const mount=s.simulation_camera;
+  $('saveVision').disabled=!simulationEditable();$('saveVision').textContent='Apply simulated camera';
+  $('cameraMountTitle').textContent='Simulated camera · physical setup';
+  $('cameraMountHelp').textContent='Adjust the simulated camera mount and lens. These controls affect the isolated simulation only.';
+  $('cameraMountSavedHint').textContent='Apply while the simulation is stopped. No real robot camera settings are changed.';
+  $('simulationGeometryHelp').hidden=false;
+  $('simulationGeometryHelp').textContent=`Current simulated camera: ${fmt(mount.camera_height,2)} m high, ${fmt(mount.camera_pitch*180/Math.PI,1)}° downward. These controls move the simulated camera itself.`;
+  $('visionHeight').min='0.05';
+  if(!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(mount[name]*scale,3));
+}
 function arrangeWorkflow(){
   document.querySelector('.sidebar').hidden=true;
   document.querySelector('.page-tabs').hidden=true;
@@ -32,13 +150,13 @@ function arrangeWorkflow(){
   tools.addEventListener('toggle',()=>{if(!tools.open)releaseDrive();});
 }
 arrangeWorkflow();
-PAGES.calibration=['Camera setup','Calibrate once, then reuse the saved profile automatically for future missions.'];
+
 function renderPages(){
   const route=location.hash.replace(/^#\/?/,''),previous=currentPage;currentPage=Object.hasOwn(PAGES,route)?route:'workflow';
   if(previous!==currentPage){$('advancedTools').open=currentPage!=='workflow';if(currentPage==='calibration')$('legacyCalibration').open=true;}
   document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=currentPage==='workflow'?false:!e.dataset.pages.split(' ').includes(currentPage));
   if(currentPage==='workflow'){$('mappingPanel').hidden=snapshot?.phase==='mission';$('legacyCalibration').hidden=true;}
-  else $('legacyCalibration').hidden=false;
+  else $('legacyCalibration').hidden=true;
   $('backWorkflow').hidden=currentPage==='workflow';
   document.querySelectorAll('[data-page-link]').forEach(e=>{if(e.dataset.pageLink===currentPage)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
   $('pageTitle').textContent=PAGES[currentPage][0];$('pageDescription').textContent=PAGES[currentPage][1];
@@ -120,10 +238,47 @@ $('simulationScene').onclick=e=>{
   $('simulationTargetX').value=fmt(simulationDraft[0],3);$('simulationTargetY').value=fmt(simulationDraft[1],3);renderSimulation();
 };
 function chosenMap(){return maps.find(m=>m.id===$('savedMaps').value);}
-function currentSavedMap(){return maps.find(m=>m.path===(snapshot?.saved_map||snapshot?.mission?.saved_map));}
+function currentSavedMap(){const path=snapshot&&Object.hasOwn(snapshot,'saved_map')?snapshot.saved_map:snapshot?.mission?.saved_map;return maps.find(m=>m.path===path);}
 function running(){return snapshot?.stage?.managed?snapshot.stage.running:true;}
 function setupIdle(){return online&&!snapshot?.read_only&&!busy&&!snapshot?.stage?.transitioning&&!ACTIVE.has(snapshot?.mission?.state);}
 function ready(repeat=false){return online&&(repeat||!snapshot?.assessment?.interrupted&&snapshot?.assessment?.finished==null)&&running()&&snapshot?.health?.Mission?.ok&&snapshot?.mission?.ready!==false&&!snapshot?.control_fault&&!busy&&!snapshot?.stage?.transitioning;}
+function missionReadinessHelp(reason){
+  if(reason.includes('attitude_reference_missing'))return 'The controller attitude reference is missing. Keep the robot still, choose Capture controller reference under Advanced, then reload the mission and set the start pose again.';
+  if(reason.includes('attitude_pivot_missing'))return 'The measured wheel pivot is missing. Save it under Advanced → Attitude localization reference, capture a controller reference, then reload the mission.';
+  if(reason.includes('attitude_missing_or_stale'))return 'Fresh controller attitude data is unavailable. Check the robot connection and wait for live attitude readings.';
+  if(reason.includes('No AMCL pose'))return 'Set the assigned start pose on the map and wait for localization.';
+  if(reason.includes('Localization uncertainty'))return 'Localization uncertainty is too high. Check the robot position and heading on the map, then set the start pose again.';
+  if(reason.includes('Nav2 navigation costmap'))return 'The navigation map is still loading. Wait for fresh navigation data.';
+  if(reason.includes('No saved map'))return 'No map has been received. Load a reviewed saved map for the mission.';
+  if(reason.includes('Lidar stream'))return 'Fresh lidar readings are unavailable. Check the lidar connection.';
+  if(reason.includes('Odometry'))return 'Fresh odometry is unavailable. Check the robot connection.';
+  if(reason.includes('YOLO stream'))return 'Target detection is not ready. Wait for the camera and detector, and check the selected target class.';
+  if(reason.includes('Map-to-base TF'))return 'The robot position on the map is unavailable. Check localization and set the start pose again.';
+  return reason||'The robot is not ready. Check the readiness indicators below.';
+}
+function renderMissionStartReason({active,loaded,managed,labelReady,settingsChanged,validSettings}){
+  const s=snapshot,m=s.mission||{},button=$('startMission'),quote=$('missionStartReason');
+  const reasons=[];
+  if(!online)reasons.push('Disconnected from the robot. Reconnect to continue.');
+  else if(active)reasons.push('A task is already running. Wait for it to finish, or choose Stop robot.');
+  else if(busy||s.stage?.transitioning)reasons.push('Applying changes. Wait for the current operation to finish.');
+  else{
+    if(s.phase!=='mission')reasons.push('Confirm a reviewed map and load the mission stage first.');
+    else if(!loaded)reasons.push('The mission stage is not running. Reload the map and mission stage.');
+    if(!s.allow_motion)reasons.push('Motion is disabled in this console. Open the robot control console.');
+    if(s.assessment?.interrupted||s.assessment?.finished!=null)reasons.push('This trial has ended or was interrupted. Reload the map and set the start pose for a new attempt.');
+    if(s.control_fault)reasons.push(s.control_fault);
+    if(loaded&&!s.health?.Mission?.ok)reasons.push('Fresh mission status is unavailable. Check the robot connection.');
+    if(m.ready===false)reasons.push(missionReadinessHelp(m.readiness_reason||''));
+    if(!labelReady)reasons.push(modelLabels?.ready?'The selected target is not supported by the detector. Choose a supported target.':'Detector labels are still loading. Wait for the target list.');
+    if(settingsChanged)reasons.push('Mission settings have changed. Choose Apply settings & reload mission, then set the start pose again.');
+    if(!validSettings)reasons.push('Check the return tolerance, preferred precision and acquisition time. Enter values within the displayed limits.');
+    if(managed&&!s.initial_pose_sent&&!m.readiness_reason?.includes('No AMCL pose'))reasons.push('Set the assigned start pose on the map before starting.');
+  }
+  quote.hidden=button.hidden||!button.disabled;
+  quote.replaceChildren(...[...new Set(reasons)].map(reason=>{const p=document.createElement('p');p.textContent=reason;return p;}));
+  if(!quote.hidden&&!reasons.length)quote.textContent='Waiting for the robot to become ready. Check the readiness indicators below.';
+}
 function setPill(id,text,kind=''){const e=$(id);e.textContent=text;e.className='pill '+kind;}
 function render(){
   renderPages();
@@ -166,10 +321,10 @@ function render(){
   $('state').textContent=m.state||'WAITING';$('elapsed').textContent=duration(m.elapsed_seconds)+' stage elapsed';
   const a=s.assessment||{};$('totalElapsed').textContent=duration(a.elapsed_seconds);
   $('timerNote').textContent=a.interrupted?'Interrupted · timing invalid':a.finished!=null?'Finished':a.running?(a.timing_valid?'Both stages · running':'Search only · mapping not timed'):'Starts when mapping loads';
-  const estimate=m.target?{...m.target,label:m.target.class,sigma:m.target.sigma??Math.sqrt(m.target.variance),confirmed:true}:s.target_estimate,shownTarget=estimate;
+  const estimate=displayTarget(s),shownTarget=estimate;
   $('target').textContent=shownTarget?`${fmt(shownTarget.x)}, ${fmt(shownTarget.y)} m`:'—, — m';
   $('confidence').textContent=m.target?`${m.target.class||s.mission_options?.target_class||'Target'} · ${m.target.confidence!=null?Math.round(m.target.confidence*100)+'% detector confidence':'detected'}${Number.isFinite(m.target.variance)?' · position σ '+fmt(Math.sqrt(m.target.variance))+' m':''}`:estimate?`Estimated ${estimate.label} · position σ ${fmt(estimate.sigma)} m · ${estimate.samples} observations${estimate.stale?' · last seen '+fmt(estimate.age,1)+' s ago':''}`:'Waiting for estimated or confirmed coordinates';
-  $('targetEstimateStatus').textContent=estimate?`Estimated ${estimate.label}: (${fmt(estimate.x)}, ${fmt(estimate.y)}) m · σ ${fmt(estimate.sigma)} m · ${estimate.stale?'last seen '+fmt(estimate.age,1)+' s ago':'updating'} · ${estimate.confirmed?'accepted':estimate.prior_conflict?'map / observation conflict; cannot accept':estimate.stable?'stable MMSE estimate':'collecting stable MMSE observations'}`:s.perception?.detected_candidates?'Target visible; position unavailable.':'No estimated target position yet.';
+  $('targetEstimateStatus').textContent=estimate?`Estimated ${estimate.label}: (${fmt(estimate.x)}, ${fmt(estimate.y)}) m · σ ${fmt(estimate.sigma)} m · ${estimate.stale?'last seen '+fmt(estimate.age,1)+' s ago':'updating'} · ${estimate.confirmed?'reported':estimate.accepted?'accepted estimate; not reported':estimate.display_only?'single-frame preview; not confirmed':estimate.prior_conflict?'map / observation conflict; cannot accept':estimate.stable?'stable MMSE estimate':'collecting stable MMSE observations'}`:s.perception?.detected_candidates?'Target visible; position unavailable.':'No estimated target position yet.';
   $('measureMap').disabled=!mapData;
   updateMeasurementStatus();
   if(m.target?.quality==='best_available')$('confidence').textContent+=' · Best stable estimate; preferred precision not reached';
@@ -180,7 +335,7 @@ function render(){
   $('coverage').textContent=m.viewpoints_total?`${Math.round((m.observed_fraction||0)*100)}%`:'—';
   const coverageDetail=m.search_completeness;
   if($('searchLegend'))$('searchLegend').hidden=!m.search_regions||mapping;
-  $('coverage').title=coverageDetail?`${coverageDetail.missing_cells} unobserved · ${coverageDetail.blocked_cells} blocked · ${coverageDetail.candidate_uncovered_cells} without a viewing position${coverageDetail.map_partial?' · partial map':''}`:'';
+  $('coverage').title=coverageDetail?`Actual timestamped camera footprints; observed does not mean empty. ${coverageDetail.missing_cells} unobserved · ${coverageDetail.blocked_cells} blocked · ${coverageDetail.candidate_uncovered_cells} without a viewing position${coverageDetail.map_partial?' · partial map':''}`:'';
   $('waypoints').textContent=m.viewpoints_total?`${m.viewpoints_completed||0} / ${m.viewpoints_total} viewpoints · ${m.failed_viewpoints?.length||0} failed`:'No search plan yet';
   $('robotPose').textContent=s.pose?`Robot (${fmt(s.pose[0])}, ${fmt(s.pose[1])}) · ${fmt(s.pose[2]*180/Math.PI,0)}°`:'Pose unavailable';
   if($('navigationStatus')){const n=s.navigation||{};$('navigationStatus').textContent=n.stage?`${({IDLE:'Ready',ACCEPTED:'Preparing navigation',DISPATCHING:'Planning route',ALIGNING:'Turning toward route',TRACKING:'Following route',FINAL_ALIGN:'Adjusting final heading',STOPPING:'Stopping',REFRESHING:'Checking another route',CANCELING:'Stopping before recovery',REVERSING:'Backing up safely',CANCELED:'Navigation stopped',SUCCEEDED:'Arrived',FAILED:'Navigation failed'})[n.stage]||'Navigation'} · ${n.reason||''}${n.recovery_count?` · Recovery ${n.recovery_count}/2`:''}${n.failure_reason?` · ${n.failure_reason}`:''}`:'';}
@@ -208,8 +363,10 @@ function render(){
   const abReady=s.mission_options?.enable_ab_maneuver!=null,acquisitionReady=s.mission_options?.acquisition_seconds!=null;
   const abChanged=abReady&&$('enableAbManeuver').checked!==s.mission_options.enable_ab_maneuver;
   const acquisitionChanged=acquisitionReady&&Number($('acquisitionSeconds').value)!==s.mission_options.acquisition_seconds;
-  const settingsChanged=targetChanged||s.phase==='mission'&&(mmseReady&&Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2)||abChanged||acquisitionChanged);
-  const validSettings=$('preferredSigma').checkValidity()&&$('preferredSigma').value!==''&&$('returnTolerance').checkValidity()&&$('returnTolerance').value!==''&&$('acquisitionSeconds').checkValidity()&&$('acquisitionSeconds').value!=='';
+  const rangeChanged=$('targetClass').value==='bottle'&&(Number($('bottleRangeMin').value)/100!==(s.mission_options?.bottle_min_range??.35)||Number($('bottleRangeMax').value)/100!==(s.mission_options?.bottle_max_range??.95));
+  const settingsChanged=rangeChanged||targetChanged||s.phase==='mission'&&(mmseReady&&Number($('preferredSigma').value)!==(s.mission_options?.preferred_target_sigma??.1)||Number($('returnTolerance').value)!==(s.mission_options?.return_tolerance??.2)||abChanged||acquisitionChanged);
+  const rangeValid=$('targetClass').value!=='bottle'||($('bottleRangeMin').checkValidity()&&$('bottleRangeMax').checkValidity()&&Number($('bottleRangeMin').value)<Number($('bottleRangeMax').value));
+  const validSettings=rangeValid&&$('preferredSigma').checkValidity()&&$('preferredSigma').value!==''&&$('returnTolerance').checkValidity()&&$('returnTolerance').value!==''&&$('acquisitionSeconds').checkValidity()&&$('acquisitionSeconds').value!=='';
   const searchEnded=['COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'].includes(m.state);
   $('loadMission').hidden=!managed||(currentPage==='workflow'&&!settingsChanged&&!searchEnded);
   $('loadMission').textContent=settingsChanged?'Apply settings & reload mission':searchEnded?'Reload map & set start pose':'Load selected map for mission';
@@ -217,14 +374,17 @@ function render(){
   const canReuseSavedMap=managed&&chosenMap()?.reviewed&&chosenMap()?.id!==currentSavedMap()?.id;
   $('useSavedMap').hidden=!mapping||!canReuseSavedMap;
   $('useSavedMap').disabled=!idle||!labelReady||!validSettings||!canReuseSavedMap;
-  $('reviewMap').disabled=!mapping||!idle||!chosenMap()||(loaded&&chosenMap().id!==currentSavedMap()?.id);
+  const liveMapNeedsSave=mapping&&loaded&&!currentSavedMap();
+  const canConfirmLiveMap=currentPage==='workflow'&&liveMapNeedsSave&&s.health?.Map?.ok;
+  $('reviewMap').disabled=!mapping||!idle||!(canConfirmLiveMap||chosenMap()&&(!loaded||chosenMap().id===currentSavedMap()?.id));
   if(currentPage==='workflow'){$('reviewMap').disabled||=!labelReady||!validSettings;$('reviewMap').textContent='Confirm map & prepare mission';$('mapLibrary').hidden=!mapping;$('setup').hidden=mapping;$('startMission').hidden=mapping;}
   else{$('reviewMap').textContent='Mark map reviewed';$('setup').hidden=false;$('startMission').hidden=false;}
   $('savedMaps').disabled=!idle;$('refreshMaps').disabled=!online||!!busy;
   const entry=chosenMap();setPill('mapQuality',entry?(entry.reviewed?'Reviewed · ':'')+entry.quality:'Unverified',entry?.reviewed?'good':'warn');
   $('savedMap').textContent=entry?.path||s.saved_map||m.saved_map||'Every save uses a new directory.';
   $('mapReviewNote').textContent=entry?.quality==='partial'?'Partial map: review accessible and missing regions before use.':'Review records your inspection. Partial and unverified maps remain labelled.';
-  const poseAllowed=s.phase==='mission'&&idle&&loaded&&(!managed||!m.home)&&m.state==='WAITING';
+  if(liveMapNeedsSave)$('mapReviewNote').textContent='Inspect the live map above. Confirm saves this mapping session as a new snapshot, records your review, and prepares the mission. Manual maps remain labelled as snapshots.';
+  const poseAllowed=s.phase==='mission'&&idle&&loaded&&(!managed||!m.home||m.started_stamp===0)&&m.state==='WAITING';
   $('setPose').disabled=!poseAllowed||!s.health?.Map?.ok;
   ['poseX','poseY','poseYaw'].forEach(id=>$(id).disabled=!poseAllowed);
   $('poseStatus').textContent=mapping?'Load stage 2 first':s.initial_pose_sent?(s.health?.AMCL?.ok?'Pose sent · localization received':'Pose sent · awaiting localization'):'Set the assigned start before Start';
@@ -233,77 +393,70 @@ function render(){
   $('enableAbManeuver').disabled=!idle||!abReady;
   $('missionAdvanced').title=!abReady||!acquisitionReady?'Robot software update required for advanced mission options':'';
   $('preferredSigma').disabled=!idle||!mmseReady;
-  $('preferredSigmaHelp').textContent=mmseReady?'Soft goal, not guaranteed error. After bounded refinement, the best stable estimate can still be accepted.':'Robot software update required to apply MMSE precision settings.';
+  $('preferredSigmaHelp').textContent=mmseReady?'Soft goal, not guaranteed error. A valid approximate coordinate retains its actual uncertainty.':'Robot software update required to apply MMSE precision settings.';
   $('targetClass').disabled=!idle||!modelLabels?.ready;
   $('modelLabelsStatus').textContent=!modelLabels?.ready?(modelLabels?.error||'Reading labels from the configured model…'):targetChanged?'Apply target & reload mission, then set the initial pose again.':`${modelLabels.model} · ${modelLabels.labels.length} supported labels`;
-  $('projectionHelp').textContent=['ground_plane','hybrid'].includes($('localizationMethod').value)?'Camera-only floor localization. Mount settings are under Advanced; no bottle collection is required.':'Legacy camera + lidar localization.';
+  $('projectionHelp').textContent=$('targetClass').value==='bottle'?'Bottle ranging uses the fixed bottom-edge model; camera-angle calibration is retired.':'Coordinate settings apply when the mission loads.';
   $('startMission').disabled=s.phase!=='mission'||active||!s.allow_motion||!ready()||!labelReady||settingsChanged||!validSettings||(managed&&!s.initial_pose_sent);
   $('retrySearch').hidden=s.phase!=='mission'||!searchEnded;
   $('retrySearch').disabled=!idle||!loaded||!managed||!s.allow_motion||!ready(true)||!labelReady||!s.initial_pose_sent||settingsChanged||!validSettings||!!fault;
   if(s.phase==='mission'&&searchEnded)$('startMission').hidden=true;
+  renderMissionStartReason({active,loaded,managed,labelReady,settingsChanged,validSettings});
   $('localizationProgress').hidden=s.phase!=='mission'||!m.target_detected;
   const sites=m.bearing_progress?.sites||[];
   const viewProgress=sites.map((v,i)=>`${'ABC'[i]||'View'}: ${v.ready?'ready':`${v.frames||0}/4 frames`}`).join(' · ');
   const acquisitionElapsed=Number.isFinite(m.localization_elapsed_seconds)?fmt(m.localization_elapsed_seconds,1):'—';
-  const acquisitionBudget=m.acquisition_seconds??s.mission_options?.acquisition_seconds??90;
+  const acquisitionBudget=m.localization_budget_seconds??m.acquisition_seconds??s.mission_options?.acquisition_seconds??90;
   $('localizationProgress').textContent=`Target acquisition: ${acquisitionElapsed} / ${fmt(acquisitionBudget,0)} s wall time (includes travel) · work ${fmt(m.localization_work_seconds??m.localization_active_seconds??0,1)} s · travel ${fmt(m.localization_travel_seconds??0,1)} s${m.localization_stage?' · '+m.localization_stage:''}${viewProgress?' · '+viewProgress:''}`;
   $('newTrial').disabled=!idle||!managed;$('exportResult').disabled=!online;
   setPill('mappingBadge',mapping?(active?'In progress':loaded?'Ready':'Setup'):entry?.reviewed?'Map reviewed':'Saved map',mapping&&loaded?'good':'');
   setPill('missionBadge',mapping?'Awaiting map':m.state==='COMPLETE'?'Complete':active?'In progress':'Setup',m.state==='COMPLETE'?'good':'');
-  const currentStep=mapping?0:m.state==='WAITING'?1:!m.target?2:3;
+  const currentStep=mapping?0:m.state==='WAITING'?1:!targetReported(m)?2:3;
   ['stepMap','stepPose','stepSearch','stepReturn'].forEach((id,i)=>{$(id).className=i===currentStep?'current':i<currentStep?'done':'';});
   if(m.state==='COMPLETE'&&m.return_verified)$('stepReturn').className='done';
-  $('resultTarget').textContent=m.target?`(${fmt(m.target.x)}, ${fmt(m.target.y)}) m`:'Awaiting target';
-  if(['best_available','approximate'].includes(m.target?.quality))$('resultTarget').textContent+=' · approximate estimate';
-  const positionConfidence=m.target?.position_confidence,confidenceRadius=m.target?.confidence_radius_m??.2;
-  const targetAge=Number.isFinite(m.target?.age)?m.target.age:estimate?.age;
-  const targetStale=m.target?.stale===true||estimate?.stale===true;
-  $('resultPositionConfidence').textContent=Number.isFinite(positionConfidence)&&positionConfidence>=0&&positionConfidence<=1
-    ?`${Math.round(positionConfidence*100)}% within ${fmt(confidenceRadius)} m${targetStale?' · stale':''}${Number.isFinite(targetAge)?` · ${fmt(targetAge,1)} s old`:''}`:'Unavailable';
-  $('resultReturn').textContent=m.return_verified?`Verified · ${fmt(distance)} m`:m.state==='RETURNING'?'Returning…':'Pending';
-  $('resultStop').textContent=m.return_verified?'Verified stationary':m.state==='VERIFYING'?`Checking ${fmt(m.stationary_check?.duration??0,1)} / ${fmt(m.stationary_required_seconds??2,1)} s…`:m.state==='FAILED'&&m.stationary_check?'Not verified':'Pending';
-  const estimatedQuality=['best_available','approximate'].includes(m.target?.quality);
-  const estimatedOutcome=estimatedQuality&&Number.isFinite(positionConfidence)&&positionConfidence>=0&&positionConfidence<=1
-    ?`Complete · estimated confidence ${Math.round(positionConfidence*100)}% within ${fmt(confidenceRadius)} m`:'Complete';
-  $('resultOutcome').textContent=m.state==='COMPLETE'&&m.return_verified?estimatedOutcome:m.state==='FOUND_UNLOCALIZED'?'Target found · position unavailable':m.state==='SEARCH_INCOMPLETE'?'Search incomplete':m.state==='NOT_FOUND'?'Search completed · target not found':m.state==='FAILED'?'Failed':m.state==='STOPPED'?(m.internal_error||m.safety_error||m.safety_errors?.length?'Stopped · safety error':'Stopped'):'Trial not complete';
-  $('resultReason').textContent=(m.state==='STOPPED'&&(m.internal_error||m.reason))||(m.state==='VERIFYING'&&m.stationary_check?.reason)||m.reason||'Completion requires a target report, return within tolerance, and stationary odometry.';
-  if(['best_available','approximate'].includes(m.target?.quality))$('resultReason').textContent+=` · Approximate estimate: uncertainty σ ${fmt(m.target.sigma??Math.sqrt(m.target.variance))} m; preferred ${fmt(m.target.preferred_sigma)} m.`;
-  else if(Number.isFinite(m.target?.sigma))$('resultReason').textContent+=` · Position σ ${fmt(m.target.sigma)} m.`;
+  renderResultEvidence(s,estimate,distance);
   const p=s.perception;
   if(currentPage==='workflow'){
     document.querySelector('.metrics').hidden=mapping;
     document.querySelector('.camera-panel').hidden=mapping;
     document.querySelector('.workspace-grid').classList.toggle('mapping-view',mapping);
-    $('missionPanel').hidden=mapping&&!currentSavedMap()&&!chosenMap()?.reviewed;
-    $('mapLibrary').hidden=!mapping||!maps.length;
-    $('mapLibrary').querySelector('h2').textContent=currentSavedMap()?'Review this trial map':'Use a saved map';
+    $('missionPanel').hidden=mapping&&!currentSavedMap()&&!canConfirmLiveMap&&!chosenMap()?.reviewed;
+    $('mapLibrary').hidden=!mapping||!maps.length&&!liveMapNeedsSave;
+    $('mapLibrary').querySelector('h2').textContent=liveMapNeedsSave?'Finish manual mapping':currentSavedMap()?'Review this trial map':'Use a saved map';
     $('resultsPanel').hidden=!m.target&&!['COMPLETE','NOT_FOUND','FOUND_UNLOCALIZED','SEARCH_INCOMPLETE','STOPPED','FAILED'].includes(m.state);
   }
   $('detectorSummary').textContent=p?`${p.target_class} · ${p.detected_candidates??'—'} visible · ${p.localized_candidates??0} localized${p.highest_confidence!=null?' · '+Math.round(p.highest_confidence*100)+'%':''}`:'No mission detector status';
-  $('methodSummary').textContent=p?`${p.localization_method==='hybrid'?'Floor + bearing intersection':p.localization_method==='ground_plane'?'Floor-plane projection':'Camera + lidar'} · ${fmt(p.latency,2)} s inference latency`:'Coordinate method is selected before loading stage 2.';
-  if(p?.camera_model){const f=p.camera_model.rotation;const pitch=Math.atan2(-f[2][2],Math.hypot(f[0][2],f[1][2]))*180/Math.PI;$('methodSummary').textContent+=` · pitch ${fmt(pitch,1)}° · ${p.camera_model.source}`;}
+  $('methodSummary').textContent=p?`${p.localization_method==='bottom_inverse'?'Calibrated bottle bottom · timestamped single exposure':p.localization_method==='hybrid'?'Floor + bearing intersection':p.localization_method==='ground_plane'?'Floor-plane projection':'Camera + lidar'} · ${fmt(p.latency,2)} s inference latency`:'Coordinate method is selected before loading stage 2.';
+  if(p?.camera_model?.rotation){const f=p.camera_model.rotation;const pitch=Math.atan2(-f[2][2],Math.hypot(f[0][2],f[1][2]))*180/Math.PI;$('methodSummary').textContent+=` · pitch ${fmt(pitch,1)}° · ${p.camera_model.source}`;}
   if(p?.geometry_error)$('methodSummary').textContent=p.geometry_error;
   $('gateReason').textContent=s.velocity_gate?`Motion: ${s.velocity_gate.reason.replaceAll('_',' ')} · requested ${s.velocity_gate.requested?.map(v=>fmt(v)).join(', ')} · output ${s.velocity_gate.output?.map(v=>fmt(v)).join(', ')}`:'Motion diagnostics appear after a stage loads.';
+  const recovery=s.recovery,reverseButton=$('reverseRecoveryToggle');
+  const reverseValue=recovery?.live_value ?? recovery?.value;
+  reverseButton.textContent=typeof reverseValue==='boolean'?`Recovery reverse · ${reverseValue?'ON':'OFF'}`:'Recovery reverse · unavailable';
+  reverseButton.setAttribute('aria-pressed',String(reverseValue===true));
+  reverseButton.disabled=!online||!!busy||recoveryBusy||!idle||recovery?.editable!==true;
+  $('reverseRecoveryStatus').textContent=recoveryBusy?'Saving and verifying…':recovery?.fault||(!recovery?'Robot software update required.':recovery.available?(recovery.synchronized?'Live setting verified · saved across stage reloads.':'Saved and live settings differ; reapply while stopped.'):'Saved for the next stage.');
+  const home=m.home,canReturn=Array.isArray(home)&&home.length===3&&home.every(Number.isFinite);
+  const researchCancel=s.phase==='mission'&&m.state==='CANCELING'&&m.pending_action==='RESEARCH';
+  $('returnHome').disabled=!online||!!s.read_only||!!busy||!loaded||!s.return_home_supported||!canReturn||!Array.isArray(s.pose)||!s.health?.Mission?.ok||s.stage?.transitioning||!s.allow_motion||!!s.control_fault||!!m.navigation_lock_reason||!!s.navigation?.locked||(m.state==='CANCELING'&&!researchCancel)||['SAVING','RETURNING','VERIFYING','VERIFYING_HOME'].includes(m.state);
+  $('returnHome').title=!canReturn?'Home is recorded when a task starts':!Array.isArray(s.pose)?'Set the robot current position on the map first':m.state==='RETURNING'?'Already returning to home':'Cancel the current task, then navigate to its recorded home';
   ['profileFast','profileOriginal'].forEach(id=>$(id).disabled=!idle||!loaded||!s.health?.Mission?.ok||(s.phase==='mission'&&m.state!=='WAITING'));
-  const physical=physicalCameraMode(),mount=physical?s.simulation_camera:s.vision_settings;
-  $('saveVision').disabled=physical?!simulationEditable():!idle;
-  $('saveVision').textContent=physical?'Apply simulated camera':'Save camera geometry';
-  $('cameraMountTitle').textContent=physical?'Simulated camera · physical setup':'Camera mounting · one-time setup';
-  $('cameraMountHelp').textContent=physical?'Adjust the actual simulated camera. Saving updates the rendered image, camera TF and CameraInfo together. FOV 0 restores the default lens.':'Zero height uses the installed camera TF. Zero FOV uses CameraInfo. Fill measured values only; no bottle collection is required. Angles below are degrees.';
-  $('cameraMountSavedHint').textContent=physical?'Apply while stopped. Localization uses the matching camera TF and intrinsics; old target evidence is cleared. Minimum and maximum usable range remain measurement-validity limits.':'Saved settings apply the next time the mission loads.';
-  $('visionPitchOverride').closest('label').hidden=physical;
-  $('visionPitchOverride').disabled=physical;
-  $('visionHeight').min=physical?'0.05':'0';
-  $('simulationGeometryHelp').hidden=!physical;
-  if(physical)$('simulationGeometryHelp').textContent=`Current simulated camera: ${fmt(mount.camera_height,2)} m high, ${fmt(mount.camera_pitch*180/Math.PI,1)}° downward. These controls move the simulated camera itself.`;
-  if(!visionDirty)$('visionPitchOverride').checked=!physical&&s.vision_settings?.use_pitch_override===true;
-  if(mount&&!visionDirty)Object.entries(visionFields).forEach(([name,[id,scale]])=>$(id).value=fmt(mount[name]*scale,3));
+  const physical=physicalCameraMode();
+  const calibratedBottle=!physical&&($('targetClass').value?.toLowerCase()==='bottle'||p?.localization_method==='bottom_inverse');
+  $('bottleRangePanel').hidden=!calibratedBottle;
+  ['bottleRangeMin','bottleRangeMax'].forEach(id=>$(id).disabled=!idle||!!s.read_only);
+  $('legacyCalibration').hidden=true;
+  $('localizationMethod').closest('.field').hidden=calibratedBottle;
+  if(calibratedBottle)$('projectionHelp').textContent='Calibrated bottle ranging with bounded refinement. Close cropped views can provide conservative approximate positions.';
+  if(calibratedBottle)$('methodSummary').textContent='Bottle: timestamped single exposure · optional ±32 px centering at 640 px width, up to 2.5 s. Normal motion is allowed; approximate coordinates retain their actual uncertainty.';
+  renderSimulationMount(s);
   $('cameraSource').textContent=s.preview_interactive&&s.camera_source?'Simulated camera':s.camera_source==='project'?'Mission detector':s.camera_source==='lab'?'Lab display detector':'No stream';
   $('camera').hidden=!s.camera_source;$('cameraEmpty').hidden=!!s.camera_source;
   $('events').replaceChildren(...(s.events?.length?s.events:[{time:'',state:'WAITING',reason:'Waiting for the controller.'}]).map(e=>{const li=document.createElement('li'),t=document.createElement('time'),st=document.createElement('strong'),r=document.createElement('small');t.textContent=e.time||'';st.textContent=e.state;r.textContent=e.reason||'';li.append(t,st,r);return li;}));
-  $('stageHelp').textContent=currentPage==='workflow'?'Automatic mapping returns and saves a new map. Inspect it, then confirm to prepare the mission.':managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
+  $('stageHelp').textContent=currentPage==='workflow'?'Automatic mapping returns and saves a new map. After manual mapping, stop driving and confirm the live map to save it and prepare the mission.':managed?'Load mapping, then Start. The saved map can be loaded for stage 2 here.':'Standalone stage: UI stage switching requires assessment.launch.py.';
   $('mappingProgress').hidden=!mapping;
   $('mappingProgress').textContent=`${m.viewpoints_completed||0} goals reached · ${m.failed_viewpoints?.length||0} failed areas skipped · Bounded navigation recovery`;
+  renderVisualDetails(s,estimate);
   renderParameters();draw();
 }
 function renderParameters(){
@@ -314,7 +467,7 @@ function renderParameters(){
     const level=button.dataset.audacity,option=gap?.audacity_options?.find(p=>p.id===level);
     button.disabled=!policyReady||!option;
     button.setAttribute('aria-pressed',String(fresh&&gap?.audacity===level&&gap?.synchronized===true));
-    button.querySelector('small').textContent=option?`${fmt(option.clearance*100,0)} cm clearance · ~${fmt(option.nominal_min_opening*100,0)} cm opening`:'Waiting for live settings';
+    button.querySelector('small').textContent=option?`${fmt(option.clearance*100,1).replace(/\.0$/,'')} cm clearance · ~${fmt(option.nominal_min_opening*100,1).replace(/\.0$/,'')} cm opening`:'Waiting for live settings';
     button.querySelector('em').textContent=option?`Turn stop ${fmt(option.turn_stop_distance*100,0)} cm · ${level==='cautious'?'original turning':level==='balanced'?'gentle turning':'firm turning'}`:'';
   });
   const label=gap?.audacity_options?.find(p=>p.id===gap?.audacity)?.label;
@@ -325,11 +478,19 @@ function renderParameters(){
   $('gapToggle').textContent=gap?.enabled===true?'Narrow-gap blocking: ON · Disable':gap?.enabled===false?'Narrow-gap blocking: OFF · Enable':'Synchronize gap policy: Enable';
   if(gap&&fresh){const n=gap.nodes,g=n?.['global_costmap/global_costmap'],l=n?.['local_costmap/local_costmap'],stage=n?.[mapping?'project_mapper':'project_mission'];$('gapStatus').textContent=gap.fault||`Verified radius: global ${fmt(g?.robot_radius)} m / local ${fmt(l?.robot_radius)} m. Mapping/search clearance ${fmt(stage?.clearance)} m.`;}
   $('trialPanel').hidden=snapshot?.phase==='calibration';
-  trialFields.forEach(([key,id,unit])=>{$(id).disabled=!idle||!fresh||!trial||parametersBusy;$(id+'Value').textContent=fmt(Number($(id).value),key==='goal_timeout'?0:2)+' '+unit;$(id+'Live').textContent='Live: '+(trial?fmt(trial.values[key],key==='goal_timeout'?0:2)+' '+unit:'unavailable');});
+  trialFields.forEach(([key,id,unit])=>{
+    const input=$(id),limits=trial?.limits?.[key];
+    if(limits){
+      input.min=limits.min;input.max=limits.max;input.step=limits.step;
+      if(!trialDirty)input.value=trial.values[key];
+    }
+    input.disabled=!idle||!fresh||!trial||parametersBusy;
+    $(id+'Value').textContent=fmt(Number(input.value),key==='goal_timeout'?0:2)+' '+unit;
+    $(id+'Live').textContent='Live: '+(trial?fmt(trial.values[key],key==='goal_timeout'?0:2)+' '+unit:'unavailable');
+  });
   $('applyTrial').disabled=!idle||!fresh||!trial||!trialDirty||parametersBusy;
   $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes — press Apply.':trial?.fault||'Temporary until restart. Adjust only while stopped.';
   if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
-  renderAttitude();
 }
 function renderScanFilter(){
   const data=scanFilter||snapshot?.scan_filter;
@@ -343,43 +504,6 @@ function renderScanFilter(){
   const live=scanFilter?.live_value;
   $('scanFilterLive').textContent=scanFilterError?'Live: unverified':Number.isFinite(live)?`Live: ${fmt(live*100,1)} cm · ${scanFilter.synchronized?'readback matches saved':'readback differs from saved'}`:live===null&&!running()?'Live: no stage loaded':'Live: unavailable';
   $('scanFilterStatus').textContent=scanFilterBusy?'Saving and checking readback…':scanFilterError||data?.fault||(scanFilterDirty?'Unsaved change — press Save.':data?.message||(data?(data.live_value===null&&!running()?'Saved for next stage.':data.synchronized?'Saved and live readback match.':'Waiting for live readback.'):'Reading filter settings.'));
-}
-function renderAttitude(){
-  const a=attitude||snapshot?.attitude||{},mode=$('attitudeMode').value;
-  if(!attitudeDirty&&!attitudeBusy){
-    if(a.mode)$('attitudeMode').value=a.mode;
-    if(Array.isArray(a.pivot))[$('attitudeX').value,$('attitudeY').value,$('attitudeZ').value]=a.pivot.map(v=>String(v));
-  }
-  const editable=setupIdle()&&a.editable===true&&!attitudeBusy;
-  $('attitudeMode').disabled=!editable;
-  ['attitudeX','attitudeY','attitudeZ'].forEach(id=>$(id).disabled=!editable||(mode==='controller'&&id==='attitudeX'));
-  if(mode==='controller'&&!attitudeDirty)$('attitudeX').value='-0.01';
-  $('saveAttitude').disabled=!editable||!attitudeDirty;
-  $('referenceAttitude').disabled=!editable||mode!=='controller';
-  const ref=a.reference;
-  const refText=a.mode==='fixed'?'Controller reference not required in fixed mode':ref?.valid?`Reference captured · roll ${fmt(ref.roll*180/Math.PI,1)}° · pitch ${fmt(ref.pitch*180/Math.PI,1)}° · ${ref.samples} samples`:'No valid controller reference';
-  const sample=a.mode==='controller'?(a.sample?`Live ${a.sample.frame||'attitude'} · ${fmt(a.sample.age,2)} s old`:'No live attitude sample'):'';
-  $('attitudeStatus').textContent=attitudeBusy?'Saving and checking attitude settings…':`${a.reason?a.reason+' · ':''}${a.mode||'Not configured'} · ${refText}${sample?' · '+sample:''}${a.requires_reload?' · reload mission stage to apply':''}`;
-}
-['attitudeMode','attitudeX','attitudeY','attitudeZ'].forEach(id=>$(id).addEventListener(id==='attitudeMode'?'change':'input',()=>{attitudeDirty=true;if(id==='attitudeMode'&&$('attitudeMode').value==='controller')$('attitudeX').value='-0.01';renderAttitude();}));
-$('saveAttitude').onclick=async()=>{
-  const mode=$('attitudeMode').value;
-  const pivot=mode==='controller'?[-.01,Number($('attitudeY').value),Number($('attitudeZ').value)]:[$('attitudeX').value,$('attitudeY').value,$('attitudeZ').value].map(Number);
-  if(!pivot.every(Number.isFinite)){feedback('Enter finite pivot coordinates.',true);return;}
-  attitudeBusy=true;renderAttitude();
-  try{attitude=await action('attitude',{action:'configure',mode,pivot});attitudeDirty=false;}
-  catch(_){}
-  finally{attitudeBusy=false;renderAttitude();}
-};
-$('referenceAttitude').onclick=async()=>{
-  attitudeBusy=true;renderAttitude();
-  try{attitude=await action('attitude',{action:'reference'});attitudeDirty=false;}
-  catch(_){}
-  finally{attitudeBusy=false;renderAttitude();}
-};
-async function pollAttitude(){
-  if(online&&!busy&&!attitudeBusy){const generation=snapshot?.control_generation;try{const a=await get('attitude');if(generation===snapshot?.control_generation){attitude=a;if(!attitudeDirty)attitudeDirty=false;}}catch(e){attitude={reason:e.message,editable:false,ready:false};}renderAttitude();}
-  setTimeout(pollAttitude,4000);
 }
 async function pollScanFilter(){
   if(online&&!busy&&!scanFilterBusy&&!snapshot?.stage?.transitioning){
@@ -415,7 +539,7 @@ async function refreshMaps(preferred){
   if(!options.length){const o=document.createElement('option');o.value='';o.textContent='No saved maps';options.push(o);}
   $('savedMaps').replaceChildren(...options);if(selected)$('savedMaps').value=selected;render();
 }
-async function loadStage(phase){const body={phase};if(phase==='mission'){Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value),preferred_target_sigma:Number($('preferredSigma').value)});if(snapshot?.mission_options?.enable_ab_maneuver!=null&&snapshot?.mission_options?.acquisition_seconds!=null)Object.assign(body,{enable_ab_maneuver:$('enableAbManeuver').checked,acquisition_seconds:Number($('acquisitionSeconds').value)});}const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
+async function loadStage(phase){const body={phase};if(phase==='mission'){Object.assign(body,{map_id:$('savedMaps').value,target_class:$('targetClass').value.trim().toLowerCase(),localization_method:$('localizationMethod').value,return_tolerance:Number($('returnTolerance').value),preferred_target_sigma:Number($('preferredSigma').value)});if(body.target_class==='bottle')Object.assign(body,{bottle_min_range:Number($('bottleRangeMin').value)/100,bottle_max_range:Number($('bottleRangeMax').value)/100});if(snapshot?.mission_options?.enable_ab_maneuver!=null&&snapshot?.mission_options?.acquisition_seconds!=null)Object.assign(body,{enable_ab_maneuver:$('enableAbManeuver').checked,acquisition_seconds:Number($('acquisitionSeconds').value)});}const workflow=currentPage==='workflow';await action('stage',body);if(!workflow)showPage(phase);}
 $('loadMapping').onclick=()=>loadStage('mapping').catch(()=>{});$('loadMission').onclick=()=>loadStage('mission').catch(()=>{});
 $('useSavedMap').onclick=()=>loadStage('mission').catch(()=>{});
 $('start').onclick=async()=>{const serial=++workflowSerial;try{
@@ -425,10 +549,31 @@ $('start').onclick=async()=>{const serial=++workflowSerial;try{
   }
   if(serial===workflowSerial)await action('start');
 }catch(e){feedback(e.message,true);}};$('startMission').onclick=()=>action('start').catch(()=>{});
+$('returnHome').onclick=async()=>{workflowSerial++;releaseDrive();try{await action('return_home');}catch(_){} };
 $('stop').onclick=async()=>{workflowSerial++;releaseDrive();try{const d=await send('stop');feedback(d.message||'Stop requested');}catch(e){feedback(e.message,true);}};
-$('saveMap').onclick=async()=>{try{const d=await action('save_map');await refreshMaps(d.map?.id||maps.find(m=>m.path===d.path)?.id);}catch(_){}};
+async function saveCurrentMap(){
+  const d=await action('save_map');
+  // The save response is authoritative before the next state poll arrives.
+  snapshot.saved_map=d.path||d.map?.path;
+  await refreshMaps(d.map?.id||maps.find(m=>m.path===d.path)?.id);
+  return d.map?.id||currentSavedMap()?.id;
+}
+$('saveMap').onclick=()=>saveCurrentMap().catch(()=>{});
 $('refreshMaps').onclick=()=>refreshMaps().catch(e=>feedback(e.message,true));$('savedMaps').onchange=render;
-$('reviewMap').onclick=async()=>{const serial=workflowSerial;try{await action('review_map',{map_id:$('savedMaps').value});await refreshMaps();if(currentPage==='workflow'&&serial===workflowSerial)await loadStage('mission');}catch(_){}};
+$('reviewMap').onclick=async()=>{
+  const serial=workflowSerial,workflow=currentPage==='workflow';
+  busy++;releaseDrive();render();
+  try{
+    let mapId=$('savedMaps').value;
+    if(workflow&&snapshot?.phase==='mapping'&&running()&&!currentSavedMap())mapId=await saveCurrentMap();
+    if(serial!==workflowSerial)return;
+    if(!mapId)throw Error('Save the current map before preparing the mission.');
+    await action('review_map',{map_id:mapId});
+    if(serial!==workflowSerial)return;
+    await refreshMaps(mapId);
+    if(workflow&&serial===workflowSerial)await loadStage('mission');
+  }catch(e){feedback(e.message,true);}finally{busy--;render();}
+};
 $('calSetBottle').onclick=()=>action('calibration_target',{x:Number($('calBottleX').value),y:Number($('calBottleY').value),map_id:snapshot.selected_map?.id}).catch(()=>{});
 $('calSetPose').onclick=()=>action('initial_pose',{x:Number($('calPoseX').value),y:Number($('calPoseY').value),yaw:Number($('calPoseYaw').value)*Math.PI/180}).catch(()=>{});
 $('setPose').onclick=()=>action('initial_pose',{x:Number($('poseX').value),y:Number($('poseY').value),yaw:Number($('poseYaw').value)*Math.PI/180}).catch(()=>{});
@@ -439,21 +584,21 @@ $('retrySearch').onclick=()=>action('retry_search').catch(()=>{});
 $('newTrial').onclick=()=>action('new_trial').then(()=>showPage('workflow')).catch(()=>{});$('localizationMethod').onchange=()=>{coordinateMethodChosen=true;render();};
 $('loadCalibration').onclick=()=>action('stage',{phase:'calibration',map_id:chosenMap()?.reviewed?chosenMap().id:undefined}).then(()=>showPage('calibration')).catch(()=>{});
 $('targetClass').onchange=render;
-['preferredSigma','returnTolerance','acquisitionSeconds'].forEach(id=>$(id).oninput=render);$('enableAbManeuver').onchange=render;
+['preferredSigma','returnTolerance','acquisitionSeconds','bottleRangeMin','bottleRangeMax'].forEach(id=>$(id).oninput=render);$('enableAbManeuver').onchange=render;
 $('exportResult').onclick=async()=>{try{const d=await get('result'),url=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=(d.assessment?.id||'assessment')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){feedback(e.message,true);}};
+$('reverseRecoveryToggle').onclick=async()=>{
+  const data=snapshot?.recovery,value=data?.live_value ?? data?.value;
+  if(typeof value!=='boolean')return;
+  recoveryBusy=true;render();
+  try{
+    const saved=await action('recovery',{enabled:!value});
+    const actual=await get('recovery');
+    if(actual.value!==!value||(actual.available&&actual.live_value!==!value))throw Error('Recovery reverse readback mismatch');
+    snapshot.recovery=actual;feedback(saved.message||'Recovery reverse saved');
+  }catch(e){feedback(e.message,true);}finally{recoveryBusy=false;render();}
+};
 trialFields.forEach(([,id])=>$(id).oninput=()=>{trialDirty=true;renderParameters();});
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
-Object.values(visionFields).forEach(([id])=>$(id).oninput=()=>{visionDirty=true;});
-$('visionPitchOverride').onchange=()=>{visionDirty=true;};
-$('saveVision').onclick=()=>{
-  const physical=physicalCameraMode();
-  if(physical&&!simulationEditable())return;
-  const values=Object.fromEntries(Object.entries(visionFields).map(([name,[id,scale]])=>[name,Number($(id).value)/scale]));
-  if(!physical)values.use_pitch_override=$('visionPitchOverride').checked;
-  action(physical?'simulation_camera':'vision',values).then(response=>{
-    visionDirty=false;if(physical&&response.camera)snapshot.simulation_camera=response.camera;render();
-  }).catch(()=>{});
-};
 for(const [id,profile] of [['profileOriginal','original'],['profileFast','fast']])$(id).onclick=async()=>{parametersBusy=true;try{trial=await action('navigation',{profile});trialDirty=false;paramTime=Date.now();trialFields.forEach(([name,field])=>$(field).value=trial.values[name]);$('navigationProfileStatus').textContent=`Applied and verified: ${profile} · ${fmt(trial.values.max_linear)} m/s · ${fmt(trial.values.max_angular)} rad/s`;}catch(_){}finally{parametersBusy=false;render();}};
 $('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=async()=>{
@@ -469,7 +614,7 @@ async function pollParameters(){
 async function poll(){
   try{const s=await get('state');snapshot=s;online=true;
     if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;scanFilter=null;scanFilterDirty=false;scanFilterError=null;scanFilterRequest++;paramTime=0;trialDirty=false;waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
-    if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;$('preferredSigma').value=s.mission_options.preferred_target_sigma??.1;$('enableAbManeuver').checked=s.mission_options.enable_ab_maneuver===true;$('acquisitionSeconds').value=String(s.mission_options.acquisition_seconds??90);}}
+    if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;$('preferredSigma').value=s.mission_options.preferred_target_sigma??.1;$('enableAbManeuver').checked=s.mission_options.enable_ab_maneuver===true;$('acquisitionSeconds').value=String(s.mission_options.acquisition_seconds??90);$('bottleRangeMin').value=String(100*(s.mission_options.bottle_min_range??.35));$('bottleRangeMax').value=String(100*(s.mission_options.bottle_max_range??.95));}}
     if(s.map_revision!==mapRevision){mapRevision=s.map_revision;renderMap(await get('map'));}
     render();
   }catch(e){online=false;releaseDrive();if(snapshot)render();else{$('connection').textContent='Disconnected';$('connectionBanner').hidden=false;}feedback(e.message,true);}
@@ -518,8 +663,33 @@ function draw(){if(!mapData||!mapImage||!snapshot)return;const canvas=$('map'),c
   function line(points,color,dash=[]){if(!points?.length)return;ctx.beginPath();ctx.setLineDash(dash);points.forEach((p,i)=>{const [x,y]=point(...p);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle=color;ctx.lineWidth=.8;ctx.stroke();ctx.setLineDash([]);}
   function dot(p,color,r=2){if(!p)return;const[x,y]=point(...p);ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
   line(snapshot.route,'#bca6d8',[1.5,2]);line(snapshot.travelled_path,'#408ee0');line(snapshot.path,'#52cfaa');line(snapshot.local_path,'#d79727',[1,1]);const m=snapshot.mission;dot(m.home,'#ce92df',2.3);if(m.target)dot([m.target.x,m.target.y],'#ecba59',2.8);
-  const estimate=m.target?{...m.target,label:m.target.class,sigma:m.target.sigma??Math.sqrt(m.target.variance),confirmed:true}:snapshot.target_estimate;
-  if(estimate){const[x,y]=point(estimate.x,estimate.y),radius=Math.min(estimate.sigma/mapData.resolution,2*Math.hypot(mapData.width,mapData.height));ctx.save();ctx.globalAlpha=estimate.stale ? .4 : 1;ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle='rgba(222,151,45,.12)';ctx.fill();ctx.setLineDash([1.4,1.4]);ctx.strokeStyle='#c17a21';ctx.lineWidth=.7;ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(x,y,2.8,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#80500d';ctx.font='3px sans-serif';ctx.fillText(`${estimate.confirmed?'Accepted':'Est.'} ${estimate.label} · σ ${fmt(estimate.sigma)} m`,Math.max(1,Math.min(x+4,mapData.width-38)),Math.max(4,y-4));ctx.restore();}
+  const estimate=displayTarget(snapshot);
+  delete canvas.dataset.targetEstimate;delete canvas.dataset.targetBearingOnly;
+  if(estimate){
+    const [rawX,rawY]=point(estimate.x,estimate.y),pad=8/scale;
+    const x=Math.max(pad,Math.min(rawX,mapData.width-pad)),y=Math.max(pad,Math.min(rawY,mapData.height-pad));
+    const outside=rawX<0||rawX>mapData.width||rawY<0||rawY>mapData.height;
+    const radius=Math.min(estimate.sigma/mapData.resolution,2*Math.hypot(mapData.width,mapData.height));
+    const stale=estimate.stale||!online;
+    canvas.dataset.targetEstimate=JSON.stringify({x:estimate.x,y:estimate.y,sigma:estimate.sigma,displayOnly:!!estimate.display_only,stale,outside});
+    ctx.save();ctx.globalAlpha=stale ? .45 : 1;
+    if(!outside){ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle='rgba(222,151,45,.13)';ctx.fill();ctx.setLineDash([5/scale,4/scale]);ctx.strokeStyle='#b57117';ctx.lineWidth=1.4/scale;ctx.stroke();}
+    ctx.setLineDash([]);ctx.beginPath();ctx.arc(x,y,6/scale,0,Math.PI*2);ctx.fillStyle=estimate.confirmed?'#d29124':'#fff';ctx.fill();ctx.strokeStyle='#a95d09';ctx.lineWidth=2/scale;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x-9/scale,y);ctx.lineTo(x+9/scale,y);ctx.moveTo(x,y-9/scale);ctx.lineTo(x,y+9/scale);ctx.lineWidth=1.4/scale;ctx.stroke();
+    ctx.font=`${12/scale}px sans-serif`;
+    const label=`${outside?'Off-map ':''}${estimate.confirmed?'Accepted':stale?'Last seen':estimate.display_only?'Preview':'Estimate'} ${estimate.label} (${fmt(estimate.x)}, ${fmt(estimate.y)}) · σ ${fmt(estimate.sigma)} m`;
+    const textWidth=ctx.measureText(label).width,tx=Math.max(2/scale,Math.min(x+12/scale,mapData.width-textWidth-4/scale)),ty=Math.max(16/scale,Math.min(y-12/scale,mapData.height-4/scale));
+    ctx.fillStyle='rgba(255,255,255,.94)';ctx.fillRect(tx-3/scale,ty-13/scale,textWidth+6/scale,17/scale);
+    ctx.fillStyle='#754306';ctx.fillText(label,tx,ty);ctx.restore();
+  }
+  const currentDetection=snapshot.perception_details?.selected;
+  if(currentDetection&&Number.isFinite(currentDetection.bearing)&&currentDetection.origin?.every(Number.isFinite)&&!Number.isFinite(currentDetection.x)){
+    const distance=snapshot.mission_options?.bottle_max_range??.95;
+    const origin=currentDetection.origin,end=[origin[0]+distance*Math.cos(currentDetection.bearing),origin[1]+distance*Math.sin(currentDetection.bearing)];
+    line([origin,end],'#b57117',[2,2]);canvas.dataset.targetBearingOnly='true';
+    const [x,y]=point(...end);ctx.save();ctx.font=`${11/scale}px sans-serif`;ctx.fillStyle='#855211';
+    ctx.fillText(currentDetection.search_eligible===false?'Outside range · direction only':'Direction only · no map position',Math.max(0,Math.min(x,mapData.width-45)),Math.max(5,y));ctx.restore();
+  }
   if(currentPage==='calibration'){const c=snapshot.calibration_live;if(c?.plan)line([snapshot.pose,...c.plan.goals.map(g=>g.pose)].filter(Boolean),'#ecba59',[2,2]);if(c?.target){dot(c.target.xy,'#ffba5a',2.8);const [x,y]=point(...c.target.xy);ctx.fillStyle='#50340b';ctx.font='3px sans-serif';ctx.fillText('Bottle',x+3,y-3);}}
   const waypoint=waypointDraft||(m.mapping_mode==='waypoint'?m.waypoint:null);
   if(waypoint){const[x,y]=point(...waypoint),a=-(waypoint[2]-mapData.origin[2]);ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.beginPath();ctx.arc(0,0,1.6,0,Math.PI*2);ctx.moveTo(0,0);ctx.lineTo(7,0);ctx.lineTo(4,-1.5);ctx.moveTo(7,0);ctx.lineTo(4,1.5);ctx.strokeStyle='#ecba59';ctx.lineWidth=.7;ctx.stroke();ctx.restore();}
@@ -535,4 +705,4 @@ $('map').onpointerdown=e=>{const mode=measuring?'measure':(currentPage==='mappin
 $('map').onpointermove=e=>{if(drag){drag.end=canvasPosition(e);draw();}};
 $('map').onpointerup=()=>{if(!drag)return;if(drag.mode==='measure'){const moved=Math.hypot(drag.end[0]-drag.press[0],drag.end[1]-drag.press[1])*$('map').getBoundingClientRect().width/mapData.width;measurement={start:worldPoint(...drag.start),end:moved>4||drag.continued?worldPoint(...drag.end):null};drag=null;updateMeasurementStatus();draw();return;}const a=worldPoint(...drag.start),b=worldPoint(...drag.end),yaw=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mode=drag.mode;drag=null;if(mode==='waypoint'){$('waypointX').value=a[0].toFixed(2);$('waypointY').value=a[1].toFixed(2);$('waypointYaw').value=yaw.toFixed(0);readWaypointDraft();feedback('Waypoint and final facing selected. Press Go & map to send it.');}else if(mode==='calBottle'){$('calBottleX').value=a[0].toFixed(3);$('calBottleY').value=a[1].toFixed(3);action('calibration_target',{x:a[0],y:a[1],map_id:snapshot.selected_map?.id}).catch(()=>{});}else if(mode==='calPose'){$('calPoseX').value=a[0].toFixed(2);$('calPoseY').value=a[1].toFixed(2);$('calPoseYaw').value=yaw.toFixed(0);feedback('Robot pose selected. Press Set robot pose on calibration map to send it.');}else{$('poseX').value=a[0].toFixed(2);$('poseY').value=a[1].toFixed(2);$('poseYaw').value=yaw.toFixed(0);feedback('Start pose selected. Press Set initial pose to send it.');}draw();};
 $('map').onpointercancel=()=>{drag=null;draw();};window.addEventListener('resize',draw);
-poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollScanFilter,1000);setTimeout(pollAttitude,1300);setTimeout(pollLabels,500);cameraTick();
+poll();setTimeout(pollMaps,600);setTimeout(pollParameters,1000);setTimeout(pollScanFilter,1000);setTimeout(pollLabels,500);cameraTick();

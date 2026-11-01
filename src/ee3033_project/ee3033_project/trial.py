@@ -3,9 +3,9 @@ import math
 
 
 LIMITS = {
-    'max_linear': (0.04, 0.18, 0.01, 'm/s'),
-    'max_angular': (0.15, 0.60, 0.05, 'rad/s'),
-    'goal_timeout': (20.0, 120.0, 5.0, 's'),
+    'max_linear': (0.04, 0.30, 0.01, 'm/s'),
+    'max_angular': (0.15, 1.00, 0.05, 'rad/s'),
+    'goal_timeout': (20.0, 300.0, 5.0, 's'),
 }
 
 

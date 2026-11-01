@@ -99,14 +99,15 @@ def test_measured_ten_hertz_jitter_allows_reference_and_exposure_interpolation()
         history.reference(stamp+.16)
 
 
-def test_config_requires_fresh_only_topic_and_mount_change_invalidates_reference():
+def test_config_requires_fresh_only_topic_and_camera_edits_keep_reference():
     config = default_config()
     assert validate_config(config)['mode'] == 'fixed'
     with pytest.raises(ValueError, match='fresh-packet'):
         validate_config({**config, 'topic': '/robot_euler'})
     config.update(pivot=[0., 0., .033], reference={'mount_fingerprint': mount_fingerprint({'camera_height': .33})})
     assert reference_valid(config, {'camera_height': .33})
-    assert not reference_valid(config, {'camera_height': .34})
+    assert reference_valid(config, {'camera_height': .34, 'camera_pitch': .4})
+    assert not reference_valid({**config, 'reference': None}, {'camera_height': .33})
     assert not reference_valid({**config, 'pivot': None}, {'camera_height': .33})
 
 

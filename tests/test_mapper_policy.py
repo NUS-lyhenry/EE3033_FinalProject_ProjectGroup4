@@ -7,11 +7,12 @@ import time
 from types import SimpleNamespace as NS
 import pytest
 from ee3033_project.stationary import StationaryWindow
+from ee3033_project.navigation_supervision import home_navigation_timeout
 
 source=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project/mapper.py'
 tree=ast.parse(source.read_text())
 cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='Mapper')
-namespace=dict(Node=object,math=math,time=time,json=json)
+namespace=dict(Node=object,math=math,time=time,json=json,home_navigation_timeout=home_navigation_timeout)
 exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),namespace)
 Mapper=namespace['Mapper']
 
@@ -64,14 +65,14 @@ def test_costmap_expiry_after_selection_stops_before_goal_or_home_dispatch(state
 
 
 @pytest.mark.parametrize('state,tree_name',[
-    ('MAPPING',''),('RETURNING','navigate_home.xml'),
+    ('MAPPING','navigate_mapping.xml'),('RETURNING','navigate_home.xml'),
 ])
 def test_only_mapping_home_dispatch_selects_position_only_navigation_tree(monkeypatch,state,tree_name):
     monkeypatch.setitem(namespace,'Path',Path)
     monkeypatch.setitem(namespace,'get_package_share_directory',lambda name:'/tmp/project-share')
     monkeypatch.setitem(namespace,'NavigateToPose',NS(Goal=lambda:NS(behavior_tree='')))
     mapper=Mapper.__new__(Mapper)
-    mapper.state=state;mapper.pending=False;mapper.nav_handle=None;mapper.goal_serial=4
+    mapper.state=state;mapper.mode='automatic';mapper.pending=False;mapper.nav_handle=None;mapper.goal_serial=4
     mapper.navigation_map=NS(fresh=lambda:True,allowed=lambda *a:True)
     mapper.make_pose=lambda pose:pose
     sent=[]
@@ -125,6 +126,7 @@ def test_nonzero_or_stale_final_command_cannot_accumulate_mapping_home_hold():
 def test_cancellation_finishes_stopped_without_dispatching_a_successor():
     mapper=Mapper.__new__(Mapper)
     mapper.state='CANCELING'
+    mapper.operator_return_pending=False
     mapper.send=lambda _:pytest.fail('Cancellation must not start recovery or exploration')
     mapper.done(False)
     assert mapper.state=='STOPPED' and mapper.finished_at>0
@@ -141,7 +143,7 @@ def test_navigation_timeout_uses_first_revision_failure_policy(state):
     mapper.auto_pub=mapper.drive_pub=NS(publish=lambda _:None)
     namespace['Bool']=lambda **kw:kw
     mapper.error=lambda:None
-    mapper.goal_time=now-61
+    mapper.goal_time=now-(181 if state=='RETURNING' else 61)
     failures=[]
     def fail(reason):
         failures.append(reason)

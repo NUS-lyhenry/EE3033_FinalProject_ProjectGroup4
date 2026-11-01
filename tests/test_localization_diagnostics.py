@@ -54,6 +54,21 @@ def test_history_is_bounded_and_jsonsafe_without_recursive_summaries():
     json.dumps(summary,allow_nan=False)
 
 
+def test_wide_detection_keeps_actual_measurement_and_failure_evidence():
+    detection = {f'rendering_{i}': i for i in range(60)}
+    detection.update(x=1., y=2., sigma=.3, projection_valid=False,
+                     projection_error='Capture covariance stale',
+                     capture_pose_covariance={'pose_age_seconds': 3.},
+                     capture_pose={'stamp': 10., 'x': 1., 'y': 2., 'yaw': .1})
+    selected = finite_json({'selected': detection})['selected']
+    assert len(selected) <= 40
+    assert selected['x'] == 1. and selected['sigma'] == .3
+    assert selected['projection_valid'] is False
+    assert selected['projection_error'] == 'Capture covariance stale'
+    assert selected['capture_pose_covariance']['pose_age_seconds'] == 3.
+    assert selected['capture_pose']['stamp'] == 10.
+
+
 @pytest.mark.parametrize('stamp,last,armed,code',[
     (9.,0.,10.,'frame_before_current_mission'),
     (11.,11.,10.,'frame_duplicate_or_reordered'),

@@ -8,9 +8,13 @@ from .motion_safety import polyline_map_clearance
 
 
 class SingleTarget:
-    def __init__(self, max_steps=5, timeout=90., enable_ab_maneuver=False):
+    def __init__(self, max_steps=5, timeout=90., enable_ab_maneuver=False,
+                 min_box_width_fraction=.02):
         self.max_steps, self.timeout = max_steps, timeout
         self.enable_ab_maneuver = bool(enable_ab_maneuver)
+        self.min_box_width_fraction = min_box_width_fraction
+        if not math.isfinite(min_box_width_fraction) or not 0 < min_box_width_fraction <= 1:
+            raise ValueError('Target box width fraction must be finite and in (0, 1]')
         self.reset()
 
     def reset(self):
@@ -33,6 +37,31 @@ class SingleTarget:
         self.reframe_positions = []
         self.reframe_attempts = 0
         self.reframe_distance = 0.
+        self.small_box_pending = False
+        self.sufficient_box_frames = 0
+
+    def box_is_small(self, detection):
+        """AABB base width is an action hint, never a range measurement.
+
+        Only (x2-x1)/image_width controls the size threshold; object height
+        and box area do not. Legacy producers without image width retain
+        their old behavior.
+        Once a small view has been seen, missing metadata cannot clear it.
+        """
+        if 'box' not in detection or 'image_width' not in detection:
+            return None
+        try:
+            x1, y1, x2, y2 = map(float, detection['box'])
+            width = float(detection['image_width'])
+            if (not all(math.isfinite(v) for v in (x1, y1, x2, y2, width))
+                    or not 0 <= x1 < x2 <= width or not 0 <= y1 < y2):
+                return True
+            return (x2-x1)/width < self.min_box_width_fraction
+        except (KeyError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+            return True
+
+    def needs_closer_view(self):
+        return self.small_box_pending
 
     def turns_at(self, pose):
         site=next((s for s in self.turn_sites if math.dist(s['origin'],pose[:2])<.18),None)
@@ -41,7 +70,8 @@ class SingleTarget:
     def turn_goal(self, pose, yaw, reason):
         # Balance jitter and intermittent detection must not spend every motion
         # target on another almost identical in-place correction.
-        if abs(angle_difference(yaw,pose[2]))<=math.radians(2.) or self.turns_at(pose)>=2:
+        tolerance=math.radians(.5) if (self.candidate or {}).get('range_model')=='bottom_inverse_17pt_20261031' else math.radians(2.)
+        if abs(angle_difference(yaw,pose[2]))<=tolerance or self.turns_at(pose)>=2:
             return None
         site=next((s for s in self.turn_sites if math.dist(s['origin'],pose[:2])<.18),None)
         if site is None:
@@ -98,6 +128,11 @@ class SingleTarget:
             def same(d):
                 if d.get('label') != previous.get('label'):
                     return False
+                if d.get('range_model') == 'bottom_inverse_17pt_20261031' and 'box' in previous:
+                    old_width=previous['box'][2]-previous['box'][0]
+                    new_width=d['box'][2]-d['box'][0]
+                    if min(old_width,new_width)<=0 or max(old_width,new_width)/min(old_width,new_width)>1.8:
+                        return False
                 if all(k in d and k in previous for k in ('x', 'y')):
                     if math.hypot(d['x']-previous['x'], d['y']-previous['y']) < .4:
                         return True
@@ -136,8 +171,19 @@ class SingleTarget:
         consistent = bool(self.candidate and d['stamp']-self.candidate['stamp'] <= 1.2 and same(d))
         self.frames = self.frames+1 if consistent else 1
         self.candidate = d
+        small = False if d.get('range_model') == 'bottom_inverse_17pt_20261031' else self.box_is_small(d)
+        if small is True:
+            self.small_box_pending = True
+            self.sufficient_box_frames = 0
+        elif small is False:
+            self.sufficient_box_frames = self.sufficient_box_frames+1 if consistent else 1
+            if self.sufficient_box_frames >= 2:
+                self.small_box_pending = False
+        else:
+            self.sufficient_box_frames = 0
         self.recovery_started = None
-        if self.frames >= 2:
+        if self.frames >= 2 or (d.get('range_model')=='bottom_inverse_17pt_20261031'
+                and d.get('projection_valid') is True and d.get('bearing_valid') is True):
             self.locked = True
         return self.locked
 
@@ -151,7 +197,7 @@ class SingleTarget:
         if d is None:
             return None
         self.last_goal_action=None
-        near=requires_reframing(d) or ('bearing' not in d and 'steering_bearing' in d)
+        near=requires_reframing(d) or ('bearing' not in d and 'steering_bearing' in d) or (force_baseline and d.get('ranging_mode')=='near_guess')
         if near:
             # Framing recovery is not an A/B/C capture station: a cropped
             # view can contain no usable measurement at all. Keep its bounded
@@ -178,14 +224,37 @@ class SingleTarget:
             return None
         camera_yaw = planner.camera_model.yaw if planner.camera_model else 0.
         desired = d['bearing']-camera_yaw
-        if not force_baseline and abs(angle_difference(desired, pose[2])) > math.radians(2.) and self.turns_at(pose)<2:
+        empirical=d.get('range_model')=='bottom_inverse_17pt_20261031'
+        needs_center=(not d.get('centered',False)) if empirical else abs(angle_difference(desired,pose[2]))>math.radians(2.)
+        if (empirical or not force_baseline) and needs_center and self.turns_at(pose)<(1 if empirical else 2):
             key = ('center', round(desired, 2))
             if key not in self.visited:
                 self.visited.add(key)
                 goal=self.turn_goal(pose,desired,'Center locked target')
                 if goal is not None:return goal
             # A repeated correction is not a reason to abandon the baseline.
-        if not self.enable_ab_maneuver:
+        if empirical:
+            if needs_center and not d.get('projection_valid'):
+                self.last_goal_reason='Hold for a usable view; bounded centering budget used'
+                return None
+            # Keep collecting at 60-80 cm; do not consume the view with the
+            # legacy width gate or approach merely because precision is pending.
+            if d.get('ranging_mode')=='near_guess':
+                self.last_goal_reason='Observe near-field estimate before a safe reframe'
+                return None
+            if d.get('range_state')=='within_range':
+                distance=d.get('range_m')
+                if distance is None or distance<=.8:
+                    if not force_baseline:
+                        self.last_goal_reason='Hold for eight settled calibrated frames'
+                        return None
+                    # After an unsuccessful complete observation window, try
+                    # at most two map-safe alternate views at 60-80 cm.
+                else:
+                    return self.approach_goal(planner,pose,deadline,cancel,allowed)
+            else:
+                return self.approach_goal(planner,pose,deadline,cancel,allowed)
+        if not empirical and (self.needs_closer_view() or not self.enable_ab_maneuver):
             return self.approach_goal(planner,pose,deadline,cancel,allowed)
         # Retain up to three distinct capture positions across local moves.
         if not any(math.dist(pose[:2], p) < .12 for p in self.positions):
@@ -202,8 +271,8 @@ class SingleTarget:
         distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
         goals = []
         base_angle = math.atan2(pose[1]-ty, pose[0]-tx)
-        preferred = .45 if d.get('close_view') is False else .6
-        for radius in dict.fromkeys((preferred, .6, .8, 1.)):
+        preferred = .7 if empirical else .45 if d.get('close_view') is False else .6
+        for radius in dict.fromkeys((preferred, .6, .8) if empirical else (preferred, .6, .8, 1.)):
             for offset in (0., -.45, .45, -.9, .9):
                 if (deadline is not None and time.monotonic() >= deadline) or (cancel is not None and cancel.is_set()):
                     return None
@@ -239,6 +308,9 @@ class SingleTarget:
                 parallax_penalty = 2. if crossing < math.radians(15.) else 0.
                 goals.append((float(distances[cell])+abs(offset)*.2+2*abs(radius-preferred)+parallax_penalty,
                               cell, (x, y, yaw)))
+        if not goals and empirical:
+            self.last_goal_reason='No safe alternate calibrated view; hold and resample'
+            return None
         if not goals:
             # Invalid/range-biased floor depth must not prevent two-ray ranging.
             return self.bearing_baseline(planner,pose,deadline,cancel,allowed)
@@ -246,6 +318,21 @@ class SingleTarget:
         self.visited.add(cell)
         self.last_goal_reason='Change observation position for parallax'
         return goal
+
+    def alternate_observation_goal(self, planner, pose, deadline=None, cancel=None, allowed=None):
+        """A map-safe displacement, never a turn, after a stalled capture."""
+        if pose is None or self.candidate is None: return None
+        goal=self.observation_goal(planner,pose,deadline,cancel,force_baseline=True,allowed=allowed)
+        if goal is not None and math.dist(goal[:2],pose[:2]) >= .20:
+            self.last_goal_reason='Change stalled localization observation position'
+            return goal
+        d=self.candidate
+        if 'bearing' not in d or d.get('bearing_valid') is False: return None
+        goal=self.bearing_baseline(planner,pose,deadline,cancel,allowed)
+        if goal is not None and math.dist(goal[:2],pose[:2]) >= .20:
+            self.last_goal_reason='Change stalled localization observation position'
+            return goal
+        return None
 
     def approach_goal(self, planner, pose, deadline=None, cancel=None, allowed=None):
         """Try a short, continuously checked advance toward the observed ray.
@@ -277,7 +364,8 @@ class SingleTarget:
             if allowed is not None and any(allowed(pose[0]+i/(count-1)*(x-pose[0]),
                     pose[1]+i/(count-1)*(y-pose[1])) is not True for i in range(count)):
                 continue
-            if all(k in d for k in ('x','y')) and d.get('projection_valid') is True:
+            if (not self.needs_closer_view() and all(k in d for k in ('x','y'))
+                    and d.get('projection_valid') is True):
                 visible=observation_visibility(planner,(x,y,yaw),target=(d['x'],d['y']),
                     camera_model=camera,require_floor=camera is not None,deadline=deadline,cancel=cancel)
             else:
@@ -286,41 +374,82 @@ class SingleTarget:
             if not visible.visible:continue
             self.visited.add(cell)
             self.last_goal_action='approach'
-            self.last_goal_reason='Advance toward locked target and resample'
+            self.last_goal_reason=('Small target box: advance for a larger view and resample'
+                if self.needs_closer_view() else 'Advance toward locked target and resample')
             return (x,y,yaw)
         self.last_goal_reason='No safe visible short approach; continue observing'
         return None
 
     def bearing_baseline(self, planner, pose, deadline=None, cancel=None, allowed=None):
-        d=self.candidate
-        if d is None or 'bearing' not in d:return None
-        distances,_=planner.travel_field(*pose[:2],deadline=deadline,cancel=cancel)
-        camera_yaw=planner.camera_model.yaw if planner.camera_model else 0.
-        for radius in (.4,-.4,.6,-.6,.8,-.8,-.3):
-            if (deadline is not None and time.monotonic()>=deadline) or (cancel is not None and cancel.is_set()):return None
-            angle=d['bearing']+(math.pi/2 if radius != -.3 else 0.)
-            x,y=pose[0]+radius*math.cos(angle),pose[1]+radius*math.sin(angle)
-            cell=planner.world_to_cell(x,y)
+        """Rank safe lateral baselines by conservative parallax and path cost.
+
+        The target has unknown range. Use multiple depths along the *measured*
+        source ray for scoring; a midpoint only aims the camera and never becomes
+        a coordinate measurement. Keep the existing map/camera visibility gate.
+        """
+        d = self.candidate
+        if d is None or 'bearing' not in d:
+            return None
+        source = d.get('origin')
+        if source is None:
+            self.last_goal_reason = 'Baseline requires the last image camera origin'
+            return None
+        distances, _ = planner.travel_field(*pose[:2], deadline=deadline, cancel=cancel)
+        camera = planner.camera_model
+        camera_yaw = camera.yaw if camera else 0.
+        near, far = (camera.min_range, camera.max_range) if camera else (.3, 2.)
+        bearing = d['bearing']
+        mid = (near + far) / 2.
+        tx = source[0] + mid * math.cos(bearing)
+        ty = source[1] + mid * math.sin(bearing)
+        options = []
+        for radius in (.4, -.4, .6, -.6, .8, -.8, -.3):
+            if cancel is not None and cancel.is_set():
+                return None
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            angle = bearing + (math.pi / 2 if radius != -.3 else 0.)
+            x, y = pose[0] + radius * math.cos(angle), pose[1] + radius * math.sin(angle)
+            cell = planner.world_to_cell(x, y)
             if (not planner.in_bounds(*cell) or not planner.safe[cell]
                     or not math.isfinite(distances[cell]) or cell in self.visited
-                    or any(math.dist((x,y),p)<.25 for p in self.positions)
-                    or (allowed is not None and allowed(x,y) is False)):continue
-            source=d.get('origin')
-            if source is None:
-                self.last_goal_reason='Baseline requires the last image camera origin'
+                    or any(math.dist((x, y), p) < .25 for p in self.positions)
+                    or (allowed is not None and allowed(x, y) is False)):
                 continue
-            nominal=(planner.camera_model.min_range+planner.camera_model.max_range)/2 if planner.camera_model else 1.
-            # This midpoint chooses heading only. Visibility evaluates the full
-            # depth wedge anchored at the last image's real camera origin.
-            tx=source[0]+nominal*math.cos(d['bearing']);ty=source[1]+nominal*math.sin(d['bearing'])
-            yaw=math.atan2(ty-y,tx-x)-camera_yaw
-            visibility=observation_visibility(planner,(x,y,yaw),source_origin=source,
-                bearing=d['bearing'],camera_model=planner.camera_model,deadline=deadline,cancel=cancel)
+            yaw = math.atan2(ty - y, tx - x) - camera_yaw
+            visibility = observation_visibility(planner, (x, y, yaw), source_origin=source,
+                bearing=bearing, camera_model=camera, deadline=deadline, cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                return None
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             if not visibility.visible:
-                self.last_goal_reason='Baseline visibility rejected: '+visibility.reason
+                self.last_goal_reason = 'Baseline visibility rejected: ' + visibility.reason
                 continue
-            self.visited.add(cell)
-            self.last_goal_reason='Depth-free lateral baseline' if radius != -.3 else 'Reframe by moving away'
-            return (x,y,yaw)
-        self.last_goal_reason='No map-safe connected baseline candidate'
-        return None
+            # At longer unknown ranges the same baseline gives weaker parallax.
+            # Reward the worst of near/mid/far hypotheses, not just a fabricated
+            # target at the range midpoint.
+            camera_origin = visibility.camera_origin or (x, y)
+            parallax = []
+            for depth in (near, mid, far):
+                px = source[0] + depth * math.cos(bearing)
+                py = source[1] + depth * math.sin(bearing)
+                new_bearing = math.atan2(py - camera_origin[1], px - camera_origin[0])
+                parallax.append(abs(math.sin(angle_difference(new_bearing, bearing))))
+            turn = abs(angle_difference(yaw, pose[2]))
+            path_length = float(distances[cell])
+            score = (2.0 * min(parallax) + .25 * visibility.support
+                     + .15 * visibility.range_support - .10 * path_length - .025 * turn)
+            options.append((score, -path_length, cell, (x, y, yaw), min(parallax), radius))
+        # A later visibility query can exhaust Mission's 0.2 s callback budget.
+        # Keep earlier fully checked choices; cancellation still discards all.
+        if cancel is not None and cancel.is_set():
+            return None
+        if not options:
+            self.last_goal_reason = 'No map-safe connected baseline candidate'
+            return None
+        _, _, cell, goal, _, radius = max(options)
+        self.visited.add(cell)
+        self.last_goal_reason = ('Depth-free lateral baseline' if radius != -.3
+                                 else 'Reframe by moving away')
+        return goal

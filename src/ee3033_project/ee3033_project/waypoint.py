@@ -2,6 +2,7 @@
 import math
 from .coverage import CoveragePlanner
 from .frontiers import frontier_goal,reachable_space,connection_cell
+from .path_validation import path_search_grid
 
 
 def validate_waypoint(data,resolution,origin,target):
@@ -14,7 +15,8 @@ def validate_waypoint(data,resolution,origin,target):
     return tuple(map(float,target[:2]))+(math.atan2(math.sin(target[2]),math.cos(target[2])),)
 
 
-def waypoint_goal(data,resolution,origin,robot,target,failed=(),visited=(),clearance=.22,safe_mask=None):
+def waypoint_goal(data,resolution,origin,robot,target,failed=(),visited=(),clearance=.22,safe_mask=None,
+                  min_frontier_cells=5):
     """Reach the exact goal through known physical-safe space, if necessary.
 
     ``safe_mask`` is a fresh Nav2 envelope supplied by Mapper. With that
@@ -22,15 +24,18 @@ def waypoint_goal(data,resolution,origin,robot,target,failed=(),visited=(),clear
     exact target footprint, connector and costmap still must all be safe.
     """
     target=validate_waypoint(data,resolution,origin,target)
+    source_resolution=resolution
+    data,resolution,safe_mask=path_search_grid(data,resolution,safe_mask)
+    min_frontier_cells=math.ceil(min_frontier_cells*source_resolution/resolution-1e-6)
     planner=CoveragePlanner(data,resolution,origin,clearance=clearance)
     reachable=reachable_space(planner,robot,safe_mask)
     anchor=connection_cell(planner,target,safe_mask,allowed=reachable)
     if anchor is not None:
-        if any(math.hypot(target[0]-x,target[1]-y)<max(.12,2*resolution) for x,y in failed):
+        if any(math.hypot(target[0]-x,target[1]-y)<max(.12,2*source_resolution) for x,y in failed):
             return None,1,False
         return target,0,True
     # Unknown destinations remain exploration requests. Completed approaches are
     # separate view records, not failed regions or a reason to skip whole rooms.
     goal,groups=frontier_goal(data,resolution,origin,robot,failed,clearance,
-        toward=target[:2],safe_mask=safe_mask,visited=visited)
+        min_frontier_cells=min_frontier_cells,toward=target[:2],safe_mask=safe_mask,visited=visited)
     return goal,groups,False

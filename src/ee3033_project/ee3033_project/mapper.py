@@ -20,7 +20,7 @@ from std_msgs.msg import Bool,String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer,TransformListener,TransformException
 from .core import quaternion_yaw,stamp_seconds
-from .frontiers import frontier_goal
+from .frontiers import frontier_goal, MappingStartUnavailable
 from .map_io import save_new_map
 from .ros_utils import LATCHED,parameters,run,set_yaw
 from .trial import guarded_parameters
@@ -29,6 +29,8 @@ from .waypoint import validate_waypoint,waypoint_goal
 from .core import angle_difference
 from .navigation_costmap import NavigationCostmap
 from .stationary import StationaryWindow
+from .path_validation import path_search_grid
+from .navigation_supervision import home_navigation_timeout
 
 
 class Mapper(Node):
@@ -37,7 +39,7 @@ class Mapper(Node):
     def __init__(self,**kwargs):
         super().__init__('project_mapper',**kwargs)
         self.p=parameters(self,{'allow_motion':False,'clearance':DEFAULT_CLEARANCE,
-                                'max_mapping_seconds':600.0,'goal_timeout':60.0,
+                                'max_mapping_seconds':600.0,'goal_timeout':60.0,'cancel_timeout':10.0,
                                 'sensor_timeout':1.0,'settle_seconds':2.0,
                                 'frontier_settle_seconds':4.0,
                                 'waypoint_x':0.0,'waypoint_y':0.0,'waypoint_yaw':0.0,
@@ -50,17 +52,20 @@ class Mapper(Node):
         self.map=None
         self.map_time=self.scan_time=self.odom_time=-math.inf
         self.home=None
+        self.operator_return_pending=False
         self.goal=None
         self.nav_handle=None
         self.pending=False
         self.goal_serial=0
         self.odom_pose=None
         self.navigation_recoveries=[]
+        self.navigation_lock_reason=None
         self.seen_recoveries=set()
         self.return_verified=False
         self.return_reason=None
         self.started=self.goal_time=self.last_decision=self.empty_since=0.0
         self.finished_at=0.0
+        self.planning_blocked_since=None
         self.cancel_deadline=0.0
         self.failed=[]
         self.deferred=[]
@@ -76,7 +81,7 @@ class Mapper(Node):
         self.last_stop_stamp=0.
         self.verify_started=self.stationary_since=0.
         self.odom_twist=(math.inf,math.inf)
-        self.stop_window=StationaryWindow()
+        self.stop_window=StationaryWindow.position_hold()
         self.stationary_check=None
         self.command_zero=False
         self.command_time=-math.inf
@@ -102,6 +107,7 @@ class Mapper(Node):
         self.create_service(Trigger,'/project/start',self.start)
         self.create_service(Trigger,'/project/start_waypoint',self.start_waypoint)
         self.create_service(Trigger,'/project/stop',self.stop)
+        self.create_service(Trigger,'/project/return_home',self.return_home)
         self.create_timer(0.1,self.tick)
 
     def on_map(self,msg):
@@ -143,9 +149,22 @@ class Mapper(Node):
     def on_navigation(self,msg):
         try:
             status=json.loads(msg.data)
-            if self.state not in self.ACTIVE or self.nav_handle is None:return
-            if not 0<=self.get_clock().now().nanoseconds*1e-9-float(status['stamp'])<=2.:return
+            stamp=float(status['stamp'])
+            if not math.isfinite(stamp) or not 0<=self.get_clock().now().nanoseconds*1e-9-stamp<=2.:return
             goal_id=str(status['goal_id']).replace('-','').lower()
+            if len(goal_id)!=32 or any(c not in '0123456789abcdef' for c in goal_id):return
+            # A supervisor lock is global, even if its action result cleared
+            # nav_handle before this status callback arrived. Do not mistake
+            # it for several unreachable frontiers or a failed return route.
+            if status.get('locked') is True:
+                reason=status.get('reason') or status.get('failure_reason')
+                if not isinstance(reason,str) or not reason.strip():return
+                if not getattr(self,'navigation_lock_reason',None):
+                    self.navigation_lock_reason='Navigation supervisor locked: '+reason
+                    if self.state in self.ACTIVE and self.state!='CANCELING':
+                        self.fail(self.navigation_lock_reason)
+                return
+            if self.state not in self.ACTIVE or self.nav_handle is None:return
             if goal_id!=bytes(self.nav_handle.goal_id.uuid).hex():return
             count=status.get('recovery_count',0)
             if type(count) is not int or not 0<=count<=2:return
@@ -201,6 +220,7 @@ class Mapper(Node):
             return None
 
     def error(self):
+        if getattr(self,'navigation_lock_reason',None):return self.navigation_lock_reason
         now=time.monotonic()
         if self.map is None or now-self.map_time>8:
             return 'SLAM map missing or stale'
@@ -224,9 +244,11 @@ class Mapper(Node):
         if error:
             response.message=error
             return response
+        self.operator_return_pending=False
         self.home,self.started,self.failed,self.partial=self.pose(),time.monotonic(),[],False
         self.mode,self.waypoint,self.final_leg='automatic',None,False
         self.finished_at=0.0
+        self.planning_blocked_since=None
         self.deferred=[]
         self.retry_round=0
         self.visited=[]
@@ -247,13 +269,48 @@ class Mapper(Node):
         response.success,response.message=True,'Automatic mapping started'
         return response
 
+    def return_home(self,request,response):
+        del request
+        if self.home is None:
+            response.message='No recorded home; Start mapping first';return response
+        if self.state in ('RETURNING','VERIFYING_HOME'):
+            response.success,response.message=True,'Already returning to home';return response
+        if self.state in ('CANCELING','SAVING'):
+            response.message='Wait for cancellation or map saving to finish';return response
+        error=self.error()
+        if not self.p['allow_motion']:error='Motion disabled'
+        if not self.nav.server_is_ready():error='Nav2 is not ready'
+        if error:response.message=error;return response
+        if self.job is not None:
+            self.job.cancel();self.job=None
+        self.operator_return_pending=True
+        self.partial=True
+        self.finished_at=0.
+        self.return_verified=False;self.return_reason=None
+        self.drive_pub.publish(Bool(data=False))
+        if self.nav_handle is not None or self.pending:
+            self.state,self.reason='CANCELING','Operator requested return; canceling current navigation'
+            self.cancel_deadline=time.monotonic()+self.p.get('cancel_timeout',10.)
+            if self.nav_handle is not None:self.nav_handle.cancel_goal_async()
+        else:self.begin_operator_return()
+        response.success,response.message=True,'Return to home requested'
+        return response
+
+    def begin_operator_return(self):
+        self.operator_return_pending=False
+        error=self.error()
+        if error:self.fail(error);return
+        self.state,self.reason='RETURNING','Operator requested return to mapping start'
+        self.send(self.home)
+
     def stop(self,request,response):
         del request
+        self.operator_return_pending=False
         self.last_stop_stamp=self.get_clock().now().nanoseconds*1e-9
         self.drive_pub.publish(Bool(data=False))
         if self.nav_handle or self.pending:
             self.state='CANCELING'
-            self.cancel_deadline=time.monotonic()+10
+            self.cancel_deadline=time.monotonic()+self.p.get('cancel_timeout',10.)
             if self.nav_handle:
                 self.nav_handle.cancel_goal_async()
         else:
@@ -271,6 +328,8 @@ class Mapper(Node):
         return msg
 
     def send(self,pose):
+        if getattr(self,'navigation_lock_reason',None):
+            self.fail(self.navigation_lock_reason);return
         if self.pending or self.nav_handle is not None:
             self.fail('Refused overlapping mapping navigation goals');return
         if not self.navigation_map.fresh():
@@ -293,6 +352,9 @@ class Mapper(Node):
             # recorded initial yaw must not trigger another alignment attempt.
             goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/
                                    'behavior_trees'/'navigate_home.xml')
+        elif self.mode=='automatic':
+            goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/
+                                   'behavior_trees'/'navigate_mapping.xml')
         self.nav.send_goal_async(goal).add_done_callback(lambda f:self.accepted(f,serial))
 
     def selection_costmap_mask(self,shape,resolution,origin,now):
@@ -335,6 +397,8 @@ class Mapper(Node):
 
     def done(self,success):
         if self.state=='CANCELING':
+            if self.operator_return_pending:
+                self.begin_operator_return();return
             self.state='STOPPED'
             self.finished_at=time.monotonic()
         elif self.state=='RETURNING':
@@ -405,6 +469,7 @@ class Mapper(Node):
         self.job=self.worker.submit(save_new_map,self.p['map_directory'])
 
     def fail(self,reason):
+        self.operator_return_pending=False
         self.state,self.reason='FAILED',reason
         self.finished_at=time.monotonic()
         self.drive_pub.publish(Bool(data=False))
@@ -428,7 +493,7 @@ class Mapper(Node):
             error=self.error()
             if error:
                 self.fail(error)
-            elif (self.nav_handle or self.pending) and now-self.goal_time>self.p['goal_timeout']:
+            elif (self.nav_handle or self.pending) and now-self.goal_time>(home_navigation_timeout(self.p['goal_timeout']) if self.state=='RETURNING' else self.p['goal_timeout']):
                 # The supervisor owns recovery; the mapper retains its outer deadline.
                 self.fail('Mapping navigation time limit exceeded')
             elif self.state=='MAPPING' and not self.nav_handle and not self.pending:
@@ -438,6 +503,7 @@ class Mapper(Node):
                             if self.mode=='waypoint':goal,groups,self.final_leg=self.job.result()
                             else:goal,groups=self.job.result()
                             self.job=None
+                            self.planning_blocked_since=None
                             if goal is not None:
                                 self.empty_since=0.0
                                 self.goals+=1
@@ -451,6 +517,19 @@ class Mapper(Node):
                                         self.partial=self.partial or groups>0
                                         self.state,self.reason='RETURNING','Frontier search finished; returning to mapping start'
                                         self.send(self.home)
+                        except MappingStartUnavailable as exc:
+                            # A new SLAM map/costmap can briefly disagree at
+                            # the start. Keep still and replan fresh snapshots;
+                            # do not snap through unknown cells or declare a
+                            # completed map. Persistent blockage remains a stop.
+                            self.job=None
+                            self.last_decision=now
+                            if self.planning_blocked_since is None:
+                                self.planning_blocked_since=now
+                            if now-self.planning_blocked_since>=10.:
+                                self.fail(str(exc)+'; mapping stopped. Move to a clear starting area or finish the map manually, then confirm it.')
+                            else:
+                                self.reason='Waiting for SLAM and navigation map to establish a footprint-clear start; robot remains stopped'
                         except Exception as exc:
                             self.fail(str(exc))
                 elif now-self.started>self.p['max_mapping_seconds']:
@@ -461,15 +540,19 @@ class Mapper(Node):
                         self.send(self.home)
                 elif now-self.last_decision>self.p['settle_seconds']:
                     data,resolution,origin=self.map_geometry()
+                    source_resolution=resolution
+                    data,resolution,_=path_search_grid(data,resolution)
+                    min_frontier_cells=math.ceil(5*source_resolution/resolution-1e-6)
                     mask=self.selection_costmap_mask(data.shape,resolution,origin,now)
                     if mask is not None:
                         if self.mode=='waypoint':
                             self.job=self.worker.submit(waypoint_goal,data,resolution,origin,self.pose(),self.waypoint,
-                                tuple(self.failed),tuple(self.frontier_views),self.p['clearance'],safe_mask=mask)
+                                tuple(self.failed),tuple(self.frontier_views),self.p['clearance'],safe_mask=mask,
+                                min_frontier_cells=min_frontier_cells)
                         else:
                             self.job=self.worker.submit(frontier_goal,data,resolution,origin,
                                 self.pose(),tuple(self.failed),self.p['clearance'],
-                                safe_mask=mask,visited=tuple(self.frontier_views))
+                                safe_mask=mask,visited=tuple(self.frontier_views),min_frontier_cells=min_frontier_cells)
                     self.last_decision=now
         elif self.state=='VERIFYING_HOME':
             pose=self.pose()
@@ -517,6 +600,7 @@ class Mapper(Node):
             'return_verified':self.return_verified,'return_reason':self.return_reason,
             'stationary_check':self.stationary_check,
             'navigation_recoveries':self.navigation_recoveries,
+            'navigation_lock_reason':getattr(self,'navigation_lock_reason',None),
             'mapping_mode':self.mode,'waypoint':self.waypoint,
             'waypoint_verified':self.state=='WAYPOINT_REACHED',
             'saved_map':self.saved_map,'elapsed_seconds':(self.finished_at or now)-self.started if self.started else 0,

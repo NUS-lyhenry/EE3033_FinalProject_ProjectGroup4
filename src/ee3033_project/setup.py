@@ -26,6 +26,7 @@ setup(
         'mapper = ee3033_project.mapper:main',
         'navigation_supervisor = ee3033_project.navigation_supervisor:main',
         'path_planner = ee3033_project.path_planner:main',
+        'navigation_map = ee3033_project.navigation_map:main',
         'camera_calibration = ee3033_project.calibration_node:main',
     ]},
 )

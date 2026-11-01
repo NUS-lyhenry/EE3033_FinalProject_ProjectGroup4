@@ -128,6 +128,28 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(self.console.count_publishers('/cmd_vel'),1)
         print('PASS: native HTTP two-stage trial, same-map Search again, archived results, reused-map-only timing and saved-map load without motion')
 
+    def test_manual_snapshot_is_invalidated_by_driving_and_prepares_search_without_start(self):
+        self.post('stage',{'phase':'mapping'})
+        self.assertTrue(wait(lambda:self.get()['mission'].get('ready')))
+        first=self.post('save_map')['map']
+        self.assertEqual(first['quality'],'snapshot')
+        self.post('teleop',{'linear':.05,'angular':0.})
+        self.assertIsNone(self.get()['saved_map'])
+        with self.assertRaises(HTTPError):
+            self.post('review_map',{'map_id':first['id']})
+        self.post('teleop',{'linear':0.,'angular':0.})
+        second=self.post('save_map')['map']
+        self.assertNotEqual(first['id'],second['id'])
+        self.post('review_map',{'map_id':second['id']})
+        self.post('stage',dict(phase='mission',map_id=second['id'],target_class='bottle'))
+        self.assertTrue(wait(lambda:self.get()['mission'].get('phase')=='mission' and self.get()['mission'].get('ready')))
+        state=self.get()
+        self.assertEqual(state['mission']['state'],'WAITING')
+        self.assertFalse(state['initial_pose_sent'])
+        self.assertEqual(state['selected_map']['quality'],'snapshot')
+        self.assertEqual(state['selected_map']['id'],second['id'])
+        self.assertEqual(len(self.get('maps')['maps']),2)
+
     def test_stop_during_loading_prevents_late_stage(self):
         entered=threading.Event();release=threading.Event();factory=self.console.stage.popen
         def delayed(args,**kwargs):

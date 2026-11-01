@@ -17,7 +17,7 @@ import time
 import yaml
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
-                    'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING'))
+                    'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING'))
 
 
 def utc_now():
@@ -267,9 +267,16 @@ def mission_options(values):
         raise ValueError('Active A–B maneuver must be true or false')
     if isinstance(acquisition_seconds,bool) or not isinstance(acquisition_seconds,(int,float)) or not math.isfinite(acquisition_seconds) or not 1.<=acquisition_seconds<=600.:
         raise ValueError('Acquisition time must be 1–600 seconds')
-    return dict(target_class=target,localization_method=method,return_tolerance=float(tolerance),
+    result = dict(target_class=target,localization_method=method,return_tolerance=float(tolerance),
                 preferred_target_sigma=float(sigma),enable_ab_maneuver=enable_ab_maneuver,
                 acquisition_seconds=float(acquisition_seconds))
+    if target.casefold()=='bottle':
+        low,high=values.get('bottle_min_range',.35),values.get('bottle_max_range',.95)
+        if (any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (low,high))
+                or not .35<=low<high<=1.):
+            raise ValueError('Bottle camera range must be within 35-100 cm, with minimum below maximum')
+        result.update(bottle_min_range=float(low),bottle_max_range=float(high))
+    return result
 
 
 class StageProcess:
@@ -282,7 +289,8 @@ class StageProcess:
         self.model = model
         self.calibration_file = calibration_file
         self.navigation_profile = 'original'
-        self.scan_self_mask_radius = .08
+        self.scan_self_mask_radius = .14
+        self.allow_reverse_recovery = True
         self.mapping_resolution = .05
         self.vision_config = ''
         self.attitude_config = ''
@@ -346,7 +354,8 @@ class StageProcess:
             if self.model: args.append('model:='+self.model)
         else:
             args += ['console:=false','map_directory:='+str(map_directory),
-                     'navigation_profile:='+self.navigation_profile]
+                     'navigation_profile:='+self.navigation_profile,
+                     'allow_reverse_recovery:='+str(self.allow_reverse_recovery).lower()]
         for name,enabled in self.hardware.items():
             if name!='camera' or phase in ('mission','calibration'): args.append(name+':='+str(bool(enabled)).lower())
         if phase=='mission':

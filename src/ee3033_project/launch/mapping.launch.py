@@ -20,12 +20,13 @@ def generate_launch_description():
         DeclareLaunchArgument('allow_motion', default_value='false'),
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
-        DeclareLaunchArgument('self_mask_radius', default_value='.08'),
+        DeclareLaunchArgument('self_mask_radius', default_value='.14'),
         DeclareLaunchArgument('mapping_resolution', default_value='.05'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
         DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
         DeclareLaunchArgument('port', default_value='8765'),
+        DeclareLaunchArgument('allow_reverse_recovery', default_value='true'),
         DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share,'config','navigation.yaml')),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -39,7 +40,8 @@ def generate_launch_description():
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(share,'launch','navigation.launch.py')),launch_arguments={
                 'nav_config':LaunchConfiguration('nav_config'),'mapping_mode':'true',
-                'navigation_profile':LaunchConfiguration('navigation_profile')}.items()),
+                'navigation_profile':LaunchConfiguration('navigation_profile'),
+                'allow_reverse_recovery':LaunchConfiguration('allow_reverse_recovery')}.items()),
         Node(package='ee3033_project',executable='mapper',output='screen',parameters=[{
             'allow_motion':ParameterValue(LaunchConfiguration('allow_motion'),value_type=bool),
             'map_directory':LaunchConfiguration('map_directory')}]),
