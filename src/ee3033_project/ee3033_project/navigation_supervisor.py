@@ -13,6 +13,7 @@ import uuid
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Twist
+from rcl_interfaces.msg import SetParametersResult
 from nav_msgs.msg import Odometry, Path
 from nav2_msgs.action import NavigateToPose, BackUp
 from nav2_msgs.srv import ClearEntireCostmap
@@ -26,7 +27,8 @@ from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from .core import quaternion_yaw, stamp_seconds
-from .navigation_supervision import ProgressWatch, RecoveryBudget, wrap, path_reference
+from .mapping_heading import mapping_tangent_tree
+from .navigation_supervision import navigation_budget, ProgressWatch, RecoveryBudget, wrap, path_reference
 from .ros_utils import LATCHED, parameters
 from .trial import guarded_parameters
 from .stationary import StationaryWindow
@@ -35,7 +37,7 @@ from .stationary import StationaryWindow
 class NavigationSupervisor(Node):
     def __init__(self, **kwargs):
         super().__init__('project_navigation_supervisor', **kwargs)
-        self.p = parameters(self, dict(goal_timeout=60., maximum_recoveries=2,
+        self.p = parameters(self, dict(goal_timeout=60., maximum_recoveries=2, allow_reverse_recovery=True,
             translation_window=12., translation_distance=.08, heading_window=3.,
             sensor_timeout=1., gate_timeout=1.5, cancel_timeout=3.,
             enable_grace=2., stationary_seconds=.5, stationary_timeout=2.,
@@ -66,9 +68,11 @@ class NavigationSupervisor(Node):
         self.gate = {}
         self.path = []
         self.path_received = -math.inf
+        self.path_goal_yaw = None
+        self.goal_accepted_at = math.inf
         self.sequence = 0
         self.status = dict(stage='IDLE', reason='Ready', recovery_count=0,
-                           goal_id=None, failure_reason=None)
+                           goal_id=None, failure_reason=None, locked=False)
         self.tf = Buffer()
         self.listener = TransformListener(self.tf, self)
         self.nav = ActionClient(self, NavigateToPose, '/project/nav2_navigate_to_pose',
@@ -90,11 +94,22 @@ class NavigationSupervisor(Node):
             execute_callback=self.execute, goal_callback=self.accept_goal,
             cancel_callback=self.cancel_goal, handle_accepted_callback=self.accepted,
             callback_group=self.group)
+        self.add_on_set_parameters_callback(self.validate_recovery_setting)
         self.create_timer(.2, self.publish_status, callback_group=self.group)
+
+    def validate_recovery_setting(self, changes):
+        relevant=[p for p in changes if p.name=='allow_reverse_recovery']
+        with self.guard:
+            if relevant and (self.busy or self.drive):
+                return SetParametersResult(successful=False,reason='Stop navigation before changing recovery reverse')
+            if any(type(p.value) is not bool for p in relevant):
+                return SetParametersResult(successful=False,reason='Recovery reverse must be boolean')
+        return SetParametersResult(successful=True)
 
     def publish_status(self):
         with self.guard:
             value = dict(self.status)
+        value['allow_reverse_recovery']=self.get_parameter('allow_reverse_recovery').value
         value['stamp'] = self.get_clock().now().nanoseconds*1e-9
         self.status_pub.publish(String(data=json.dumps(value)))
 
@@ -153,6 +168,13 @@ class NavigationSupervisor(Node):
         with self.guard:
             self.path = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
             self.path_received = time.monotonic()
+            self.path_goal_yaw = None
+            if msg.poses:
+                q=msg.poses[-1].pose.orientation
+                norm=q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w
+                if math.isfinite(norm) and abs(norm-1.)<=.05:
+                    yaw=quaternion_yaw(q)
+                    if math.isfinite(yaw):self.path_goal_yaw=yaw
 
     def accept_goal(self, request):
         p, q = request.pose.pose.position, request.pose.pose.orientation
@@ -167,9 +189,13 @@ class NavigationSupervisor(Node):
             self.motion_dispatched = False
             self.stop.clear()
             self.sequence += 1
+            self.goal_accepted_at = time.monotonic()
             self.status = dict(stage='ACCEPTED', reason='Waiting for owner motion enable',
                 recovery_count=0, goal_id=str(uuid.uuid4()), failure_reason=None,
-                armed=False, sequence=self.sequence)
+                armed=False, sequence=self.sequence, locked=False,
+                goal_heading_policy='position_only' if (mapping_tangent_tree(request.behavior_tree)
+                    or 'navigate_home' in request.behavior_tree) else 'assigned',
+                requested_yaw=quaternion_yaw(request.pose.pose.orientation))
         return GoalResponse.ACCEPT
 
     def accepted(self, handle):
@@ -276,8 +302,9 @@ class NavigationSupervisor(Node):
 
     def stationary(self, budget=None, ignore_stop=False):
         self.set_stage('STOPPING', 'Verifying final command and actual stationary odometry pose')
-        window = StationaryWindow(seconds=max(.5,self.p['stationary_seconds']),
-            linear_limit=.035,angular_limit=.10,position_limit=.01,heading_limit=.02,max_gap=.25)
+        # Stop verification uses XY only, matching Mapper and Mission. Heading
+        # remains a navigation goal constraint, not a standstill lock trigger.
+        window = StationaryWindow.position_hold(seconds=max(.5,self.p['stationary_seconds']))
         start = time.monotonic()
         while rclpy.ok() and time.monotonic()-start < self.p['stationary_timeout']:
             if not ignore_stop and self.interrupted(budget):
@@ -296,6 +323,10 @@ class NavigationSupervisor(Node):
             else:
                 window.reset()
             check = window.evaluate(self.get_clock().now().nanoseconds*1e-9)
+            if not fresh:
+                check['reason'] = 'Odometry or final command is stale'
+            elif not all(math.isfinite(v) and abs(v)<=1e-5 for v in command):
+                check['reason'] = 'Final command is not zero'
             with self.guard:
                 self.status['stationary_check'] = check
             if valid and check['verified']:
@@ -373,16 +404,35 @@ class NavigationSupervisor(Node):
             time.sleep(.01)
         return self.raw_handle is not None and self.raw_handle.accepted
 
+    def mapping_target_heading(self,request,now=None):
+        now=time.monotonic() if now is None else now
+        with self.guard:
+            path,received=list(self.path),self.path_received
+            yaw=self.path_goal_yaw
+            after=self.goal_accepted_at
+        goal=request.pose.pose.position
+        if (yaw is None or not path or received<after or not 0<=now-received<=3.
+                or math.hypot(path[-1][0]-goal.x,path[-1][1]-goal.y)>1e-4):
+            return None
+        return yaw
+
     def reached_goal(self, request):
         pose = self.pose()
         goal_pose = request.pose.pose
         observation = 'navigate_observation' in request.behavior_tree
+        approach = 'navigate_approach' in request.behavior_tree
         home = 'navigate_home' in request.behavior_tree
-        xy = .10 if observation else self.p['xy_tolerance']
-        yaw = .03 if observation else .20
-        return (pose is not None and math.hypot(
-            pose[0]-goal_pose.position.x,pose[1]-goal_pose.position.y)<=xy
-            and (home or abs(wrap(quaternion_yaw(goal_pose.orientation)-pose[2]))<=yaw))
+        xy = .025 if approach else .10 if observation else self.p['xy_tolerance']
+        if pose is None or not math.hypot(
+                pose[0]-goal_pose.position.x,pose[1]-goal_pose.position.y)<=xy:
+            return False
+        if mapping_tangent_tree(request.behavior_tree):
+            # Keep the fresh matching route check independently of arrival yaw.
+            return self.mapping_target_heading(request) is not None
+        if home:
+            return True
+        yaw = .10 if approach else .03 if observation else .20
+        return abs(wrap(quaternion_yaw(goal_pose.orientation)-pose[2]))<=yaw
 
     def navigation_health(self, now, accepted_at):
         """A fresh diagnostic heartbeat cannot make failed sensors healthy.
@@ -430,15 +480,21 @@ class NavigationSupervisor(Node):
         goal = request.pose.pose
         distance = math.hypot(goal.position.x-pose[0], goal.position.y-pose[1])
         observation = 'navigate_observation' in request.behavior_tree
-        xy_tolerance = .10 if observation else self.p['xy_tolerance']
+        approach = 'navigate_approach' in request.behavior_tree
+        xy_tolerance = .025 if approach else .10 if observation else self.p['xy_tolerance']
         arrived = distance<=xy_tolerance
-        # Explicit trees use the same tolerances as their controller checker.
-        home = 'navigate_home' in request.behavior_tree
-        yaw_tolerance = .03 if observation else .20
-        if arrived and home:
-            heading = 0.
-            reference = pose[2]
-        elif arrived:
+        # Mapping exploration and return goals have position-only acceptance.
+        # Still check sensor health and path alignment on the way to the goal.
+        mapping = mapping_tangent_tree(request.behavior_tree)
+        position_only = mapping or 'navigate_home' in request.behavior_tree
+        if arrived and position_only:
+            with self.guard:
+                self.status.update(stage='ARRIVED', distance=distance, heading_error=0.,
+                    terminal_heading=None, velocity_gate_reason=self.gate.get('reason'),
+                    odom_age=now-self.odom_time, gate_age=now-self.gate_time)
+            return None
+        yaw_tolerance = .10 if approach else .03 if observation else .20
+        if arrived:
             reference = quaternion_yaw(goal.orientation)
             heading = wrap(reference-pose[2])
             if abs(heading)<=yaw_tolerance:
@@ -455,6 +511,7 @@ class NavigationSupervisor(Node):
         phase = 'FINAL_ALIGN' if arrived else 'ALIGNING' if aligning else 'TRACKING'
         with self.guard:
             self.status.update(stage=phase, distance=distance, heading_error=heading,
+                terminal_heading=self.mapping_target_heading(request,now) if mapping else None,
                 velocity_gate_reason=self.gate.get('reason'), odom_age=now-self.odom_time,
                 gate_age=now-self.gate_time)
         return watch.update(now, odom, heading, aligning=aligning, arrived=arrived,
@@ -462,7 +519,9 @@ class NavigationSupervisor(Node):
 
     def execute(self, outer):
         started = time.monotonic()
-        budget = RecoveryBudget(started, self.get_parameter('goal_timeout').value, self.p['maximum_recoveries'])
+        budget, allow_reverse = navigation_budget(started, self.get_parameter('goal_timeout').value,
+            self.p['maximum_recoveries'], self.get_parameter('allow_reverse_recovery').value,
+            outer.request.behavior_tree)
         status, reason = GoalStatus.STATUS_ABORTED, 'Navigation failed'
         try:
             # The owner only enables driving after its action was accepted.
@@ -541,7 +600,7 @@ class NavigationSupervisor(Node):
                 if unhealthy:
                     reason = unhealthy
                     break
-                recovery = budget.next(time.monotonic(), had_path)
+                recovery = budget.next(time.monotonic(), had_path, allow_reverse=allow_reverse)
                 if recovery is None:
                     reason = ('No collision-free route; no reverse attempted' if not had_path
                               else 'Navigation recovery budget exhausted')
@@ -620,13 +679,20 @@ class NavigationSupervisor(Node):
                        or getattr(self,'motion_dispatched',False))
         confirmed = self.finish_raw()
         settled = confirmed and (not had_raw or self.stationary(ignore_stop=True))
+        with self.guard:
+            self.status['stop_confirmation'] = dict(raw_terminal_confirmed=confirmed,
+                bounded_stop_confirmed=settled, policy='position_only')
         if not confirmed or not settled:
             with self.guard:
                 self.blocked = self.busy = True
                 self.status['locked'] = True
+                self.status['lock_reason'] = 'raw_terminal_unconfirmed' if not confirmed else 'bounded_stop_unverified'
             status = GoalStatus.STATUS_ABORTED
             detail = 'Raw navigation terminal was not confirmed' if not confirmed else 'Actual stationary stop was not verified'
             reason = (reason or 'Navigation failed')+'; '+detail+'; navigation locked'
+            check = self.status.get('stationary_check')
+            if confirmed and check:
+                reason += ': '+str(check.get('reason','Stop window unavailable'))
         elif status==GoalStatus.STATUS_SUCCEEDED and not self.reached_goal(outer.request):
             status = GoalStatus.STATUS_ABORTED
             reason = 'Final settled pose is outside verified goal tolerance'

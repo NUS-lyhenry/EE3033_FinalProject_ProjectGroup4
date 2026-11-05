@@ -1,0 +1,124 @@
+{
+  "perception": {
+    "stamp": 1793798302.256289,
+    "ready": true,
+    "latency": 0.0767671870016784,
+    "raw_detected_candidates": 0,
+    "localized_candidates": 0,
+    "detected_candidates": 0,
+    "highest_confidence": null,
+    "target_class": "bottle",
+    "geometry_ready": true,
+    "geometry_error": null,
+    "observation_ready": true,
+    "capture_pose": {
+      "stamp": 1793798302.256289,
+      "x": 0.006186641229096112,
+      "y": 0.023500120544253676,
+      "yaw": -0.004003697309279775,
+      "frame_id": "map"
+    },
+    "motion_check": {
+      "verified": true,
+      "duration": 0.6,
+      "samples": 32,
+      "position_only": false,
+      "linear_mean": 0.0,
+      "angular_mean": 0.0,
+      "position_span": 0.0,
+      "heading_span": 0.0,
+      "reason": "Stationary window verified",
+      "limits": {
+        "seconds": 0.6,
+        "linear_mean": 0.05,
+        "angular_mean": 0.12,
+        "position_span": 0.04,
+        "heading_span": 0.1
+      }
+    },
+    "frame_age": 0.311204195022583,
+    "projection_failures": [],
+    "odometry_age": 0.004633426666259766,
+    "quiet_seconds": 378.7481141669996,
+    "range_model": "bottom_inverse_17pt_20261031",
+    "camera_model": {
+      "model": "bottom_inverse_17pt_20261031",
+      "width": 640,
+      "height": 480,
+      "k": [
+        [
+          303.58978001,
+          0.0,
+          313.75809193
+        ],
+        [
+          0.0,
+          302.97064273,
+          258.71992369
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "d": [
+        0.06801198,
+        -0.0985489,
+        -0.0005351,
+        -0.00040454,
+        0.02653797
+      ],
+      "pixel_sigma": 2.0,
+      "margin": 8.0,
+      "min_range": 0.35,
+      "max_range": 0.95,
+      "center_tolerance": 32.0,
+      "source": "bottom_inverse_17pt_20261031"
+    },
+    "attitude": {
+      "valid": false,
+      "mode": "stability_only",
+      "compensation": false,
+      "reason": "attitude_capture_unbracketed",
+      "capture_stamp": 1793798302.256289
+    },
+    "calibration_file": null,
+    "localization_method": "bottom_inverse"
+  },
+  "perception_details": {
+    "stamp": 1793798302.256289,
+    "age": 0.5435051918029785,
+    "stale": false,
+    "detections": [],
+    "selected": null,
+    "raw_count": 0,
+    "in_range_count": 0,
+    "last_detection": null,
+    "last_seen_age": null,
+    "diagnostic": {
+      "stamp": 1793798302.256289,
+      "reason_codes": [
+        "detector_no_target_above_threshold",
+        "bottom_single_observation_unavailable"
+      ],
+      "selected": null,
+      "association": {
+        "attempted": true,
+        "matched": false,
+        "locked": false,
+        "frames": 0,
+        "candidate_count": 0
+      },
+      "mmse": {
+        "measurement_valid": false,
+        "attempted": false,
+        "updated": false,
+        "stable": false,
+        "batch_frames": 0,
+        "required_frames": 1
+      },
+      "target_locked": false
+    }
+  }
+}

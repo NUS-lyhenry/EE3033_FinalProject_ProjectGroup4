@@ -1,3 +1,4 @@
+# Bottle searches automatically use bottom_inverse; mount/angle fields below are legacy non-bottle settings.
 # One-time setup independent of the map and target location.
 # Zero height uses optical -> base_footprint TF, including dynamic pitch.
 # Positive height selects measured mounting geometry. Metres and radians.
@@ -5,8 +6,8 @@
 project_perception:
   ros__parameters:
     camera_height: 0.0
-    camera_pitch: 0.4991641660703783  # User-provided 28.6 degrees; validate against surveyed points.
-    use_pitch_override: true
+    camera_pitch: 0.0  # Legacy non-bottle geometry only; unused by bottom_inverse.
+    use_pitch_override: false
     camera_yaw: 0.0
     camera_x: 0.0
     camera_y: 0.0

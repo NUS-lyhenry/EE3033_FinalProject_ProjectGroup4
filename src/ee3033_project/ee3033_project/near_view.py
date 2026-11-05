@@ -5,6 +5,8 @@ from .visibility import observation_visibility
 
 
 def requires_reframing(detection):
+    if detection.get('range_model') == 'bottom_inverse_17pt_20261031':
+        return bool(detection.get('reframe_required'))
     return bool(detection.get('reframe_required') or detection.get('range_state')=='too_near'
         or any(code in (detection.get('reason_codes') or ()) for code in
                ('bearing_horizontal_clipping','detection_vertical_clipping')))

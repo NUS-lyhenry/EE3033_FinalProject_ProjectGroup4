@@ -12,7 +12,7 @@ from launch.conditions import IfCondition
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue, ParameterFile
 from nav2_common.launch import RewrittenYaml
-from ee3033_project.robot_geometry import GEOMETRY_PROFILE, PHYSICAL_RADIUS
+from ee3033_project.robot_geometry import GEOMETRY_PROFILE, NAVIGATION_RADIUS
 
 
 def action_remaps(source, target):
@@ -27,7 +27,7 @@ def generate_launch_description():
     config = LaunchConfiguration('nav_config')
     if GEOMETRY_PROFILE=='legacy':
         config=ParameterFile(RewrittenYaml(source_file=config,
-            param_rewrites={'robot_radius':str(PHYSICAL_RADIUS)},convert_types=True),allow_substs=True)
+            param_rewrites={'robot_radius':str(NAVIGATION_RADIUS)},convert_types=True),allow_substs=True)
     servers = [
         ('nav2_controller', 'controller_server'),
         ('nav2_smoother', 'smoother_server'),
@@ -63,11 +63,14 @@ def generate_launch_description():
         DeclareLaunchArgument('mapping_mode', default_value='false'),
         DeclareLaunchArgument('supervised_navigation', default_value='true'),
         DeclareLaunchArgument('final_command_topic', default_value='/cmd_vel'),
+        DeclareLaunchArgument('allow_reverse_recovery', default_value='true'),
         DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
         OpaqueFunction(function=start_servers),
+        Node(package='ee3033_project', executable='navigation_map', output='screen'),
         Node(package='ee3033_project', executable='path_planner', output='screen'),
         Node(package='ee3033_project', executable='navigation_supervisor',
              condition=IfCondition(LaunchConfiguration('supervised_navigation')), output='screen', parameters=[{'command_topic': LaunchConfiguration('final_command_topic'),
+                 'allow_reverse_recovery':ParameterValue(LaunchConfiguration('allow_reverse_recovery'),value_type=bool),
                  'goal_timeout': ParameterValue(PythonExpression(["60.0 if '",LaunchConfiguration('mapping_mode'),"' == 'true' else 75.0"]),value_type=float)}]),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='project_navigation_lifecycle', output='screen', parameters=[{

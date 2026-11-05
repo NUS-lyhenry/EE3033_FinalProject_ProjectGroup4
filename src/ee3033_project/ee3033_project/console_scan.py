@@ -24,7 +24,7 @@ class ScanFilterSettings:
 
     def init_scan_filter(self):
         self.scan_filter_path=Path(self.p['session_directory']).expanduser()/'scan_filter.json'
-        self.scan_filter_value=.08
+        self.scan_filter_value=.14
         self.scan_filter_live=None
         self.scan_filter_fault=None
         if self.scan_filter_path.is_file():

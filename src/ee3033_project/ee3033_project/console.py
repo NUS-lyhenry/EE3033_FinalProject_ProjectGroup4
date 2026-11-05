@@ -4,6 +4,7 @@ Bind only to loopback. For a remote Pi use SSH port forwarding, not an exposed
 unauthenticated robot-control port. Manual control exists only in mapping mode.
 """
 from collections import deque
+from .visual_telemetry import VisualTelemetry
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
@@ -46,9 +47,12 @@ from .console_workflow import Workflow
 from .model_labels import ModelLabels
 from .waypoint import validate_waypoint
 from .console_scan import ScanFilterSettings
+from .console_slam_settings import SlamSettings
+from .console_recovery import RecoverySettings
+from .console_attitude import AttitudeSettings
 
 
-class Console(ScanFilterSettings, Workflow, Node):
+class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettings, Workflow, Node):
     def __init__(self, **kwargs):
         super().__init__('project_console', **kwargs)
         self.p = parameters(self, {'port': 8765, 'phase': 'mission', 'allow_motion': False,
@@ -62,6 +66,7 @@ class Console(ScanFilterSettings, Workflow, Node):
                                    'mapping_resolution':.05})
         if self.p['phase'] not in ('mapping','mission','calibration'):
             raise ValueError('phase must be mapping or mission')
+        self.default_navigation_profile = self.p['navigation_profile']
         self.lock = threading.Lock()
         self.control_lock = threading.Lock()
         self.trial_fault = None
@@ -75,8 +80,10 @@ class Console(ScanFilterSettings, Workflow, Node):
         self.state = {'state':'WAITING','reason':'Waiting for mission status',
                       'target':None,'home':None}
         self.map_data = None
+        self.navigation_grid_resolution = None
         self.map_revision = 0
         self.target_estimate = None
+        self.visual = VisualTelemetry()
         self.route = self.path = []
         self.local_path=[]
         self.local_path_time=-math.inf
@@ -97,7 +104,7 @@ class Console(ScanFilterSettings, Workflow, Node):
         self.listener = TransformListener(self.tf,self)
         self.manual_pub = self.create_publisher(Twist,'/project/manual_cmd_vel',10)
         self.initial_pub = self.create_publisher(PoseWithCovarianceStamped,'/initialpose',10)
-        self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop','start_waypoint')}
+        self.command_clients = {k:self.create_client(Trigger,'/project/'+k) for k in ('start','stop','start_waypoint','return_home')}
         node_names=set(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.)))
         node_names.update(parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.), 'mission'))
         node_names.update(gap.parameter_plan(False,'mapping'))
@@ -107,17 +114,24 @@ class Console(ScanFilterSettings, Workflow, Node):
             (name,operation):self.create_client(kind,f'/{name}/{operation}')
             for name in node_names for operation,kind in [
                 ('get_parameters',GetParameters),('set_parameters_atomically',SetParametersAtomically)]}
+        self.parameter_clients[('slam_toolbox','get_parameters')]=self.create_client(GetParameters,'/slam_toolbox/get_parameters')
         self.init_workflow()
         self.init_scan_filter()
+        self.init_slam_settings()
+        self.init_recovery()
+        self.init_attitude()
         self.gate_status = None
         self.create_subscription(String, '/project/velocity_gate_status', self.on_gate_status, 10)
         self.create_subscription(String,'/project/mission_status',self.on_status,LATCHED)
         self.create_subscription(String,'/project/perception_status',self.on_perception_status,10)
         self.create_subscription(String,'/project/target_estimate',self.on_target_estimate,LATCHED)
+        self.create_subscription(String,'/project/target_detections',self.on_visual_detections,10)
+        self.create_subscription(String,'/project/localization_diagnostics',self.on_visual_diagnostics,20)
         self.create_subscription(LaserScan,'/scan_fixed',lambda m:self.mark('Lidar'),qos_profile_sensor_data)
         self.create_subscription(Float32,'/power_voltage',self.on_voltage,qos_profile_sensor_data)
         self.create_subscription(PoseWithCovarianceStamped,'/amcl_pose',self.on_amcl,10)
         self.create_subscription(OccupancyGrid,'/map',self.on_map,LATCHED)
+        self.create_subscription(OccupancyGrid,'/project/navigation_map',self.on_navigation_grid,LATCHED)
         self.create_subscription(NavPath,'/project/search_path',self.on_route,LATCHED)
         self.create_subscription(NavPath,'/plan',self.on_path,10)
         self.create_subscription(NavPath,'/local_plan',self.on_local_path,10)
@@ -163,10 +177,13 @@ class Console(ScanFilterSettings, Workflow, Node):
                     return self.reply(200,node.snapshot())
                 if path=='/api/labels':
                     return self.reply(200,node.model_labels.read())
-                if path in ('/api/trial','/api/gap','/api/scan_filter'):
+                if path in ('/api/trial','/api/gap','/api/scan_filter','/api/slam_settings','/api/attitude','/api/recovery'):
                     try:
                         with node.control_lock:
-                            data = (node.scan_filter_settings() if path=='/api/scan_filter' else
+                            data = (node.recovery_settings() if path=='/api/recovery' else
+                                    node.slam_settings() if path=='/api/slam_settings' else
+                                    node.attitude_settings() if path=='/api/attitude' else
+                                    node.scan_filter_settings() if path=='/api/scan_filter' else
                                     node.trial_settings() if path=='/api/trial' else node.gap_settings())
                         return self.reply(200,data)
                     except (RuntimeError,ValueError) as exc:
@@ -244,6 +261,11 @@ class Console(ScanFilterSettings, Workflow, Node):
                 if state['state'] != self.state['state']:
                     self.events.appendleft({'time':time.strftime('%H:%M:%S'),
                                              'state':state['state'],'reason':state['reason']})
+                if state.get('started_stamp',0) and (state.get('started_stamp')!=self.state.get('started_stamp')
+                        or state.get('search_epoch',0)!=self.state.get('search_epoch',0)):
+                    self.target_estimate=None
+                    if hasattr(self,'visual'):
+                        self.visual.reset(float(state.get('epoch_started_stamp',state['started_stamp'])))
                 self.state = state
                 self.freshness['Mission'] = time.monotonic()
             self.workflow_status(state)
@@ -255,11 +277,32 @@ class Console(ScanFilterSettings, Workflow, Node):
             self.amcl_covariance = [msg.pose.covariance[i] for i in (0,7,35)]
             self.freshness['AMCL'] = time.monotonic()
 
+    def on_visual_detections(self,msg):
+        try:
+            data=json.loads(msg.data)
+            if not isinstance(data,dict):return
+            with self.lock:
+                if self.p['phase']=='mission':
+                    self.visual.ingest(data,self.get_clock().now().nanoseconds*1e-9,
+                        self.mission_options.get('target_class',self.state.get('target_class','')))
+        except (ValueError,TypeError,KeyError,AttributeError):pass
+
+    def on_visual_diagnostics(self,msg):
+        try:
+            data=json.loads(msg.data)
+            if not isinstance(data,dict):return
+            with self.lock:
+                if self.p['phase']=='mission':self.visual.ingest_diagnostic(data,self.get_clock().now().nanoseconds*1e-9)
+        except (ValueError,TypeError,KeyError,AttributeError):pass
+
     def on_target_estimate(self, msg):
         try:
             data=json.loads(msg.data)
             if (self.retry_after_stamp>-math.inf
                     and float(data.get('mission_stamp',-math.inf))<=self.retry_after_stamp):return
+            if self.state.get('started_stamp',0) and (data.get('mission_stamp')!=self.state['started_stamp']
+                    or data.get('search_epoch',0)!=self.state.get('search_epoch',0)):
+                return
             if data.get('available') is False:
                 with self.lock:self.target_estimate=None
                 return
@@ -272,13 +315,28 @@ class Console(ScanFilterSettings, Workflow, Node):
 
     def displayed_target_estimate(self):
         target=self.state.get('target')
-        if target and target.get('estimator')=='map-constrained MMSE':
-            return dict(target,label=target['class'],method=target['estimator'],
-                        stamp=target['observation_stamp'],confirmed=True,stable=True,
-                        age=max(0.,self.get_clock().now().nanoseconds*1e-9-target['observation_stamp']),
-                        samples=target.get('confirmation_frames',4),stale=False,frame_id='map')
+        if (target and target.get('estimator')=='map-constrained MMSE'
+                and all(isinstance(target.get(k),(int,float)) and not isinstance(target[k],bool)
+                        and math.isfinite(target[k]) for k in ('x','y','observation_stamp'))):
+            age=max(0.,self.get_clock().now().nanoseconds*1e-9-target['observation_stamp'])
+            sources=target.get('source_frames')
+            if isinstance(sources,list):
+                count=len({v for v in sources if isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v)})
+            else:
+                count=next((target[k] for k in ('frames','samples','confirmation_frames')
+                    if isinstance(target.get(k),int) and not isinstance(target[k],bool) and target[k]>0),None)
+            reported=self.state.get('target_reported',True) is True
+            result=dict(target,label=target['class'],method=target['estimator'],
+                        stamp=target['observation_stamp'],confirmed=reported,display_only=not reported,
+                        stable=target.get('measurement_stable',target.get('stable',target.get('quality')=='preferred_precision')),
+                        age=age,stale=age>2.,frame_id='map')
+            if count is not None:result.update(samples=count,frames=count)
+            return result
         if not self.target_estimate:return None
         data=self.target_estimate
+        if self.state.get('started_stamp',0) and (data.get('mission_stamp')!=self.state['started_stamp']
+                or data.get('search_epoch',0)!=self.state.get('search_epoch',0)):
+            return None
         age=self.get_clock().now().nanoseconds*1e-9-data['stamp']
         if not data.get('confirmed') and not 0<=age<=30:return None
         return dict(data,age=max(0.,age),stale=not data.get('confirmed') and age>2.)
@@ -292,6 +350,7 @@ class Console(ScanFilterSettings, Workflow, Node):
     def on_map(self,msg):
         with self.lock:
             self.target_estimate=None
+            if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
             self.map_revision += 1
             origin = msg.info.origin
             self.map_data = {'width':msg.info.width,'height':msg.info.height,
@@ -305,6 +364,10 @@ class Console(ScanFilterSettings, Workflow, Node):
         if self.retry_after_stamp>-math.inf and stamp_seconds(msg.header.stamp)<=self.retry_after_stamp:return
         with self.lock:
             self.route = [[p.pose.position.x,p.pose.position.y] for p in msg.poses]
+
+    def on_navigation_grid(self,msg):
+        with self.lock:
+            self.navigation_grid_resolution = msg.info.resolution
 
     def on_path(self,msg):
         if self.retry_after_stamp>-math.inf and stamp_seconds(msg.header.stamp)<=self.retry_after_stamp:return
@@ -335,6 +398,8 @@ class Console(ScanFilterSettings, Workflow, Node):
             if not isinstance(status,dict):return
             with self.lock:
                 self.navigation_status=status
+                if type(status.get('allow_reverse_recovery')) is bool:
+                    self.recovery_live=status['allow_reverse_recovery']
                 self.freshness['Navigation']=time.monotonic()
         except (ValueError,TypeError):
             pass
@@ -391,16 +456,22 @@ class Console(ScanFilterSettings, Workflow, Node):
                     'calibration_file':self.p['calibration_file'] or None,
                     'velocity_gate': self.gate_status,
                     'target_estimate': self.displayed_target_estimate(),
+                    'target_preview':self.visual.displayed_preview(self.get_clock().now().nanoseconds*1e-9),
+                    'perception_details':self.visual.snapshot(self.get_clock().now().nanoseconds*1e-9),
                     'map_revision':self.map_revision,'route':self.route,'path':self.path,
                     'local_path':self.local_path if now-self.local_path_time<=1.5 else [],
                     'travelled_path':list(self.travelled),
                     'footprint_radius':FOOTPRINT_RADIUS,'robot_geometry':geometry_metadata(),
                     'navigation':self.navigation_status,
                     'scan_filter':self.scan_filter_snapshot(),
+                    'slam_settings':self.slam_settings_snapshot(),
+                    'recovery':self.recovery_snapshot(),
+                    'return_home_supported':self.p['phase'] in ('mapping','mission'),
+                    'attitude':self.attitude_snapshot(),
                     'simulation_motion':self.simulation_motion if hasattr(self,'simulation_robot') else None,
                     'health':health,'amcl_covariance':self.amcl_covariance,
                     'camera_source':self.image_source(),'events':list(self.events),
-                    'control_fault':self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault,
+                    'control_fault':self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault,
                     **self.workflow_snapshot(),
                     'battery':{'voltage':self.battery_voltage,
                                'age':round(battery_age,1) if math.isfinite(battery_age) else None,
@@ -451,7 +522,8 @@ class Console(ScanFilterSettings, Workflow, Node):
         return all(math.isclose(actual[name][key],value,abs_tol=1e-8)
                    for name,entries in expected.items() for key,value in entries.items())
 
-    def trial_settings(self, values=None):
+    def trial_settings(self, values=None, *, save=True):
+        supplied = values
         if self.p['phase'] not in ('mapping', 'mission'):
             raise ValueError('Navigation profiles require mapping or mission mode')
         if values is not None:
@@ -466,6 +538,12 @@ class Console(ScanFilterSettings, Workflow, Node):
             self.manual_pub.publish(Twist())
         original = self.read_trial_nodes()
         if values is not None:
+            if 'lookahead_dist' not in supplied:
+                values['lookahead_dist'] = original['controller_server']['FollowPath.lookahead_dist']
+            if 'corner_lookahead_dist' not in supplied:
+                values['corner_lookahead_dist'] = original['controller_server']['FollowPath.corner_lookahead_dist']
+            if 'alignment_angle' not in supplied:
+                values['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
             expected = parameter_plan(values, self.p['phase'])
             attempted = []
             try:
@@ -475,6 +553,8 @@ class Console(ScanFilterSettings, Workflow, Node):
                 actual = self.read_trial_nodes()
                 if not self.trial_matches(actual,expected):
                     raise RuntimeError('Requested settings did not match live readback')
+                if save:
+                    self.save_navigation_settings('trial', values)
             except Exception as exc:
                 restored = True
                 for name in reversed(attempted):
@@ -492,21 +572,25 @@ class Console(ScanFilterSettings, Workflow, Node):
             self.trial_fault = None
         gate = original['project_velocity_gate']
         current = {key:gate[key] for key in ('max_linear','max_angular')}
+        current['lookahead_dist'] = original['controller_server']['FollowPath.lookahead_dist']
+        current['corner_lookahead_dist'] = original['controller_server']['FollowPath.corner_lookahead_dist']
+        current['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
         current['goal_timeout'] = original['project_mapper' if self.p['phase']=='mapping' else 'project_mission']['goal_timeout']
-        return {'success':True,'values':current,
+        defaults = validate_trial(dict(PROFILES[self.default_navigation_profile],
+                                       goal_timeout=75. if self.p['phase']=='mission' else 60.))
+        return {'success':True,'values':current,'defaults':defaults,
                 'limits':{key:dict(min=v[0],max=v[1],step=v[2],unit=v[3]) for key,v in LIMITS.items()},
                 'protection':{key:gate[key] for key in ('stop_distance','rotation_clearance')},
                 'synchronized':self.trial_matches(original,parameter_plan(current, self.p['phase'])),
-                'fault':self.trial_fault,'temporary':True,
-                'message':'Trial settings applied and verified; temporary until restart' if values is not None else ''}
+                'fault':self.trial_fault,'temporary':False,
+                'message':'Navigation settings applied and saved' if values is not None and save else ''}
 
     def read_gap_nodes(self):
         result = {}
         for name, entries in gap.parameter_plan(False,self.p['phase']).items():
             names = list(entries)
             if name in gap.COSTMAPS:
-                names += ['footprint','footprint_padding','resolution',
-                          'inflation_layer.enabled','inflation_layer.inflation_radius']
+                names += ['footprint','resolution','inflation_layer.enabled']
             elif name=='controller_server':
                 names += ['progress_checker.plugin']
             response = self.parameter_request(name,'get_parameters',GetParameters.Request(names=names))
@@ -520,11 +604,14 @@ class Console(ScanFilterSettings, Workflow, Node):
                     raise RuntimeError(f'{name}: invalid {key} readback')
         return result
 
-    def gap_settings(self, enabled=None, audacity=None):
+    def gap_settings(self, enabled=None, audacity=None, tuning=None, *, save=True):
         phase = self.p['phase']
-        changing = enabled is not None or audacity is not None
+        saved_policy = self.navigation_settings.get('gap')
+        changing = enabled is not None or audacity is not None or tuning is not None
         if audacity is not None:
             gap.validate_audacity(audacity)
+        if tuning is not None:
+            tuning = gap.validate_tuning(tuning)
         if changing:
             with self.lock:
                 idle = self.state['state'] in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL','WAYPOINT_REACHED')
@@ -535,7 +622,7 @@ class Console(ScanFilterSettings, Workflow, Node):
             self.manual_pub.publish(Twist())
         try:
             original = self.read_gap_nodes()
-            current = gap.describe(original,phase)  # reject unsupported geometry before any write
+            current = gap.describe(original,phase,saved_policy)
         except (RuntimeError,ValueError) as exc:
             if not self.gap_reapply_required:
                 self.gap_fault = 'Gap policy unavailable; driving locked: '+str(exc)
@@ -545,7 +632,11 @@ class Console(ScanFilterSettings, Workflow, Node):
                 enabled = current['enabled']
                 if enabled is None:
                     raise ValueError('Reapply both audacity and narrow-gap blocking to synchronize settings')
-            expected = gap.parameter_plan(enabled,phase,audacity or current['audacity'] or gap.DEFAULT_AUDACITY)
+            policy = dict(enabled=enabled, audacity=audacity or current['audacity'] or gap.DEFAULT_AUDACITY)
+            overrides = tuning if tuning is not None else current['tuning']['overrides']
+            if overrides:
+                policy['tuning'] = overrides
+            expected = gap.parameter_plan(phase=phase, **policy)
             attempted = []
             try:
                 for name,entries in expected.items():
@@ -554,7 +645,9 @@ class Console(ScanFilterSettings, Workflow, Node):
                 actual = self.read_gap_nodes()
                 if not self.trial_matches(actual,expected):
                     raise RuntimeError('Gap settings differ from live readback')
-                gap.describe(actual,phase)
+                gap.describe(actual,phase,policy)
+                if save:
+                    self.save_navigation_settings('gap', policy)
             except Exception as exc:
                 restored = True
                 for name in reversed(attempted):
@@ -567,28 +660,35 @@ class Console(ScanFilterSettings, Workflow, Node):
                     restored = self.read_gap_nodes()==original and restored
                 except Exception:
                     restored = False
-                self.gap_fault = None if restored and gap.describe(original,phase)['synchronized'] else 'Gap update/rollback unverified; driving locked; reapply gap policy'
+                self.gap_fault = None if restored and current['synchronized'] else 'Gap update/rollback unverified; driving locked; reapply gap policy'
                 self.gap_reapply_required = self.gap_fault is not None
                 raise RuntimeError(str(exc)+('; original values restored' if restored else '; driving locked')) from exc
             original = actual
+            saved_policy = policy
             self.gap_fault = None
             self.gap_reapply_required = False
-        data = gap.describe(original,phase)
+        data = gap.describe(original,phase,saved_policy)
         if not data['synchronized']:
             self.gap_fault = 'Gap parameters differ across nodes; driving locked; reapply gap policy'
             self.gap_reapply_required = True
         elif not self.gap_reapply_required:
             self.gap_fault = None
-        data.update(success=True,fault=self.gap_fault,
-                    message='Navigation policy applied and verified; temporary until restart' if changing else '')
+        data.update(success=True,fault=self.gap_fault,temporary=False,
+                    message='Navigation policy applied and saved' if changing and save else '')
         return data
 
     def command(self,path,body,expected_generation=None):
         request_generation=self.control_generation if expected_generation is None else expected_generation
         if not isinstance(body,dict):
             raise ValueError('Request must be a JSON object')
+        if path=='/api/attitude':
+            return self.attitude_settings(body,request_generation)
+        if path=='/api/recovery':
+            return self.recovery_settings(body,request_generation)
         if path=='/api/scan_filter':
             return self.scan_filter_settings(body,request_generation)
+        if path=='/api/slam_settings':
+            return self.slam_settings(body,request_generation)
         if path == '/api/calibration_target':
             return self.set_calibration_target(body)
         workflow=self.workflow_command(path,body)
@@ -600,12 +700,12 @@ class Console(ScanFilterSettings, Workflow, Node):
             raise ValueError('Wait for the stage transition to finish')
         with self.lock:
             state = self.state['state']
-            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','VERIFYING_HOME','MAPPING','SAVING','ACQUIRING','LOCALIZING','RECOVERING')
-        if path in ('/api/start','/api/stop'):
+            active = state in ('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING','VERIFYING','VERIFYING_HOME','MAPPING','SAVING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING')
+        if path in ('/api/start','/api/stop','/api/return_home'):
             key = path.rsplit('/',1)[-1]
             start_generation=request_generation
             def stopped_during_start(reissue=False):
-                if key!='start' or self.control_generation==start_generation:return None
+                if key not in ('start','return_home') or self.control_generation==start_generation:return None
                 if reissue:
                     # One final Stop is ordered after the late Start response.
                     # Do not recurse into setup or retry a Start in the background.
@@ -618,11 +718,23 @@ class Console(ScanFilterSettings, Workflow, Node):
                             self.workflow_fault='Stop after a delayed Start could not be confirmed; inspect robot status'
                     else:
                         self.workflow_fault='Stop service unavailable after a delayed Start; inspect robot status'
-                return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
-            if key=='start' and not self.p['allow_motion']:
+                return dict(success=False,message=('Start' if key=='start' else 'Return to home')+' canceled by Stop',canceled_by_stop=True)
+            if key in ('start','return_home') and not self.p['allow_motion']:
                 raise ValueError('Motion disabled in this console')
-            if key=='start' and (self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault):
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault)
+            if key in ('start','return_home') and (self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault):
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault)
+            if key=='return_home':
+                if body:raise ValueError('Return uses the recorded home; provide no coordinates')
+                if self.p['phase'] not in ('mapping','mission') or not self.state.get('home'):
+                    raise ValueError('No recorded home; start mapping or a mission first')
+                if time.monotonic()-self.freshness.get('Mission',-math.inf)>2.:
+                    raise ValueError('Mission status is stale; return was not started')
+                if self.state.get('navigation_lock_reason') or self.navigation_status.get('locked'):
+                    raise ValueError('Navigation is locked; return was not started')
+                research_cancel = (self.p['phase']=='mission' and state=='CANCELING'
+                                   and self.state.get('pending_action')=='RESEARCH')
+                if state=='SAVING' or (state=='CANCELING' and not research_cancel):
+                    raise ValueError('Wait for cancellation or map saving to finish')
             if key=='start':
                 record=self.record.snapshot()
                 if record['interrupted'] or record['finished'] is not None:
@@ -689,8 +801,8 @@ class Console(ScanFilterSettings, Workflow, Node):
         if path=='/api/map_waypoint':
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Mapping waypoints are available only while stage 1 is stopped')
-            if self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault:
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault)
             record=self.record.snapshot()
             if record['interrupted'] or record['finished'] is not None:
                 raise ValueError('Begin a new trial before waypoint mapping')
@@ -728,13 +840,18 @@ class Console(ScanFilterSettings, Workflow, Node):
             if result.success:self.record.start('mapping')
             return dict(success=result.success,message=result.message)
         if path=='/api/gap':
-            if not body or set(body)-{'enabled','audacity'}:
-                raise ValueError('Provide enabled: true/false and/or audacity: cautious/balanced/bold')
+            if self.stage:
+                if set(body) != {'tuning'}:
+                    raise ValueError('Provide manual clearance settings')
+                return self.gap_settings(False,gap.DEFAULT_AUDACITY,gap.validate_tuning(body['tuning']))
+            if not body or set(body)-{'enabled','audacity','tuning'}:
+                raise ValueError('Provide narrow-gap blocking, an audacity preset or clearance settings')
             if 'enabled' in body and type(body['enabled']) is not bool:
                 raise ValueError('enabled must be true or false')
             if 'audacity' in body:
                 gap.validate_audacity(body['audacity'])
-            return self.gap_settings(body.get('enabled'),body.get('audacity'))
+            tuning = gap.validate_tuning(body['tuning']) if 'tuning' in body else None
+            return self.gap_settings(body.get('enabled'),body.get('audacity'),tuning)
         if path=='/api/initial_pose':
             if active or self.p['phase'] not in ('mission','calibration'):
                 raise ValueError('Initial pose is only available before the autonomous mission')
@@ -764,16 +881,18 @@ class Console(ScanFilterSettings, Workflow, Node):
             set_yaw(msg.pose.pose.orientation,yaw)
             msg.pose.covariance[0] = msg.pose.covariance[7] = 0.04
             msg.pose.covariance[35] = 0.12
-            if self.stage and self.state.get('home') is not None:
+            if (self.stage and self.state.get('home') is not None
+                    and not (self.state.get('state')=='WAITING' and self.state.get('started_stamp')==0.)):
                 raise ValueError('Initial pose is locked after the autonomous mission begins')
             self.initial_pub.publish(msg)
             with self.lock:
                 self.target_estimate=None
+                if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
             self.initial_pose_sent=True
             return {'success':True,'message':'Assigned initial pose sent to AMCL'}
         if path=='/api/teleop':
-            if self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault:
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.scan_filter_fault or self.recovery_fault)
             if self.p['phase']!='mapping' or active or not self.p['allow_motion']:
                 raise ValueError('Manual driving is restricted to the mapping stage')
             x,z = float(body.get('linear',0)),float(body.get('angular',0))
@@ -784,11 +903,17 @@ class Console(ScanFilterSettings, Workflow, Node):
                     if time.monotonic()-self.freshness.get('Mission',-math.inf)>2:
                         raise ValueError('Mapping status is stale; manual motion is locked')
                 self.record.start('mapping')
+                # Further manual exploration invalidates the saved snapshot
+                # as the current map, while keeping it in the map library.
+                with self.lock:
+                    self.saved_map = None
             self.manual = (max(-0.10,min(0.10,x)),max(-0.35,min(0.35,z)),time.monotonic())
             return {'success':True}
         if path=='/api/save_map':
             if self.p['phase']!='mapping' or active:
                 raise ValueError('Map saving is only available during the mapping stage')
+            if time.monotonic()-self.freshness.get('Map',-math.inf)>8.:
+                raise ValueError('Wait for a fresh SLAM map before saving')
             self.manual = (0.,0.,0.)
             self.manual_pub.publish(Twist())
             saved = save_new_map(self.p['map_directory'])

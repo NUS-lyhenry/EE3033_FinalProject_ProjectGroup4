@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "angles_degrees": [0, 15, 30, 45],
+  "observation_sides": ["one", "two"],
+  "resolution": 0.05,
+  "beams": 450,
+  "mask_radius": 0.20,
+  "opening_width": 0.30,
+  "comparison_opening_width": 0.35,
+  "description": "Frozen continuous thin partition with a real doorway. Rotate the complete room and fixture poses together. Ground truth is evaluator-only."
+}

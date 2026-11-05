@@ -77,9 +77,10 @@ def test_measured_width_controls_optional_side_reserve_but_not_circle(measured_b
     assert data['geometry']['width']==.18
     assert data['footprint']==.116801
     assert data['reserved_radius']==pytest.approx(.17)
-    assert data['disabled_plan']['global_costmap/global_costmap']['robot_radius']==.106801
+    assert data['disabled_plan']['global_costmap/global_costmap']['robot_radius']==.10
     assert data['enabled_plan']['global_costmap/global_costmap']['robot_radius']==pytest.approx(.17)
-    assert 'footprint_radius' not in data['disabled_plan']['project_velocity_gate']
+    assert data['disabled_plan']['project_velocity_gate']['footprint_radius']==data['footprint']
+    assert data['enabled_plan']['project_velocity_gate']['footprint_radius']==data['footprint']
 
 
 def test_fresh_native_corridor_may_override_only_the_soft_margin(measured_boundaries):

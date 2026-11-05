@@ -77,14 +77,15 @@ def test_no_safe_space_cannot_be_reported_as_completed_mapping():
 
 def test_bold_frontier_goal_has_complete_footprint_clearance_from_unknown_cells():
     from ee3033_project.motion_safety import polyline_map_clearance
-    from ee3033_project.path_validation import safe_grid
+    from ee3033_project.path_validation import safe_grid,path_search_grid
     grid=np.full((60,60),-1,dtype=int)
     grid[5:55,5:35]=0
     goal,count=frontier_goal(grid,.05,(0,0,0),(.8,1.2,0),clearance=.14)
     assert goal is not None and count>0
     assert polyline_map_clearance(grid,.05,(0,0,0),[goal[:2]]).allowed
-    planner=CoveragePlanner(grid,.05,(0,0,0),clearance=.14)
-    assert safe_grid(grid,.05)[planner.world_to_cell(*goal[:2])]
+    refined,res,_=path_search_grid(grid,.05)
+    planner=CoveragePlanner(refined,res,(0,0,0),clearance=.14)
+    assert safe_grid(refined,res)[planner.world_to_cell(*goal[:2])]
 
 
 def test_robot_footprint_touching_wall_cannot_snap_to_a_nearby_safe_component():

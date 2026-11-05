@@ -10,6 +10,8 @@ import pytest
 
 from ee3033_project.core import quaternion_yaw,stamp_seconds
 from ee3033_project.stationary import StationaryWindow
+from ee3033_project.navigation_supervision import wrap
+from ee3033_project.mapping_heading import mapping_tangent_tree, MAPPING_PLANNER_ID, terminal_path_yaw
 
 
 ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
@@ -18,7 +20,8 @@ ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 def load_supervisor(clock=time):
     source=ROOT/'navigation_supervisor.py'
     cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef))
-    env=dict(Node=object,time=clock,threading=threading,math=math,StationaryWindow=StationaryWindow,
+    env=dict(Node=object,time=clock,threading=threading,math=math,wrap=wrap,StationaryWindow=StationaryWindow,
+             mapping_tangent_tree=mapping_tangent_tree,
              rclpy=NS(ok=lambda:True),stamp_seconds=stamp_seconds,quaternion_yaw=quaternion_yaw,
              GoalStatus=NS(STATUS_SUCCEEDED=4,STATUS_CANCELED=5,STATUS_ABORTED=6),
              NavigateToPose=NS(Result=object))
@@ -28,6 +31,16 @@ def load_supervisor(clock=time):
 
 def completed(value):
     future=Future();future.set_result(value);return future
+
+
+@pytest.mark.parametrize('distance,yaw,arrived',[(.10,0.,False),(.026,0.,False),(.02,0.,True),(.02,.11,False)])
+def test_short_approach_requires_actual_translation_before_arrival(distance,yaw,arrived):
+    cls=load_supervisor();node=cls.__new__(cls)
+    node.pose=lambda:(0.,0.,0.);node.p={'xy_tolerance':.12}
+    q=NS(x=0.,y=0.,z=math.sin(yaw/2),w=math.cos(yaw/2))
+    request=NS(behavior_tree='navigate_approach.xml',
+        pose=NS(pose=NS(position=NS(x=distance,y=0.),orientation=q)))
+    assert node.reached_goal(request) is arrived
 
 
 def action_fixture():
@@ -112,9 +125,10 @@ def stationary_fixture(moving):
     return supervisor,clock
 
 
-def test_zero_reported_twist_does_not_prove_stationary_when_actual_yaw_changes():
+def test_yaw_changes_do_not_prevent_position_only_hold():
     supervisor,_=stationary_fixture(True)
-    assert not supervisor.stationary(None), 'Changing odometry pose must prevent a false stop confirmation'
+    assert supervisor.stationary(None)
+    assert supervisor.status['stationary_check']['position_only']
 
 
 def test_stationary_window_has_at_least_half_a_second_of_actual_pose():
@@ -206,6 +220,7 @@ def load_planner():
     env=dict(Node=object,time=time,threading=threading,rclpy=NS(ok=lambda:True),
         GoalStatus=NS(STATUS_SUCCEEDED=4,STATUS_CANCELED=5,STATUS_ABORTED=6),
         ComputePathToPose=NS(Result=result))
+    env.update(MAPPING_PLANNER_ID=MAPPING_PLANNER_ID,terminal_path_yaw=terminal_path_yaw,quaternion_yaw=quaternion_yaw)
     exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),env)
     return env['PathPlanner']
 
@@ -250,7 +265,7 @@ def test_planner_result_transport_failure_does_not_confirm_action_terminal():
 def planner_terminal_fixture():
     planner,context=planner_fixture();events=[];published=[]
     key=b'\x01'*16
-    handle=NS(goal_id=NS(uuid=list(key)),is_cancel_requested=False,is_active=True,
+    handle=NS(goal_id=NS(uuid=list(key)),request=NS(planner_id='GridBased'),is_cancel_requested=False,is_active=True,
         succeed=lambda:events.append('succeeded'),abort=lambda:events.append('aborted'),
         canceled=lambda:events.append('canceled'))
     planner.contexts={key:context};planner.publisher=NS(publish=published.append)
@@ -287,6 +302,35 @@ def test_final_map_revision_check_is_atomic_with_route_publication():
 
 
 def test_a_fresh_validated_route_can_still_be_published():
-    planner,context,handle,events,published=planner_terminal_fixture();path=object()
+    planner,context,handle,events,published=planner_terminal_fixture()
+    path=NS(poses=[NS(pose=NS(orientation=NS(x=0.,y=0.,z=0.,w=1.)))])
     result=planner.terminal(handle,'Validated',path=path,validated_revision=1,cost_stamp=100.)
     assert published==[path] and events==['succeeded'] and result.path is path
+
+
+@pytest.mark.parametrize('tree,robot_yaw,received_offset,endpoint,expected',[
+    ('navigate_mapping.xml',0.,0.,(.5,0.),True),
+    ('navigate_mapping.xml',math.pi/2,0.,(.5,0.),True),
+    ('navigate_mapping.xml',0.,-4.,(.5,0.),False),
+    ('navigate_mapping.xml',0.,0.,(.6,0.),False),
+    ('navigate_observation.xml',0.,0.,(.5,0.),False),
+    ('navigate_observation.xml',math.pi/2,0.,(.5,0.),True),
+])
+def test_mapping_arrival_requires_fresh_matching_route_but_accepts_any_yaw(tree,robot_yaw,received_offset,endpoint,expected):
+    cls=load_supervisor();node=cls.__new__(cls);now=time.monotonic()
+    node.guard=threading.RLock();node.pose=lambda:(.5,0.,robot_yaw);node.p={'xy_tolerance':.12}
+    node.path=[(0.,0.),endpoint];node.path_goal_yaw=0.
+    node.path_received=now+received_offset;node.goal_accepted_at=now-.1
+    q=NS(x=0.,y=0.,z=math.sin(math.pi/4),w=math.cos(math.pi/4))
+    request=NS(behavior_tree=tree,pose=NS(pose=NS(position=NS(x=.5,y=0.),orientation=q)))
+    assert node.reached_goal(request) is expected
+
+
+@pytest.mark.parametrize('distance,expected',[(.12,True),(.121,False)])
+def test_mapping_position_tolerance_still_requires_translation(distance,expected):
+    cls=load_supervisor();node=cls.__new__(cls)
+    node.p={'xy_tolerance':.12};node.pose=lambda:(0.,0.,math.pi)
+    node.mapping_target_heading=lambda request:0.
+    request=NS(behavior_tree='navigate_mapping.xml',pose=NS(pose=NS(
+        position=NS(x=distance,y=0.),orientation=NS(x=0.,y=0.,z=0.,w=1.))))
+    assert node.reached_goal(request) is expected

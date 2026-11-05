@@ -105,7 +105,7 @@ class ConsoleTests(unittest.TestCase):
              Parameter('max_linear',value=.12),Parameter('max_angular',value=.4)])
         mapper=Mapper()
         controller=Node('controller_server')
-        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.)
+        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.,lookahead_dist=.18,corner_lookahead_dist=.08,alignment_angle=.35)
         for key,value in parameter_plan(initial)['controller_server'].items():
             controller.declare_parameter(key,value)
         supervisor=Node('project_navigation_supervisor')
@@ -135,13 +135,13 @@ class ConsoleTests(unittest.TestCase):
                 time.sleep(.05)
             state=json.load(urlopen(base+'/api/trial',timeout=12))
             self.assertEqual(state['values'],initial)
-            changed=dict(max_linear=.18,max_angular=.6,goal_timeout=90.)
+            changed=dict(max_linear=.30,max_angular=1.0,goal_timeout=300.,lookahead_dist=.18,corner_lookahead_dist=.10,alignment_angle=.10)
             response=post(changed)
             self.assertTrue(response['synchronized'])
             self.assertEqual(response['values'],changed)
             time.sleep(.2)
-            self.assertEqual(gate.p['max_linear'],.18)
-            self.assertEqual(mapper.p['goal_timeout'],90.)
+            self.assertEqual(gate.p['max_linear'],.30)
+            self.assertEqual(mapper.p['goal_timeout'],300.)
             self.assertEqual(gate.p['rotation_clearance'],gap.TURNING['bold']['stop'])
             with self.assertRaises(HTTPError):
                 post({**changed,'max_linear':1.})
@@ -151,6 +151,16 @@ class ConsoleTests(unittest.TestCase):
                 post(initial)
             self.assertEqual(json.load(urlopen(base+'/api/trial',timeout=12))['values'],changed)
             self.assertIsNone(console.trial_fault)
+            # Speed-only clients preserve tracking; profiles must not silently reset it.
+            legacy=post(dict(max_linear=.16,max_angular=.6,goal_timeout=60.))
+            self.assertEqual(legacy['values']['lookahead_dist'],.18)
+            self.assertEqual(legacy['values']['corner_lookahead_dist'],.10)
+            self.assertEqual(legacy['values']['alignment_angle'],.10)
+            live=console.read_trial_nodes()['controller_server']
+            self.assertEqual(live['FollowPath.min_lookahead_dist'],.18)
+            self.assertEqual(live['FollowPath.max_lookahead_dist'],.18)
+            with self.assertRaises(HTTPError):
+                post(dict(changed,alignment_angle=.01))
             for timer in mapper.timers:
                 timer.cancel()
             mapper.state='MAPPING'
@@ -204,7 +214,8 @@ class ConsoleTests(unittest.TestCase):
                 namespace,node_name=name.split('/')
                 node=Node(node_name,namespace=namespace)
                 for key,value in dict(robot_radius=gap.BASE_RADIUS,footprint='[]',footprint_padding=.01,resolution=.05,
-                        **{'inflation_layer.enabled':True,'inflation_layer.inflation_radius':.24}).items():
+                        **{'inflation_layer.enabled':True,
+                           'inflation_layer.inflation_radius':gap.parameter_plan(False,phase)[name]['inflation_layer.inflation_radius']}).items():
                     node.declare_parameter(key,value)
                 costmaps.append(node)
             costmaps[-1].add_on_set_parameters_callback(accept)
@@ -213,9 +224,10 @@ class ConsoleTests(unittest.TestCase):
             for node in nodes: executor.add_node(node)
             thread=threading.Thread(target=executor.spin,daemon=True);thread.start()
             base=f'http://127.0.0.1:{console.p["port"]}'
-            def post(value,token=console.token,audacity=None):
+            def post(value,token=console.token,audacity=None,tuning=None):
                 body={'enabled':value}
                 if audacity is not None: body['audacity']=audacity
+                if tuning is not None: body['tuning']=tuning
                 request=Request(base+'/api/gap',json.dumps(body).encode(),
                     {'Content-Type':'application/json','X-Project-Token':token},method='POST')
                 return json.load(urlopen(request,timeout=20))
@@ -238,13 +250,13 @@ class ConsoleTests(unittest.TestCase):
                 self.assertFalse(defaults['enabled'])
                 self.assertEqual(defaults['audacity'],'bold')
                 self.assertTrue(defaults['synchronized'])
-                self.assertAlmostEqual(consumer.get_parameter('clearance').value,.14)
+                self.assertAlmostEqual(consumer.get_parameter('clearance').value,gap.DEFAULT_CLEARANCE)
                 with self.assertRaises(HTTPError): post(True,token='')
                 for invalid in (None,1,'true'):
                     with self.assertRaises(HTTPError): post(invalid)
                 with self.assertRaises(HTTPError): post(False,audacity='fast')
                 for enabled in (False,True):
-                    for level,clearance in [('cautious',.22),('balanced',.18),('bold',.14)]:
+                    for level,clearance in [('cautious',.10),('balanced',.08),('bold',.04)]:
                         response=post(enabled,audacity=level)
                         self.assertEqual(response['audacity'],level)
                         self.assertTrue(response['synchronized'])
@@ -256,6 +268,9 @@ class ConsoleTests(unittest.TestCase):
                         for node in costmaps:
                             self.assertAlmostEqual(node.get_parameter('robot_radius').value,
                                                    gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)
+                            self.assertAlmostEqual(node.get_parameter('inflation_layer.inflation_radius').value,
+                                max(gap.DEFAULT_INFLATION_RADIUS,
+                                    (gap.RESERVED_RADIUS if enabled else gap.BASE_RADIUS)+.01))
                         reject[0]=True
                         with self.assertRaises(HTTPError): post(not enabled,audacity='balanced' if level!='balanced' else 'bold')
                         restored=json.load(urlopen(base+'/api/gap',timeout=15))
@@ -276,10 +291,10 @@ class ConsoleTests(unittest.TestCase):
                 self.assertTrue(post(False,audacity='cautious')['synchronized'])
                 self.assertTrue(post(True)['synchronized'])
                 self.assertAlmostEqual(consumer.get_parameter('clearance').value,
-                                       .22+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
+                                       .10+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
                 if phase=='mapping':
                     time.sleep(.2);self.assertAlmostEqual(consumer.p['clearance'],
-                                                        .22+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
+                                                        .10+gap.RESERVED_RADIUS-gap.BASE_RADIUS)
                 reject[0]=True
                 with self.assertRaises(HTTPError): post(False)
                 self.assertTrue(json.load(urlopen(base+'/api/gap',timeout=15))['enabled'])
@@ -306,6 +321,18 @@ class ConsoleTests(unittest.TestCase):
                 console.write_trial_node=writer
                 self.assertFalse(post(False)['enabled'])
                 self.assertIsNone(console.gap_fault)
+                tuning=dict(robot_radius=gap.TUNING_LIMITS['robot_radius'][0],
+                            footprint_radius=gap.TUNING_LIMITS['footprint_radius'][0],
+                            footprint_padding=.02, inflation_radius=.19,
+                            clearance=.07, stop_distance=.15, rotation_clearance=.17)
+                applied=post(False,tuning=tuning)
+                self.assertTrue(applied['synchronized'])
+                self.assertEqual(applied['tuning']['live'],tuning)
+                self.assertEqual(json.loads(console.navigation_settings_path.read_text())['gap']['tuning'],tuning)
+                self.assertEqual(post(True)['tuning']['overrides'],tuning)
+                self.assertAlmostEqual(gate.get_parameter('footprint_radius').value,tuning['footprint_radius'])
+                self.assertTrue(post(False,tuning={})['synchronized'])
+                self.assertFalse(console.navigation_settings['gap'].get('tuning'))
                 for timer in consumer.timers: timer.cancel()
                 consumer.state='MAPPING' if phase=='mapping' else 'SEARCHING'
                 console.on_status(String(data=json.dumps({'state':consumer.state,'reason':'Synthetic active'})))
@@ -315,7 +342,7 @@ class ConsoleTests(unittest.TestCase):
                 gate.enabled=True
                 self.assertFalse(gate.set_parameters_atomically([Parameter('rotation_clearance',value=.14)]).successful)
                 gate.enabled=False
-                for value in (.139,.161,float('nan')):
+                for value in (.05,.51,float('nan')):
                     self.assertFalse(gate.set_parameters_atomically([Parameter('rotation_clearance',value=value)]).successful)
                 # Stop remains independent of the transaction lock.
                 self.assertTrue(console.control_lock.acquire(timeout=.1));console.control_lock.release()

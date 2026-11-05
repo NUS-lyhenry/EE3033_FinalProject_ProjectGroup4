@@ -11,6 +11,10 @@ python3 -m pytest -q
 ROS_DOMAIN_ID=110 python3 tests/integration_visual_perception.py
 GROUP4_VISION_METHOD=hybrid ROS_DOMAIN_ID=112 python3 tests/integration_visual_perception.py
 ROS_DOMAIN_ID=113 python3 tests/integration_bearing_filter.py
+ROS_DOMAIN_ID=115 python3 tests/integration_bottom_range.py
+ROS_DOMAIN_ID=116 python3 tests/integration_search_epoch.py
+ROS_DOMAIN_ID=117 python3 tests/integration_frame_coverage.py
+ROS_DOMAIN_ID=118 python3 tests/integration_single_frame_mission.py
 ROS_DOMAIN_ID=109 python3 tests/integration_visual_search.py
 ROS_DOMAIN_ID=99 python3 tests/integration_hardware_launch.py
 ROS_DOMAIN_ID=94 python3 tests/integration_console.py
@@ -20,6 +24,8 @@ ROS_DOMAIN_ID=100 python3 tests/integration_stationary.py
 ROS_DOMAIN_ID=106 python3 tests/integration_calibration.py
 ROS_DOMAIN_ID=108 python3 tests/integration_automatic_calibration.py
 ROS_DOMAIN_ID=96 python3 tests/integration_mapping_retry.py
+ROS_DOMAIN_ID=114 ROS_LOCALHOST_ONLY=1 python3 tests/integration_slam_pose_refresh.py src/ee3033_project/config/slam.yaml
+ROS_DOMAIN_ID=119 ROS_LOCALHOST_ONLY=1 python3 tests/integration_slam_settings.py src/ee3033_project/config/slam.yaml
 ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
 ROS_DOMAIN_ID=98 python3 tests/integration_waypoint.py
 ROS_DOMAIN_ID=97 python3 tests/integration_turning_nav2.py

@@ -1,18 +1,20 @@
-# Legacy camera calibration from a known map point
+> Current release/deployment status: [README.md](README.md) and [DEPLOYMENT.md](DEPLOYMENT.md). Earlier dated status statements below are historical.
 
-This optional preparation tool is retained for existing explicit profiles. The
-default mission now uses camera geometry directly; no bottle collection or
-validated profile is required. Open this tool from Advanced, or use the legacy
-`/#/calibration` link. A profile is used only when explicitly selected.
+# Legacy camera calibration reference
 
-Use **Camera setup** in the main console (`/#/calibration`). The operator marks
-where the bottle base will be on a saved map, places it there and enters its
-height and widest diameter. No measured distance is required. After **Start**,
-the robot collects the views autonomously, fits the camera model and saves it
-only if the checks pass. The earlier image-centring and manual-measurement
-processes have been removed.
+This document preserves the old angle-calibration procedure for explicit
+non-bottle profiles. Bottle searches use [BOTTLE_LOCALIZATION.md](BOTTLE_LOCALIZATION.md)
+and do not use this fitted-angle model. Physical camera mounting/reference forms
+and the `/#/calibration` navigation were removed from the main console; that
+retired route falls back to the workflow. The operator steps below describe the
+historical dedicated calibration interface, not controls available on the current
+physical mission page.
 
-## Operator steps
+The standalone `calibration.launch.py` tool remains in the source for explicitly
+requested legacy work. A saved legacy result is selected only by passing its
+reviewed `calibration_file` path.
+
+## Historical dedicated-tool operator steps
 
 1. Save and review a map of the current area. Select it in the map library and
    choose **Load map & camera setup**. A live mapping session must be saved first;

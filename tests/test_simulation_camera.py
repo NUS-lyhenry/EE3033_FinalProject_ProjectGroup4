@@ -11,7 +11,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
-from simulation_camera import default_camera_settings,validate_camera_settings,camera_intrinsics,camera_mount
+from simulation_camera import default_camera_settings,validate_camera_settings,camera_intrinsics,camera_mount,camera_distortion
 import simulation_geometry as world
 from ee3033_project.calibration import mounting_rotation
 from ee3033_project.vision_geometry import FloorCamera
@@ -69,7 +69,7 @@ def robot_stub():
     cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef) and n.name=='SimulatedRobot')
     scope=dict(Node=object,math=math,np=np,Rotation=Rotation,TransformStamped=transform,
         validate_camera_settings=validate_camera_settings,camera_intrinsics=camera_intrinsics,
-        render_camera=world.render_camera,CameraInfo=lambda:NS())
+        render_camera=world.render_camera,camera_distortion=camera_distortion,CameraInfo=lambda:NS())
     exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),scope)
     robot=scope['SimulatedRobot'].__new__(scope['SimulatedRobot'])
     robot.world_lock=threading.RLock();robot.accept_commands=False

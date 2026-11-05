@@ -21,12 +21,14 @@ class CoveragePlanner:
     def __init__(self, data, resolution, origin, clearance=0.20, spacing=0.65,
                  view_range=2.0, fov=1.35, headings=4, max_candidates=250,
                  max_goals=120, coverage_fraction=0.98, candidate_limit=1000,
-                 camera_model=None):
+                 camera_model=None, coverage_spacing=.15):
         self.grid = np.asarray(data, dtype=int)
         self.resolution = float(resolution)
         self.origin = origin
         if (self.grid.ndim != 2 or resolution <= 0 or clearance <= 0
-                or spacing <= 0 or view_range <= 0 or not 0 < fov < 2*math.pi
+                or not math.isfinite(spacing) or spacing <= 0
+                or not math.isfinite(coverage_spacing) or coverage_spacing <= 0
+                or view_range <= 0 or not 0 < fov < 2*math.pi
                 or headings < 2 or max_candidates < 1 or max_goals < 1
                 or candidate_limit < 1 or not 0 < coverage_fraction <= 1):
             raise ValueError('Invalid coverage parameters')
@@ -43,7 +45,7 @@ class CoveragePlanner:
         self.candidate_limit = candidate_limit
         self.max_goals = max_goals
         self.fraction = coverage_fraction
-        self.target_stride = max(1, round(.15/self.resolution))
+        self.target_stride = max(1, round(coverage_spacing/self.resolution))
         self.target_cells = set()
         self.coverable = set()
         self.truncated = False
@@ -163,10 +165,10 @@ class CoveragePlanner:
     def in_bounds(self, row, col):
         return 0 <= row < self.grid.shape[0] and 0 <= col < self.grid.shape[1]
 
-    def visible(self, row, col, yaw, camera_model=None):
+    def visible(self, row, col, yaw, camera_model=None, position=None):
         """Ray-cast camera field of view, stopping at occupied/unknown cells."""
         cells = set()
-        x, y = self.cell_to_world(row, col)
+        x, y = self.cell_to_world(row, col) if position is None else position
         local_yaw = yaw - self.origin[2]
         origin_row, origin_col = row+.5, col+.5
         camera = camera_model if camera_model is not None else self.camera_model
@@ -221,11 +223,10 @@ class CoveragePlanner:
         # Include near-wall free space connected to the start as observation targets.
         raw, _ = label(self.free, structure=[[0,1,0],[1,1,1],[0,1,0]])
         raw_reachable = raw == raw[row, col]
-        target_stride = max(1, round(0.15/self.resolution))
+        target_stride = self.target_stride
         self.target_cells = {(r, c) for r in range(0, self.grid.shape[0], target_stride)
                              for c in range(0, self.grid.shape[1], target_stride)
                              if raw_reachable[r, c]}
-        self.target_stride = target_stride
         self.blocked_cells = {p for p in self.target_cells if not reachable[p] and self.safe[p]}
         self.map_partial = bool(self.declared_partial or np.any(raw_reachable & binary_dilation(self.grid < 0)))
         stride = max(1, round(self.spacing/self.resolution))
@@ -389,8 +390,16 @@ class CoveragePlanner:
 
     def lookahead(self, x, y, observed, excluded=(), yaw=0., linear_speed=.12,
                   angular_speed=.4, observation_seconds=.8, path_lengths=None,
-                  deadline=None, cancel=None):
-        """Three-step beam search maximizing area under a 60-second coverage curve."""
+                  deadline=None, cancel=None, strategy='lookahead', adaptive_margin=.08):
+        """Three-step beam planning; optionally require a gain over greedy.
+
+        The adaptive baseline is the best evaluated path beginning with the
+        greedy action, measured using the SAME 60-second utility. Preserve
+        that branch during pruning to avoid a biased comparison. A deadline
+        conservatively falls back to the one-step greedy candidate.
+        """
+        if strategy not in ('lookahead', 'adaptive') or not 0. <= adaptive_margin <= 1.:
+            raise ValueError('Invalid lookahead strategy or adaptive margin')
         try:
             ranked = self.rank_viewpoints(x, y, observed, excluded, yaw, linear_speed,
                 angular_speed, observation_seconds, path_lengths, deadline, cancel)
@@ -410,18 +419,18 @@ class CoveragePlanner:
                     shortlist.append(i)
         initial = Viewpoint(x, y, yaw, frozenset())
         beam = [(0., 0., (), frozenset(observed), initial)]
-        best = None
+        best = greedy_best = None
         for _ in range(3):
             expanded = []
             for utility, elapsed, route, seen, previous in beam:
                 if cancel is not None and cancel.is_set():
                     raise RuntimeError('Search planning canceled')
                 if deadline is not None and time.monotonic() >= deadline:
-                    return best[2][0] if best else fallback
+                    return fallback if strategy == 'adaptive' else best[2][0] if best else fallback
                 try:
                     distances, _ = self.travel_field(previous.x, previous.y, deadline, cancel)
                 except TimeoutError:
-                    return best[2][0] if best else fallback
+                    return fallback if strategy == 'adaptive' else best[2][0] if best else fallback
                 for i in shortlist:
                     if i in route:
                         continue
@@ -442,10 +451,191 @@ class CoveragePlanner:
                     expanded.append(entry)
                     if best is None or (value, -arrival) > (best[0], -best[1]):
                         best = entry
+                    if entry[2][0] == fallback and (
+                            greedy_best is None or (value, -arrival) > (greedy_best[0], -greedy_best[1])):
+                        greedy_best = entry
             if not expanded:
                 break
-            beam = sorted(expanded, key=lambda e: (-e[0], e[1], e[2]))[:12]
-        return best[2][0] if best and best[0] > 0 else fallback
+            ordered = sorted(expanded, key=lambda e: (-e[0], e[1], e[2]))
+            beam = ordered[:12]
+            if strategy == 'adaptive':
+                # Keep one greedy-root path in the beam for an apples-to-apples
+                # comparison; do not let pruning erase the baseline evidence.
+                greedy_routes = [e for e in ordered if e[2][0] == fallback]
+                if greedy_routes and greedy_routes[0] not in beam:
+                    beam[-1] = greedy_routes[0]
+        if not best or best[0] <= 0:
+            return fallback
+        if strategy == 'adaptive':
+            if greedy_best is None or best[2][0] == fallback:
+                return fallback
+            if best[0] < greedy_best[0] * (1. + adaptive_margin):
+                return fallback
+        return best[2][0]
+
+    def station_key(self, x, y):
+        """Stable position identity; headings at the same cell share a station."""
+        return self.world_to_cell(x, y)
+
+    def select_station_view(self, x, y, observed, excluded=(), yaw=0., linear_speed=.12,
+                            angular_speed=.4, observation_seconds=.8, path_lengths=None,
+                            deadline=None, cancel=None, station_views=0, station_seconds=0.,
+                            previous_stations=(), failed_positions=(), now=None,
+                            strategy='adaptive', adaptive_margin=.08):
+        """Choose the first heading of a bounded three-station coverage route.
+
+        Each beam action includes useful headings at one position, charging
+        translation once. Actual frame credit and the six-view/25-second
+        residence limits belong to Mission; predictions never mutate observed.
+        """
+        if strategy not in ('greedy', 'lookahead', 'adaptive') or not 0. <= adaptive_margin <= 1.:
+            raise ValueError('Invalid station search strategy or adaptive margin')
+        observed, excluded = frozenset(observed), set(excluded)
+        previous_stations = {tuple(key) for key in previous_stations}
+        groups = {}
+        for i, v in enumerate(self.options):
+            if i in excluded or not v.visible-observed:
+                continue
+            if any(math.hypot(v.x-p[0], v.y-p[1]) < .20 for p in failed_positions):
+                continue
+            groups.setdefault(self.station_key(v.x, v.y), []).append(i)
+        if not groups:
+            return None
+        fields = {}
+        def check():
+            if cancel is not None and cancel.is_set():
+                raise RuntimeError('Search planning canceled')
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError('Station selection time limit exceeded')
+        def field(px, py):
+            key = self.station_key(px, py)
+            if key not in fields:
+                fields[key] = self.travel_field(px, py, deadline, cancel)[0]
+            return fields[key]
+        def batch(key, pose, seen, first=False):
+            check()
+            indices = groups[key]
+            position = self.options[indices[0]]
+            local = math.hypot(position.x-pose[0], position.y-pose[1]) < .15
+            if first and local and (station_views >= 6 or station_seconds >= 25.):
+                return None
+            limit = max(0, 6-station_views) if first and local else 6
+            remaining = max(0., 25.-station_seconds) if first and local else 25.
+            local_seen = set(seen)
+            route, elapsed, dwell, gain, utility = [], 0., 0., 0, 0.
+            current_yaw = pose[2]
+            for _ in range(limit):
+                check()
+                choices = []
+                for i in indices:
+                    if i in route:
+                        continue
+                    v = self.options[i]
+                    if not route and first and path_lengths is not None and not math.isfinite(path_lengths.get(i, 0.)):
+                        continue
+                    added = len(v.visible-local_seen)
+                    if not added:
+                        continue
+                    if not route and not local:
+                        distance = float(field(*pose[:2])[key])
+                        if first and path_lengths is not None:
+                            distance = path_lengths.get(i, distance)
+                        if not math.isfinite(distance):
+                            continue
+                        heading = math.atan2(v.y-pose[1], v.x-pose[0])
+                        rotation = abs(angle_difference(heading, current_yaw))+abs(angle_difference(v.yaw, heading))
+                        travel = distance/max(.01, linear_speed)
+                        revisit = 5. if key in previous_stations else 0.
+                    else:
+                        # At a station there is no imaginary departure/re-entry.
+                        rotation = abs(angle_difference(v.yaw, current_yaw))
+                        travel = revisit = 0.
+                    cost = travel+rotation/max(.05, angular_speed)+observation_seconds+1.+revisit
+                    rotation_work = rotation/max(.05, angular_speed)+observation_seconds+1.
+                    if dwell+rotation_work > remaining:
+                        continue
+                    choices.append((added/cost, -cost, -i, i, cost, rotation_work))
+                if not choices:
+                    break
+                _, _, _, i, cost, rotation_work = max(choices)
+                v = self.options[i]
+                added = len(v.visible-local_seen)
+                elapsed += cost
+                dwell += rotation_work
+                utility += added*max(0., 60.-elapsed)
+                gain += added
+                local_seen.update(v.visible)
+                route.append(i)
+                current_yaw = v.yaw
+                # Translation to the site does not consume its dwell budget.
+                if dwell >= remaining:
+                    break
+            if not route:
+                return None
+            return dict(key=key, route=tuple(route), gain=gain, elapsed=elapsed,
+                        seen=frozenset(local_seen), pose=(position.x, position.y, current_yaw),
+                        score=gain/elapsed, utility=utility, local=local)
+        initial = (x, y, yaw)
+        ranked = []
+        try:
+            for key in groups:
+                candidate = batch(key, initial, observed, first=True)
+                if candidate:
+                    ranked.append(candidate)
+        except TimeoutError:
+            pass
+        if not ranked:
+            return None
+        ranked.sort(key=lambda b: (-b['score'], b['route']))
+        fallback = ranked[0]
+        local = max((b for b in ranked if b['local']), key=lambda b:b['score'], default=None)
+        if local is not None and local['score'] >= .85*fallback['score']:
+            return local['route'][0]
+        if strategy == 'greedy':
+            return fallback['route'][0]
+        shortlist = [b['key'] for b in ranked[:8]]
+        for sector in range(8):
+            candidates = [b for b in ranked if int((math.atan2(b['pose'][1]-y,
+                b['pose'][0]-x) % math.tau)/(math.tau/8)) == sector]
+            if candidates and candidates[0]['key'] not in shortlist:
+                shortlist.append(candidates[0]['key'])
+        beam = [(0., 0., (), observed, initial, frozenset())]
+        best = greedy_best = None
+        try:
+            for depth in range(3):
+                expanded = []
+                for utility, elapsed, route, seen, pose, used in beam:
+                    for key in shortlist:
+                        if key in used:
+                            continue
+                        candidate = batch(key, pose, seen, first=not route)
+                        if candidate is None:
+                            continue
+                        # Shift the batch's coverage utility by prior route time.
+                        value = utility+max(0., candidate['utility']-elapsed*candidate['gain'])
+                        entry = (value, elapsed+candidate['elapsed'], route+candidate['route'],
+                                 candidate['seen'], candidate['pose'], used | {key})
+                        expanded.append(entry)
+                        if best is None or (entry[0],-entry[1]) > (best[0],-best[1]):
+                            best = entry
+                        if entry[2][0] == fallback['route'][0] and (greedy_best is None or
+                                (entry[0],-entry[1]) > (greedy_best[0],-greedy_best[1])):
+                            greedy_best = entry
+                if not expanded:
+                    break
+                expanded.sort(key=lambda e:(-e[0],e[1],e[2]))
+                beam = expanded[:12]
+                baseline = next((e for e in expanded if e[2][0] == fallback['route'][0]), None)
+                if baseline is not None and baseline not in beam:
+                    beam[-1] = baseline
+        except TimeoutError:
+            return fallback['route'][0]
+        if best is not None and strategy == 'lookahead':
+            return best[2][0]
+        if (best is not None and greedy_best is not None and
+                best[0] >= greedy_best[0]*(1.+adaptive_margin)):
+            return best[2][0]
+        return fallback['route'][0]
 
     def plan(self, start_x, start_y):
         options = list(self.prepare(start_x, start_y))
@@ -479,9 +669,11 @@ class CoveragePlanner:
 
     def rank_viewpoints(self, x, y, observed, excluded=(), yaw=None,
                         linear_speed=.12, angular_speed=.4, observation_seconds=3.,
-                        path_lengths=None, deadline=None, cancel=None):
+                        path_lengths=None, deadline=None, cancel=None,
+                        previous_stations=()):
         observed = set(observed)
         excluded = set(excluded)
+        previous_stations = {tuple(key) for key in previous_stations}
         distances, _ = self.travel_field(x, y, deadline, cancel)
         ranked = []
         for index, v in enumerate(self.options):
@@ -503,13 +695,15 @@ class CoveragePlanner:
             if not math.isfinite(distance):
                 continue
             # Travel and final orientation matter; avoid rewarding extra stops.
-            travel = distance / max(0.01, linear_speed)
-            heading = math.atan2(dy, dx) if distance > 0.05 else (yaw if yaw is not None else v.yaw)
+            local = math.hypot(dx, dy) < .15
+            travel = 0. if local else distance / max(0.01, linear_speed)
+            heading = (yaw if yaw is not None else v.yaw) if local else math.atan2(dy, dx)
             rotation = abs(angle_difference(v.yaw, heading))
             if yaw is not None:
                 rotation += abs(angle_difference(heading, yaw))
             turn = rotation / max(0.05, angular_speed)
-            cost = max(0.0, observation_seconds) + travel + turn + 1.0
+            revisit = 5. if not local and self.station_key(v.x, v.y) in previous_stations else 0.
+            cost = max(0.0, observation_seconds) + travel + turn + 1.0 + revisit
             score = gain / cost
             ranked.append((score, index))
         return sorted(ranked, key=lambda entry: (-entry[0], entry[1]))

@@ -37,8 +37,16 @@ else:
     MODEL = 'legacy_conservative_circle'
 
 PHYSICAL_RADIUS = BODY_RADIUS
+# Nav2's requested planning radius; final motion checks retain measured geometry.
+NAVIGATION_RADIUS = 0.10 if GEOMETRY_PROFILE == 'measured' else BODY_RADIUS
 FOOTPRINT_RADIUS = round(BODY_RADIUS+FOOTPRINT_PADDING, 6)
-DEFAULT_STOP_DISTANCE = round(FOOTPRINT_RADIUS+0.07, 6)
+MIN_COLLISION_RADIUS = round(BODY_RADIUS + .60 * FOOTPRINT_PADDING, 6)
+MIN_CONFIGURED_COLLISION_RADIUS = .07 if ROBOT_LENGTH is not None else MIN_COLLISION_RADIUS
+# Routing budget for SLAM pose error and controller tracking at wall tips.
+# Separate from measured body geometry and the final motion collision envelope.
+ROUTE_TRACKING_RESERVE = .03
+ROUTE_RADIUS = round(FOOTPRINT_RADIUS+ROUTE_TRACKING_RESERVE,6)
+DEFAULT_STOP_DISTANCE = 0.12 if GEOMETRY_PROFILE == 'measured' else round(FOOTPRINT_RADIUS+0.07, 6)
 ROTATION_CLEARANCES = ({'cautious':0.16,'balanced':0.15,'bold':0.14}
     if GEOMETRY_PROFILE=='legacy' else
     {name:round(FOOTPRINT_RADIUS+reserve,6) for name,reserve in
@@ -46,6 +54,8 @@ ROTATION_CLEARANCES = ({'cautious':0.16,'balanced':0.15,'bold':0.14}
 GEOMETRY_METADATA = dict(profile=GEOMETRY_PROFILE, model=MODEL,
     length=ROBOT_LENGTH, width=ROBOT_WIDTH, body_radius=BODY_RADIUS,
     padding=FOOTPRINT_PADDING, footprint_radius=FOOTPRINT_RADIUS,
+    navigation_radius=NAVIGATION_RADIUS, route_radius=ROUTE_RADIUS,
+    route_tracking_reserve=ROUTE_TRACKING_RESERVE,
     exact_circumradius=EXACT_CIRCUMRADIUS, dimension_source=DIMENSION_SOURCE,
     front_stop_distance=DEFAULT_STOP_DISTANCE,
     rotation_clearances=dict(ROTATION_CLEARANCES),

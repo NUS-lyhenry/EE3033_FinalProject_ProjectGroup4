@@ -9,7 +9,7 @@ import time
 from types import SimpleNamespace as NS
 
 import pytest
-from ee3033_project.assessment import ACTIVE, TrialRecord, mission_options, require_preserved_unknown
+from ee3033_project.assessment import ACTIVE, TrialRecord, atomic_json, mission_options, require_preserved_unknown
 
 ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 
@@ -18,7 +18,7 @@ def callback(file,name):
     tree=ast.parse((ROOT/file).read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef))
     method=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name==name)
-    namespace=dict(json=json,math=math,time=time,ACTIVE=ACTIVE,mission_options=mission_options,
+    namespace=dict(json=json,math=math,time=time,ACTIVE=ACTIVE,mission_options=mission_options,atomic_json=atomic_json,
                    Twist=NS,Trigger=NS(Request=NS),stamp_seconds=lambda s:s.sec+s.nanosec*1e-9,
                    require_preserved_unknown=require_preserved_unknown)
     exec(compile(ast.Module(body=[method],type_ignores=[]),str(ROOT/file),'exec'),namespace)
@@ -40,12 +40,15 @@ def console(tmp_path):
         state=dict(state='COMPLETE',ready=True,started_stamp=10.,home=[0,0,0],target={'x':1}),
         selected_map={'id':'room/map.yaml'},stage=NS(process=object(),loading=False),
         freshness={'Mission':time.monotonic()},initial_pose_sent=True,
-        trial_fault=None,gap_fault=None,workflow_fault=None,scan_filter_fault=None,retry_after_stamp=-math.inf,
+        trial_fault=None,gap_fault=None,workflow_fault=None,scan_filter_fault=None,recovery_fault=None,retry_after_stamp=-math.inf,
         result_data={'old':True},target_estimate={'x':1},route=[1],path=[1],events=deque(),
         lock=threading.RLock(),control_generation=2,status_after=0.,map_revision=1,
         get_clock=lambda:NS(now=lambda:NS(nanoseconds=20_000_000_000)))
     c.require_idle=lambda: (_ for _ in ()).throw(ValueError('Active')) if c.state['state'] in ACTIVE or c.stage.loading else None
     c.require_zero_command=lambda:None
+    c.mission_options=mission_options({})
+    c.mission_options_path=tmp_path/'mission_settings.json'
+    c.restore_navigation_settings=lambda:True
     c.workflow_status=lambda status:c.record.status('mission',status)
     def start(path,body,**kwargs):
         assert path=='/api/start' and body=={}
@@ -79,6 +82,7 @@ def test_all_terminal_search_states_can_retry(tmp_path,state):
 
 @pytest.mark.parametrize('change',[
     lambda c:c.state.update(state='RECOVERING'),
+    lambda c:c.state.update(state='RESETTING'),
     lambda c:setattr(c.stage,'loading',True),
     lambda c:c.state.update(ready=False),
     lambda c:c.freshness.update(Mission=-math.inf),
@@ -90,6 +94,25 @@ def test_retry_rejects_unready_or_active_without_resetting_record(tmp_path,chang
     c=console(tmp_path);old=c.record.data['id'];change(c)
     with pytest.raises(ValueError):command(c,'/api/retry_search',{})
     assert c.record.data['id']==old
+
+
+@pytest.mark.parametrize('pending,allowed', [('RESEARCH', True), ('STOPPED', False), ('RETURN', False), (None, False)])
+def test_console_return_only_supersedes_research_cancellation(tmp_path, pending, allowed):
+    c=console(tmp_path)
+    c.state.update(state='CANCELING', pending_action=pending)
+    c.workflow_command=lambda *a:None
+    c.navigation_status={}
+    calls=[]
+    c.command_clients={'return_home':NS(wait_for_service=lambda **kw:True,
+        call_async=lambda request:(calls.append('return') or NS(done=lambda:True,
+            result=lambda:NS(success=True,message='Return queued'))))}
+    if allowed:
+        assert console_command(c,'/api/return_home',{})['success']
+        assert calls==['return']
+    else:
+        with pytest.raises(ValueError,match='cancellation'):
+            console_command(c,'/api/return_home',{})
+        assert not calls
 
 
 def test_explicit_service_rejection_restores_previous_attempt(tmp_path):
@@ -176,8 +199,9 @@ def test_legacy_guard_does_not_reinterpret_noncanonical_images(tmp_path,name,con
     require_preserved_unknown(path)
 
 
+@pytest.mark.parametrize('command_path',['/api/start','/api/return_home'])
 @pytest.mark.parametrize('stop_during',['service_wait','response'])
-def test_stop_wins_over_start_wait_and_late_success(tmp_path,stop_during):
+def test_stop_wins_over_start_wait_and_late_success(tmp_path,stop_during,command_path):
     c=console(tmp_path);c.record.repeat_search('room/map.yaml')
     c.workflow_command=lambda *a:None
     calls=[]
@@ -195,7 +219,10 @@ def test_stop_wins_over_start_wait_and_late_success(tmp_path,stop_during):
         return NS(done=lambda:True,result=lambda:NS(success=True,message='Stopped'))
     c.command_clients={'start':NS(wait_for_service=available,call_async=request),
                        'stop':NS(wait_for_service=lambda **kw:True,call_async=stop_request)}
-    result=console_command(c,'/api/start',{})
+    c.navigation_status={}
+    c.state['home']=[0.,0.,0.]
+    c.command_clients['return_home']=c.command_clients['start']
+    result=console_command(c,command_path,{})
     assert result['canceled_by_stop'] and not result['success']
     assert c.record.data['started'] is None and c.state['state']=='STOPPED'
     assert calls==([] if stop_during=='service_wait' else ['start','stop'])

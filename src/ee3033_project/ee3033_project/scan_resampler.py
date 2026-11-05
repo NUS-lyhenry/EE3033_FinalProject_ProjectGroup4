@@ -16,7 +16,7 @@ class ScanResampler(Node):
     def __init__(self, **kwargs):
         super().__init__('project_scan_resampler', **kwargs)
         self.p = parameters(self, {'input_topic': '/scan', 'output_topic': '/scan_fixed',
-                                   'bins': 450,'self_mask_radius':0.08})
+                                   'bins': 450,'self_mask_radius':0.14})
         # This explicitly configured sensor-distance exclusion is independent
         # of the physical chassis footprint and the sensor's true range_min.
         if (type(self.p['self_mask_radius']) is not float
@@ -71,7 +71,7 @@ class ScanResampler(Node):
         out.time_increment = 0.0
         radius=self.get_parameter('self_mask_radius').value
         # LaserScan ranges are float32. Quantize the configured boundary to the
-        # same representation so an exact 8 cm wire value is retained.
+        # same representation so a reading exactly at the cutoff is retained.
         radius=struct.unpack('f',struct.pack('f',radius))[0]
         out.ranges = resample(msg.ranges,msg.angle_min,msg.angle_increment,msg.range_min,
                               msg.range_max,n,radius)

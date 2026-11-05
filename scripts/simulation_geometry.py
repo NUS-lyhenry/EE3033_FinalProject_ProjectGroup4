@@ -4,14 +4,14 @@ import math
 import cv2
 import numpy as np
 from simulation_surfaces import surface_image
-from simulation_camera import camera_mount, camera_intrinsics
+from simulation_camera import camera_mount, camera_intrinsics, camera_render_geometry, distort_camera_frame
 
 
 WALLS = np.array([[[-1.2, -1.0], [1.4, -1.0]], [[1.4, -1.0], [1.4, 1.3]],
                   [[1.4, 1.3], [-1.2, 1.3]], [[-1.2, 1.3], [-1.2, -1.0]],
                   [[.55, .15], [.55, 1.3]]], dtype=float)
 TARGET = np.array([.95, .85, 0.])
-K = np.array([[450., 0., 320.], [0., 450., 240.], [0., 0., 1.]])
+K = camera_intrinsics()
 PITCH = math.radians(10)
 CAMERA_OFFSET = np.array([.05, 0., .22])
 
@@ -40,6 +40,15 @@ def clearance(xy,walls=None):
     return float(np.min(np.linalg.norm(walls[:, 0]+along[:, None]*edge-xy, axis=1)))
 
 
+TARGET_HEIGHT_M = .18
+
+
+def target_dimensions(texture):
+    height,width=texture.shape[:2]
+    if min(height,width)<=0:raise ValueError('Target texture must have nonzero dimensions')
+    return TARGET_HEIGHT_M*width/height,TARGET_HEIGHT_M
+
+
 def camera_pose(pose,camera=None):
     c, s = math.cos(pose[2]), math.sin(pose[2])
     body = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
@@ -59,21 +68,23 @@ def render_camera(pose, texture, present,walls=None,target=None,camera=None):
     walls=WALLS if walls is None else np.asarray(walls,dtype=float)
     target=TARGET if target is None else np.asarray(target,dtype=float)
     translation, rotation = camera_pose(pose,camera)
-    k=camera_intrinsics(camera)
-    image = surface_image(translation, rotation, k, walls)
+    k,_,_,width,height=camera_render_geometry(camera)
+    image = surface_image(translation, rotation, k, walls,width=width,height=height)
     delta = target[:2]-translation[:2]
     distance = np.linalg.norm(delta)
     visible = raycast(translation[:2], [math.atan2(delta[1], delta[0])],walls)[0] >= distance-.01
     if present and visible:
         right = np.array([delta[1], -delta[0], 0.])/max(distance, .001)
-        left, right = target-right*.09, target+right*.09
-        corners = np.array([left+[0, 0, .18], right+[0, 0, .18], right, left])
+        target_width,target_height=target_dimensions(texture)
+        left, right = target-right*(target_width/2), target+right*(target_width/2)
+        corners = np.array([left+[0, 0, target_height], right+[0, 0, target_height], right, left])
         quad = project(corners, translation, rotation,k)
-        if quad is not None and np.max(quad[:, 0])>=0 and np.min(quad[:, 0])<640:
+        if quad is not None and np.max(quad[:, 0])>=0 and np.min(quad[:, 0])<width:
             h, w = texture.shape[:2]
             transform = cv2.getPerspectiveTransform(np.float32([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]]), quad)
-            layer = cv2.warpPerspective(texture, transform, (640, 480))
-            mask = cv2.warpPerspective(np.full((h, w), 255, np.uint8), transform, (640, 480))
+            layer = cv2.warpPerspective(texture, transform, (width, height))
+            mask = cv2.warpPerspective(np.full((h, w), 255, np.uint8), transform, (width, height))
             image[mask>0] = layer[mask>0]
+    image=distort_camera_frame(image,camera)
     cv2.putText(image, 'SIMULATED SENSOR / REAL YOLO', (12, 465), cv2.FONT_HERSHEY_SIMPLEX, .45, (50, 60, 70), 1)
     return image

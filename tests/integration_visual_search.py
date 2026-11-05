@@ -26,7 +26,10 @@ class VisualRobot(FakeRobot):
         self.sensor_frames = 0
         self.global_goals = 0
         self.global_after_lock = 0
+        self.acquisition_goals = []
         self.estimates = {}
+        self.small_box_forward_goals = 0
+        self.reported_while_small = False
         super().__init__('absent')
         self.create_subscription(String,'/project/target_estimate',self.on_estimate,LATCHED)
         self.raw_pub = self.create_publisher(String, '/project/target_detections', 10)
@@ -39,6 +42,13 @@ class VisualRobot(FakeRobot):
         if self.mission.goal_kind == 'search':
             self.global_goals += 1
             self.global_after_lock += int(self.mission.target_detected)
+        if self.mission.goal_kind == 'acquire':
+            p=request.pose.pose.position
+            if self.mode=='small_box' and math.dist((p.x,p.y),self.xy_yaw[:2])>.04:
+                self.small_box_forward_goals+=1
+            self.acquisition_goals.append(dict(origin=list(self.xy_yaw[:2]),goal=[p.x,p.y],
+                bearing=math.atan2(.5-self.xy_yaw[1],.5-self.xy_yaw[0]),
+                reason=self.mission.acquisition.last_goal_reason or ''))
         if self.mode == 'stop_pending' and self.mission.goal_kind == 'acquire':
             time.sleep(.5)
         return super().accept(request)
@@ -48,6 +58,7 @@ class VisualRobot(FakeRobot):
         if m is None:
             return
         self.states.append(m.state)
+        self.reported_while_small |= bool(m.target and m.acquisition.needs_closer_view())
         self.max_steps = max(self.max_steps, m.acquisition.steps)
         stamp = time.time()
         self.sensor_frames += 1
@@ -63,6 +74,10 @@ class VisualRobot(FakeRobot):
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.03)]
             if self.mode == 'precision_boundary':
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.1)]
+            if self.mode=='small_box' and detections:
+                width=24 if self.small_box_forward_goals and m.state=='LOCALIZING' else 10
+                detections[0].update(box=[300,200,300+width,280],image_width=640)
+                observations=[dict(stamp=stamp,x=.5,y=.5,confidence=.9,label='bottle',sigma=.03)]
             if self.mode in ('soft_precision', 'stop_soft','tunable_precision') and m.acquisition.started is not None:
                 observations = [dict(stamp=stamp, x=.5, y=.5, confidence=.9, label='bottle', sigma=.25)]
             if self.mode == 'deferred_balance':
@@ -80,7 +95,7 @@ class VisualRobot(FakeRobot):
                     detections=[]
                 else:
                     observations=[dict(stamp=stamp,x=.5,y=.5,confidence=.9,label='bottle',sigma=.03)]
-            if self.mode=='bearing_only' and detections:
+            if self.mode in ('bearing_only','bearing_only_no_ab') and detections:
                 d=detections[0]
                 for key in ('x','y','sigma','close_view'):d.pop(key,None)
                 center=(d['bearing']-self.xy_yaw[2]+math.pi)%(2*math.pi)-math.pi
@@ -100,8 +115,11 @@ class VisualSearch(unittest.TestCase):
             mission = Mission(cli_args=['--ros-args', '-r', '/cmd_vel:=/test/motor_output'],
                 parameter_overrides=overrides(allow_motion=True, target_class='bottle',
                     viewpoint_spacing=1., max_goals=2, observe_seconds=.3,
-                    acquisition_seconds=12. if mode in ('temporary_loss','bearing_only') else 3.5,
+                    acquisition_seconds=12. if mode in ('temporary_loss','bearing_only','bearing_only_no_ab','small_box') else 3.5,
                     acquisition_steps=5 if mode=='bearing_only' else 3,
+                    # The dedicated A/B scenario explicitly opts into lateral
+                    # capture. Ordinary missions retain the new OFF default.
+                    enable_ab_maneuver=mode=='bearing_only',
                     max_target_variance=.25**2 if mode=='tunable_precision' else .1**2,
                     verify_seconds=.25, verify_timeout=2., results_directory=root))
             robot.mission = mission
@@ -128,17 +146,22 @@ class VisualSearch(unittest.TestCase):
                     stop = robot.create_client(Trigger, '/project/stop')
                     self.assertTrue(stop.wait_for_service(timeout_sec=3))
                     response = stop.call_async(Trigger.Request()); self.assertTrue(wait(response.done))
-                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary', 'deferred_balance', 'centered_late','tunable_precision','temporary_loss','bearing_only') else 'FOUND_UNLOCALIZED'
+                expected = 'STOPPED' if mode.startswith('stop') else 'COMPLETE' if mode in ('direct', 'approach', 'close_stop', 'soft_precision', 'precision_boundary', 'deferred_balance', 'centered_late','tunable_precision','temporary_loss','bearing_only','bearing_only_no_ab','small_box') else 'FOUND_UNLOCALIZED'
                 self.assertTrue(wait(lambda: mission.state in ('COMPLETE', 'FOUND_UNLOCALIZED', 'SEARCH_INCOMPLETE', 'NOT_FOUND', 'FAILED', 'STOPPED'), 25), mission.summary())
                 time.sleep(.7)
                 self.assertEqual(mission.state, expected, mission.summary())
                 self.assertLessEqual(robot.max_active_goals, 1)
-                self.assertLessEqual(robot.max_steps, 5 if mode=='bearing_only' else 3)
+                self.assertLessEqual(mission.summary()['localization_elapsed_seconds'], mission.p['acquisition_seconds']+1.0)
                 self.assertIsNone(mission.goal_handle)
                 self.assertFalse(mission.goal_pending)
                 self.assertIn('LOCALIZING', robot.states)
                 self.assertEqual(robot.count_publishers('/cmd_vel'), 0)
                 if expected == 'COMPLETE':
+                    if mode=='small_box':
+                        self.assertGreater(robot.small_box_forward_goals,0)
+                        self.assertFalse(robot.reported_while_small)
+                        self.assertFalse(mission.acquisition.needs_closer_view())
+                        self.assertTrue(any('Small target box' in g['reason'] for g in robot.acquisition_goals))
                     self.assertTrue(mission.return_verified)
                     self.assertEqual(sum(r.get('event') == 'target_reported' for r in robot.results), 1)
                     target=mission.target;posterior=robot.estimates[target['estimate_id']]
@@ -147,6 +170,22 @@ class VisualSearch(unittest.TestCase):
                         self.assertGreaterEqual(target['sites'],2)
                         self.assertGreaterEqual(len(target['source_frames']),8)
                         self.assertLess(math.hypot(target['x']-.5,target['y']-.5),.08)
+                        self.assertTrue(mission.p['enable_ab_maneuver'])
+                        self.assertTrue(any('lateral baseline' in g['reason'].lower()
+                            for g in robot.acquisition_goals),robot.acquisition_goals)
+                    if mode=='bearing_only_no_ab':
+                        self.assertFalse(mission.p['enable_ab_maneuver'])
+                        self.assertEqual(target['source'],'bearing_only')
+                        self.assertGreaterEqual(len(target['source_frames']),4)
+                        self.assertGreater(target['sigma'],0.)
+                        self.assertEqual(target['confidence_radius_m'],.2)
+                        self.assertGreaterEqual(target['position_confidence'],0.)
+                        self.assertLessEqual(target['position_confidence'],1.)
+                        for goal in robot.acquisition_goals:
+                            dx,dy=[g-o for g,o in zip(goal['goal'],goal['origin'])]
+                            self.assertLessEqual(math.hypot(dx,dy),.100001)
+                            self.assertAlmostEqual(dx*math.sin(goal['bearing'])-dy*math.cos(goal['bearing']),0.,places=6)
+                            self.assertNotIn('lateral baseline',goal['reason'].lower())
                     if mode=='temporary_loss':
                         self.assertGreater(mission.acquisition.active_seconds,4.)
                         self.assertEqual(robot.global_after_lock,0)
@@ -155,7 +194,7 @@ class VisualSearch(unittest.TestCase):
                     self.assertEqual(target['estimator'],'map-constrained MMSE')
                     self.assertTrue(posterior['confirmed'])
                     if mode == 'soft_precision':
-                        self.assertEqual(mission.target['quality'], 'best_available')
+                        self.assertEqual(mission.target['quality'], 'approximate')
                         self.assertGreater(mission.target['sigma'], .1)
                         self.assertAlmostEqual(mission.target['variance'],mission.target['sigma']**2)
                     elif mode in ('precision_boundary','tunable_precision'):
@@ -179,6 +218,7 @@ class VisualSearch(unittest.TestCase):
                 rclpy.shutdown()
 
     def test_reliable_coordinates_report_without_approach(self): self.case('direct')
+    def test_small_box_requires_checked_approach_before_early_precision_report(self):self.case('small_box')
     def test_uncertain_candidate_approaches_then_reports(self): self.case('approach')
     def test_approach_stops_as_soon_as_a_close_view_is_available(self): self.case('close_stop')
     def test_lost_candidate_returns_without_resuming_search(self): self.case('lost')
@@ -194,6 +234,7 @@ class VisualSearch(unittest.TestCase):
     def test_centered_target_can_finish_confirmation_after_the_old_early_exit(self): self.case('centered_late')
     def test_four_second_loss_is_reacquired_without_global_search(self):self.case('temporary_loss')
     def test_bearing_only_mission_automatically_collects_A_B_and_reports_MMSE(self):self.case('bearing_only')
+    def test_bearing_only_with_A_B_disabled_reports_posterior_without_lateral_capture(self):self.case('bearing_only_no_ab')
 
 
 if __name__ == '__main__':

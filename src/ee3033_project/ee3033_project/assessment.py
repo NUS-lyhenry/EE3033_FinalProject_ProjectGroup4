@@ -15,9 +15,11 @@ import threading
 import time
 
 import yaml
+from .mapping_settings import DEFAULT_SLAM_SETTINGS, validate_slam_settings
+from .grid_settings import GRID_DEFAULTS, STAGE_GRID_ENV
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
-                    'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING'))
+                    'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING'))
 
 
 def utc_now():
@@ -253,6 +255,8 @@ def mission_options(values):
     method = values.get('localization_method','hybrid')
     tolerance = values.get('return_tolerance',.20)
     sigma = values.get('preferred_target_sigma',.10)
+    enable_ab_maneuver = values.get('enable_ab_maneuver',False)
+    acquisition_seconds = values.get('acquisition_seconds',90.)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
         raise ValueError('Use the detector class label, for example cup or bottle')
     if method not in ('lidar','ground_plane','hybrid'):
@@ -261,8 +265,20 @@ def mission_options(values):
         raise ValueError('Return tolerance must be 0.02–1.00 m')
     if isinstance(sigma,bool) or not isinstance(sigma,(int,float)) or not math.isfinite(sigma) or not .01<=sigma<=1.:
         raise ValueError('Preferred precision must be 0.01–1.00 m (one sigma)')
-    return dict(target_class=target,localization_method=method,return_tolerance=float(tolerance),
-                preferred_target_sigma=float(sigma))
+    if not isinstance(enable_ab_maneuver,bool):
+        raise ValueError('Active A–B maneuver must be true or false')
+    if isinstance(acquisition_seconds,bool) or not isinstance(acquisition_seconds,(int,float)) or not math.isfinite(acquisition_seconds) or not 1.<=acquisition_seconds<=600.:
+        raise ValueError('Acquisition time must be 1–600 seconds')
+    result = dict(target_class=target,localization_method=method,return_tolerance=float(tolerance),
+                preferred_target_sigma=float(sigma),enable_ab_maneuver=enable_ab_maneuver,
+                acquisition_seconds=float(acquisition_seconds))
+    if target.casefold()=='bottle':
+        low,high=values.get('bottle_min_range',.35),values.get('bottle_max_range',.95)
+        if (any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (low,high))
+                or not .35<=low<high<=1.):
+            raise ValueError('Bottle camera range must be within 35-100 cm, with minimum below maximum')
+        result.update(bottle_min_range=float(low),bottle_max_range=float(high))
+    return result
 
 
 class StageProcess:
@@ -275,9 +291,14 @@ class StageProcess:
         self.model = model
         self.calibration_file = calibration_file
         self.navigation_profile = 'original'
-        self.scan_self_mask_radius = .08
+        self.scan_self_mask_radius = .14
+        self.allow_reverse_recovery = True
         self.mapping_resolution = .05
+        self.grid_settings = dict(GRID_DEFAULTS)
+        self.active_grid_settings = None
+        self.slam_settings = dict(DEFAULT_SLAM_SETTINGS)
         self.vision_config = ''
+        self.attitude_config = ''
         self.calibration_directory = '~/ee3033_calibrations'
         self.calibration_port, self.console_port = 8780, 8765
         self.calibration_initial_pose = None
@@ -293,7 +314,8 @@ class StageProcess:
         exited = self.process is not None and self.process.poll() is not None
         return dict(managed=True,phase=self.phase,running=self.process is not None and not exited,
                     transitioning=self.loading,fault=self.fault or ('Stage exited; inspect logs before manual intervention' if exited else None),
-                    log_path=str(self.log) if self.log else None)
+                    log_path=str(self.log) if self.log else None,
+                    grid_settings=self.active_grid_settings if self.process and not exited else None)
 
     def stop(self, timeout=12):
         if self.process is None: return
@@ -325,8 +347,13 @@ class StageProcess:
         args=['ros2','launch','ee3033_project',phase+'.launch.py',
               'allow_motion:='+str(bool(self.allow_motion)).lower(),
               'self_mask_radius:='+str(self.scan_self_mask_radius)]
+        grids = dict(self.grid_settings, mapping_resolution=self.mapping_resolution)
+        env = dict(os.environ)
+        if phase != 'calibration':
+            env[STAGE_GRID_ENV] = json.dumps(grids)
         if phase=='mapping':
             args.append('mapping_resolution:='+str(self.mapping_resolution))
+            args.extend(key+':='+str(value) for key,value in validate_slam_settings(self.slam_settings).items())
         if phase=='calibration':
             args += ['port:='+str(self.calibration_port), 'parent_port:='+str(self.console_port),
                      'output_directory:='+str(self.calibration_directory)]
@@ -338,19 +365,24 @@ class StageProcess:
             if self.model: args.append('model:='+self.model)
         else:
             args += ['console:=false','map_directory:='+str(map_directory),
-                     'navigation_profile:='+self.navigation_profile]
+                     'navigation_profile:='+self.navigation_profile,
+                     'allow_reverse_recovery:='+str(self.allow_reverse_recovery).lower()]
         for name,enabled in self.hardware.items():
             if name!='camera' or phase in ('mission','calibration'): args.append(name+':='+str(bool(enabled)).lower())
         if phase=='mission':
             if map_path is None: raise ValueError('A reviewed saved map is required')
             options=mission_options(options or {})
             args.append('results_directory:='+str(self.root.parent/'mission_runs'))
-            args += ['map_partial:='+str(bool(getattr(self,'map_partial',False))).lower(), 'map:='+str(map_path),*[(key+':='+str(value)) for key,value in options.items()]]
+            args += ['map_partial:='+str(bool(getattr(self,'map_partial',False))).lower(), 'map:='+str(map_path),
+                     *[(key+':='+str(value).lower() if isinstance(value,bool) else key+':='+str(value))
+                       for key,value in options.items()]]
             if self.model: args.append('model:='+self.model)
             if self.calibration_file: args.append('calibration_file:='+self.calibration_file)
             if self.vision_config: args.append('vision_config:='+self.vision_config)
+            if self.attitude_config: args.append('attitude_config:='+str(self.attitude_config))
         with self.log.open('w') as stream:
-            self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
+            self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True,env=env)
+        self.active_grid_settings = grids if phase != 'calibration' else None
         self.phase,self.fault=phase,None
         if self.cancel.is_set():
             self.stop()

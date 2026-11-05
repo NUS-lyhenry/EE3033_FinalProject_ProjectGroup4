@@ -91,15 +91,18 @@ def test_symlinked_map_and_external_image_are_rejected(tmp_path):
 @pytest.mark.parametrize('values',[{'return_tolerance':True},{'return_tolerance':float('nan')},
     {'return_tolerance':0},{'preferred_target_sigma':True},{'preferred_target_sigma':float('nan')},
     {'preferred_target_sigma':0.},{'preferred_target_sigma':1.01},{'preferred_target_sigma':'0.1'},{'target_class':'cup; touch /tmp/injected'},
-    {'target_class':'cup:=bottle'},{'localization_method':'guess'}])
+    {'target_class':'cup:=bottle'},{'localization_method':'guess'},
+    {'enable_ab_maneuver':'true'},{'acquisition_seconds':0},{'acquisition_seconds':601},{'acquisition_seconds':True}])
 def test_mission_setup_validates_real_settings_not_shell_fragments(values):
     with pytest.raises(ValueError):mission_options(values)
 
 
 def test_valid_floor_target_setup_uses_explicit_projection():
     assert mission_options({'localization_method':'ground_plane','return_tolerance':.1})=={
-        'target_class':'cup','localization_method':'ground_plane','return_tolerance':.1,'preferred_target_sigma':.1}
+        'target_class':'cup','localization_method':'ground_plane','return_tolerance':.1,'preferred_target_sigma':.1,
+        'enable_ab_maneuver':False,'acquisition_seconds':90.0}
     assert mission_options({'preferred_target_sigma':.25})['preferred_target_sigma']==.25
+    assert mission_options({'enable_ab_maneuver':True,'acquisition_seconds':120})['enable_ab_maneuver'] is True
 
 
 def test_stage_manager_stops_only_its_owned_process_group(tmp_path):
@@ -114,6 +117,9 @@ def test_stage_manager_stops_only_its_owned_process_group(tmp_path):
         owned=manager.process
         assert 'map:=/tmp/map with spaces.yaml' in calls[0]
         assert 'allow_motion:=false' in calls[0]
+        assert 'enable_ab_maneuver:=false' in calls[0]
+        assert 'acquisition_seconds:=90.0' in calls[0]
+        assert not any(arg=='attitude_config:=' for arg in calls[0])
         with pytest.raises(RuntimeError):manager.launch('mapping',map_directory=tmp_path)
         manager.stop()
         assert owned.poll() is not None

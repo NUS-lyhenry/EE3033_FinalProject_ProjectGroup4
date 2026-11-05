@@ -5,7 +5,12 @@ from scipy.ndimage import binary_dilation, label
 from .coverage import CoveragePlanner
 from .core import angle_difference
 from .motion_safety import FOOTPRINT_RADIUS, polyline_map_clearance
-from .path_validation import safe_grid, validate_path
+from .robot_geometry import ROUTE_RADIUS
+from .path_validation import safe_grid, validate_path, path_search_grid
+
+
+class MappingStartUnavailable(ValueError):
+    """The current map cannot yet prove a safe connector from the robot."""
 
 
 def connection_cell(planner, point, safe_mask=None, allowed=None):
@@ -44,17 +49,17 @@ def reachable_space(planner, robot, safe_mask=None):
         if mask.shape!=planner.safe.shape:
             raise ValueError('Navigation costmap mask does not match the current map')
         physical &= mask
-    preferred=planner.safe & physical
+    preferred=planner.safe & safe_grid(planner.grid,planner.resolution,ROUTE_RADIUS) & physical
     planner.safe=physical if safe_mask is not None else preferred
     planner.preferred_safe=preferred
     r,c=planner.world_to_cell(*robot[:2])
     if not planner.in_bounds(r,c):
         raise ValueError('Robot outside the current SLAM map')
     if not np.any(planner.safe):
-        raise ValueError('No footprint-clear known mapped space; map remains incomplete')
+        raise MappingStartUnavailable('No footprint-clear known mapped space; map remains incomplete')
     anchor=connection_cell(planner,robot,safe_mask)
     if anchor is None:
-        raise ValueError('No connected footprint-clear known space; use an open starting area')
+        raise MappingStartUnavailable('No connected footprint-clear known space; use an open starting area')
     components,_=label(planner.safe,structure=[[0,1,0],[1,1,1],[0,1,0]])
     reachable=components==components[anchor]
     preferred_anchor=connection_cell(planner,robot,safe_mask,allowed=preferred)
@@ -67,8 +72,19 @@ def reachable_space(planner, robot, safe_mask=None):
 def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                   min_frontier_cells=5, approach_distance=0.75, toward=None,
                   safe_mask=None, visited=()):
-    planner = CoveragePlanner(data,resolution,origin,clearance=max(FOOTPRINT_RADIUS,clearance))
+    source_resolution = resolution
+    data, resolution, safe_mask = path_search_grid(data, resolution, safe_mask)
+    min_frontier_cells = math.ceil(min_frontier_cells*source_resolution/resolution-1e-6)
+    exclusion_distance = max(.12, 2*source_resolution)
+    planner = CoveragePlanner(data,resolution,origin,clearance=max(ROUTE_RADIUS,clearance))
     reachable = reachable_space(planner,robot,safe_mask)
+    # Use one footprint-safe shortest-path field instead of straight-line
+    # distance through walls. The true robot-to-anchor connector was
+    # independently checked by reachable_space().
+    anchor = connection_cell(planner,robot,safe_mask)
+    if anchor is None:
+        raise ValueError('No connected footprint-safe frontier start')
+    path_distances, _ = planner.travel_field(*planner.cell_to_world(*anchor))
     frontier = planner.free & binary_dilation(planner.grid<0,
                                                structure=[[0,1,0],[1,1,1],[0,1,0]])
     # Slanted SLAM boundaries form diagonal chains. Four-neighbour grouping
@@ -105,7 +121,7 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                                                    radius=FOOTPRINT_RADIUS).allowed:
                         continue
                     # Reject a failed approach, not the entire frontier around it.
-                    if any(math.hypot(x-fx,y-fy)<max(.12,2*resolution) for fx,fy in failed):
+                    if any(math.hypot(x-fx,y-fy)<exclusion_distance for fx,fy in failed):
                         continue
                     n=int(max(abs(edge[0]-row),abs(edge[1]-col))*2)+1
                     line=np.rint(np.linspace([row,col],edge,n)).astype(int)
@@ -116,14 +132,17 @@ def frontier_goal(data, resolution, origin, robot, failed=(), clearance=0.22,
                     # A stored view suppresses the same position AND facing. A
                     # legacy XY-only record suppresses just its local approach, not
                     # every direction into a room that still contains frontiers.
-                    if any(math.hypot(x-v[0],y-v[1])<(.40 if len(v)>=3 else max(.12,2*resolution))
+                    if any(math.hypot(x-v[0],y-v[1])<(.40 if len(v)>=3 else exclusion_distance)
                             and (len(v)<3 or abs(angle_difference(yaw,v[2]))<.6) for v in visited):
                         continue
                     distance=math.hypot(x-robot[0],y-robot[1])
                     if distance<0.35:
                         continue
+                    path_distance=float(path_distances[int(row),int(col)])
+                    if not math.isfinite(path_distance):
+                        continue
                     turn=abs(angle_difference(math.atan2(y-robot[1],x-robot[0]),robot[2]))
-                    score=len(cells)*resolution/(0.5+distance+0.4*turn)
+                    score=len(cells)*resolution/(0.5+path_distance+0.4*turn)
                     if toward is not None:
                         score/=0.25+math.hypot(cx-toward[0],cy-toward[1])
                     options.append((-tier,score,(x,y,yaw)))

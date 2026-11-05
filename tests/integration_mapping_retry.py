@@ -18,6 +18,7 @@ from std_srvs.srv import Trigger
 
 from integration_ros import FakeRobot, overrides, wait
 from ee3033_project.mapper import Mapper
+from ee3033_project.frontiers import MappingStartUnavailable
 
 
 AREAS={'A':(.6,0.,0.),'B':(0.,.6,0.)}
@@ -116,6 +117,38 @@ class MappingRetryIntegration(unittest.TestCase):
         self.assertEqual(self.robot.order,['A','B','home'])
         self.assertEqual(self.mapper.retry_round,0)
         self.assertEqual(self.robot.max_active_goals,1)
+
+    def test_start_connector_waits_for_fresh_map_then_recovers(self):
+        # The existing fixture still supplies the real retry/action workflow.
+        planner=self.mapper.__class__.__module__+'.frontier_goal'
+        self.patch.stop()
+        attempts=[]
+        def transient(*args,**kwargs):
+            attempts.append(time.monotonic())
+            if len(attempts)<3:
+                raise MappingStartUnavailable('No connected footprint-clear known space')
+            return AREAS['B'],1
+        with patch(planner,side_effect=transient):
+            self.start('abort')
+            self.assertTrue(wait(lambda:len(attempts)>=2))
+            self.assertEqual(self.mapper.state,'MAPPING',self.mapper.reason)
+            self.assertEqual(self.robot.order,[])
+            self.assertTrue(wait(lambda:bool(self.robot.order)))
+            self.assertEqual(self.robot.order[0],'B')
+            self.assertIsNone(self.mapper.planning_blocked_since)
+        self.patch.start()
+
+    def test_persistent_start_connector_failure_stops_without_saving_or_motion(self):
+        self.patch.stop()
+        with patch('ee3033_project.mapper.frontier_goal',side_effect=MappingStartUnavailable('No connected footprint-clear known space')):
+            self.start('abort')
+            self.assertTrue(wait(lambda:self.mapper.planning_blocked_since is not None))
+            self.mapper.planning_blocked_since=time.monotonic()-11
+            self.assertTrue(wait(lambda:self.mapper.state=='FAILED'))
+            self.assertIn('finish the map manually',self.mapper.reason)
+            self.assertEqual(self.robot.order,[])
+            self.assertIsNone(self.mapper.saved_map)
+        self.patch.start()
 
     def assert_timeout_stops(self,mode,pending=False):
         self.start(mode)

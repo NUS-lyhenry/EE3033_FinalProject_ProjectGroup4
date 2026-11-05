@@ -12,9 +12,10 @@ import random
 from collections import deque
 
 import numpy as np
+from ee3033_project.robot_geometry import FOOTPRINT_RADIUS
 
 SCHEMA_VERSION = 1
-ROBOT_CLEARANCE = .24
+ROBOT_CLEARANCE = FOOTPRINT_RADIUS
 GRID_RESOLUTION = .05
 
 
@@ -50,20 +51,20 @@ def _clearance(points, walls):
     return np.min(np.linalg.norm(offset-along[...,None]*edge,axis=-1),axis=-1)
 
 
-def _connected_grid(scene):
+def _connected_grid(scene, resolution=GRID_RESOLUTION):
     """Return physical-world sample points reachable from the validated start."""
     xmin,ymin,xmax,ymax=scene['bounds']
-    xs=np.arange(xmin+GRID_RESOLUTION/2,xmax,GRID_RESOLUTION)
-    ys=np.arange(ymin+GRID_RESOLUTION/2,ymax,GRID_RESOLUTION)
+    xs=np.arange(xmin+resolution/2,xmax,resolution)
+    ys=np.arange(ymin+resolution/2,ymax,resolution)
     xx,yy=np.meshgrid(xs,ys)
     points=np.stack([xx,yy],axis=-1)
     # Inflate by half a grid diagonal so any path through adjacent grid cells
     # retains the requested chassis clearance, including between sample points.
-    safe=_clearance(points,scene['walls']) >= ROBOT_CLEARANCE+GRID_RESOLUTION/math.sqrt(2)
+    safe=_clearance(points,scene['walls']) >= ROBOT_CLEARANCE+resolution/math.sqrt(2)
     start=np.asarray(scene['start'][:2])
     # A short safe connector is needed when start is not a cell centre.
     distances=np.linalg.norm(points-start,axis=-1)
-    choices=np.argwhere(safe & (distances<=GRID_RESOLUTION*2))
+    choices=np.argwhere(safe & (distances<=resolution*2))
     visited=np.zeros(safe.shape,dtype=bool)
     if not len(choices):return points,visited
     seeds=[]
@@ -119,10 +120,19 @@ def validate_scenario(value):
     if math.dist(start[:2],target[:2])<.3:raise ValueError('Target is too close to the initial chassis position')
     start[2]=math.atan2(math.sin(start[2]),math.cos(start[2]))
     scene=dict(version=1,name=name,seed=seed,bounds=bounds,walls=normalized,start=start,target=target)
-    points,reachable=_connected_grid(scene)
-    near=reachable & (np.linalg.norm(points-np.asarray(target[:2]),axis=-1)<=GRID_RESOLUTION*2)
-    if not any(np.all(_clearance(np.linspace(points[r,c],target[:2],5),normalized)>=ROBOT_CLEARANCE)
+    # Scene validation uses the same padded body as simulation and the final
+    # gate, rather than a retired 24 cm radius. Refine the independent setup
+    # grid when a real narrow doorway lies between coarse sample rows; neither
+    # the navigation map nor the physical geometry is changed by this check.
+    connected=False
+    for resolution in (GRID_RESOLUTION,GRID_RESOLUTION/2,GRID_RESOLUTION/4):
+        points,reachable=_connected_grid(scene,resolution)
+        near=reachable & (np.linalg.norm(points-np.asarray(target[:2]),axis=-1)<=resolution*2)
+        if any(np.all(_clearance(np.linspace(points[r,c],target[:2],5),normalized)>=ROBOT_CLEARANCE)
                for r,c in np.argwhere(near)):
+            connected=True
+            break
+    if not connected:
         raise ValueError('Target is not connected to start with robot clearance')
     return scene
 

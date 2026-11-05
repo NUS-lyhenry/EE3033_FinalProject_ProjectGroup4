@@ -70,7 +70,7 @@ class RecoveryBudget:
     def expired(self, now):
         return now >= self.deadline
 
-    def next(self, now, path_received):
+    def next(self, now, path_received, allow_reverse=True):
         if self.expired(now) or self.count>=self.maximum:
             return None
         # The first retry refreshes planning only. Reversing without a route
@@ -78,7 +78,7 @@ class RecoveryBudget:
         if self.count==1 and not path_received:
             return None
         self.count += 1
-        return 'refresh' if self.count==1 else 'reverse'
+        return 'refresh' if self.count==1 or not allow_reverse else 'reverse'
 
 
 def path_reference(path, pose, ahead=.18):
@@ -108,3 +108,17 @@ def path_reference(path, pose, ahead=.18):
         p=end
     else:target=path[-1]
     return math.atan2(target[1]-pose[1],target[0]-pose[0])
+
+
+def home_navigation_timeout(timeout):
+    """Home traverses the whole explored route; keep a bounded absolute budget."""
+    if not math.isfinite(timeout) or timeout<=0:raise ValueError('Invalid home timeout')
+    return min(300.,max(120.,3.*timeout))
+
+
+def navigation_budget(now, timeout, maximum, allow_reverse, behavior_tree):
+    """Search scans have one bounded attempt, never a recovery translation."""
+    scan = 'navigate_search_scan' in behavior_tree
+    limit=home_navigation_timeout(timeout) if 'navigate_home' in behavior_tree else timeout
+    return (RecoveryBudget(now, min(12., timeout) if scan else limit, 0 if scan else maximum),
+            bool(allow_reverse and not scan))

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "ee3033_navigation/regulated_path_follower.hpp"
+#include "ee3033_navigation/corner_tracking.hpp"
+#include "ee3033_navigation/goal_heading_trigger.hpp"
+#include "ee3033_navigation/goal_heading_view.hpp"
+#include "ee3033_navigation/raw_cost_clearance.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,6 +36,8 @@ void RegulatedPathFollower::configure(
   nav2_util::declare_parameter_if_not_declared(
     node, name + ".max_angular_vel", rclcpp::ParameterValue(0.40));
   nav2_util::declare_parameter_if_not_declared(
+    node, name + ".corner_lookahead_dist", rclcpp::ParameterValue(0.08));
+  nav2_util::declare_parameter_if_not_declared(
     node, name + ".rotation_command_delay", rclcpp::ParameterValue(0.15));
   nav2_util::declare_parameter_if_not_declared(
     node, name + ".rotation_braking_accel", rclcpp::ParameterValue(0.8));
@@ -42,6 +48,11 @@ void RegulatedPathFollower::configure(
   const auto valid = validate_caps({
     node->get_parameter(name + ".max_linear_vel"),
     node->get_parameter(name + ".max_angular_vel"),
+    node->get_parameter(name + ".lookahead_dist"),
+    node->get_parameter(name + ".corner_lookahead_dist"),
+    node->get_parameter(name + ".min_lookahead_dist"),
+    node->get_parameter(name + ".max_lookahead_dist"),
+    node->get_parameter(name + ".rotate_to_heading_min_angle"),
     node->get_parameter(name + ".rotation_command_delay"),
     node->get_parameter(name + ".rotation_braking_accel"),
     node->get_parameter(name + ".rotation_stop_margin"),
@@ -72,11 +83,16 @@ rcl_interfaces::msg::SetParametersResult RegulatedPathFollower::validate_caps(
     const auto & name = parameter.get_name();
     const bool cap = name == plugin_name_ + ".max_linear_vel" ||
       name == plugin_name_ + ".max_angular_vel";
+    const bool tracking_distance = name == plugin_name_ + ".lookahead_dist" ||
+      name == plugin_name_ + ".corner_lookahead_dist" ||
+      name == plugin_name_ + ".min_lookahead_dist" ||
+      name == plugin_name_ + ".max_lookahead_dist";
+    const bool tracking_angle = name == plugin_name_ + ".rotate_to_heading_min_angle";
     const bool delay = name == plugin_name_ + ".rotation_command_delay";
     const bool brake = name == plugin_name_ + ".rotation_braking_accel";
     const bool margin = name == plugin_name_ + ".rotation_stop_margin";
     const bool deadband = name == plugin_name_ + ".rotation_motor_deadband";
-    if (!(cap || delay || brake || margin || deadband)) {
+    if (!(cap || delay || brake || margin || deadband || tracking_distance || tracking_angle)) {
       continue;
     }
     if (parameter.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
@@ -84,12 +100,14 @@ rcl_interfaces::msg::SetParametersResult RegulatedPathFollower::validate_caps(
     } else {
       const double value = parameter.as_double();
       result.successful = std::isfinite(value) &&
-        (cap ? value > 0. : delay ? value >= 0. && value <= 1. :
+        (tracking_distance ? value >= 0.06 && value <= 0.30 :
+        tracking_angle ? value >= 0.05 && value <= 1.57 :
+        cap ? value > 0. : delay ? value >= 0. && value <= 1. :
         brake ? value > 0. && value <= 0.8 : margin ? value > 0. && value <= 0.02 :
         value >= 0. && value < 0.4);
     }
     if (!result.successful) {
-      result.reason = "Controller caps and rotation braking parameters are outside physical bounds";
+      result.reason = "Controller speed, tracking or rotation braking parameters are outside allowed bounds";
       break;
     }
   }
@@ -140,6 +158,8 @@ void RegulatedPathFollower::cleanup()
   std::lock_guard<std::mutex> lock(reference_mutex_);
   reset_reference();
   last_unpruned_plan_ = nav_msgs::msg::Path();
+  sharp_bends_.clear();
+  corner_tracking_ = false;
   caps_callback_.reset();
   drive_subscription_.reset();
   Base::cleanup();
@@ -148,6 +168,16 @@ void RegulatedPathFollower::cleanup()
 void RegulatedPathFollower::setPlan(const nav_msgs::msg::Path & path)
 {
   std::lock_guard<std::mutex> lock(reference_mutex_);
+  std::vector<PathPoint> points;
+  points.reserve(path.poses.size());
+  for (const auto & pose : path.poses) {
+    points.push_back({pose.pose.position.x, pose.pose.position.y});
+  }
+  try {
+    sharp_bends_ = sharp_bend_features(points);
+  } catch (const std::invalid_argument & error) {
+    throw nav2_core::PlannerException(error.what());
+  }
   bool changed_goal = path.header.frame_id != last_unpruned_plan_.header.frame_id ||
     path.poses.empty() || last_unpruned_plan_.poses.empty();
   if (!changed_goal) {
@@ -164,6 +194,79 @@ void RegulatedPathFollower::setPlan(const nav_msgs::msg::Path & path)
   // lifecycle transitions and command gaps independently invalidate references.
   last_unpruned_plan_ = path;
   Base::setPlan(path);
+}
+
+void RegulatedPathFollower::select_path_tracking(const geometry_msgs::msg::PoseStamped & pose)
+{
+  if (last_unpruned_plan_.header.frame_id.empty()) {
+    throw nav2_core::PlannerException("A framed unpruned path is required for corner tracking");
+  }
+  geometry_msgs::msg::PoseStamped in_plan_frame;
+  if (!transformPose(last_unpruned_plan_.header.frame_id, pose, in_plan_frame)) {
+    throw nav2_core::PlannerException("Cannot transform physical pose for corner tracking");
+  }
+  bool corner;
+  try {
+    corner = near_sharp_bend(sharp_bends_,
+      {in_plan_frame.pose.position.x, in_plan_frame.pose.position.y}) && nearby_raw_obstacle(pose);
+  } catch (const std::invalid_argument & error) {
+    throw nav2_core::PlannerException(error.what());
+  }
+  auto node = node_.lock();
+  if (!node) {
+    throw nav2_core::PlannerException("Controller node disappeared while selecting path tracking");
+  }
+  // Read configured straight settings before acquiring native RPP's mutex.
+  // No parameter-server writes or altered pose/velocity/path inputs are used.
+  const double configured_lookahead = node->get_parameter(plugin_name_ + ".lookahead_dist").as_double();
+  const double corner_lookahead = node->get_parameter(
+    plugin_name_ + ".corner_lookahead_dist").as_double();
+  const double configured_min = node->get_parameter(plugin_name_ + ".min_lookahead_dist").as_double();
+  const double configured_max = node->get_parameter(plugin_name_ + ".max_lookahead_dist").as_double();
+  const double configured_alignment = node->get_parameter(plugin_name_ + ".rotate_to_heading_min_angle").as_double();
+  const double configured_speed = node->get_parameter(plugin_name_ + ".desired_linear_vel").as_double();
+  const double configured_turn = node->get_parameter(plugin_name_ + ".rotate_to_heading_angular_vel").as_double();
+  const double configured_linear_cap = node->get_parameter(plugin_name_ + ".max_linear_vel").as_double();
+  const double configured_angular_cap = node->get_parameter(plugin_name_ + ".max_angular_vel").as_double();
+  const double lookahead = corner ? corner_lookahead : configured_lookahead;
+  const double alignment = configured_alignment;
+  {
+    std::lock_guard<std::mutex> native_lock(mutex_);
+    lookahead_dist_ = lookahead;
+    min_lookahead_dist_ = corner ? corner_lookahead : configured_min;
+    max_lookahead_dist_ = corner ? corner_lookahead : configured_max;
+    rotate_to_heading_min_angle_ = alignment;
+    desired_linear_vel_ = corner ? std::min(configured_speed, 0.08) : configured_speed;
+    rotate_to_heading_angular_vel_ = corner ? std::min(configured_turn, 0.40) : configured_turn;
+  }
+  if (corner != corner_tracking_) {
+    RCLCPP_INFO(logger_, "Path tracking mode: %s; lookahead %.3f m; alignment %.3f rad; v ceiling %.3f m/s; w ceiling %.3f rad/s",
+      corner ? "corner" : "straight", lookahead, alignment,
+      corner ? std::min(configured_linear_cap, 0.08) : configured_linear_cap,
+      corner ? std::min(configured_angular_cap, 0.40) : configured_angular_cap);
+  }
+  // Features are cached per complete plan; current same-stamp pose proximity
+  // selects their mode every tick, without relying on frequent replanning.
+  corner_tracking_ = corner;
+}
+
+bool RegulatedPathFollower::nearby_raw_obstacle(const geometry_msgs::msg::PoseStamped & pose)
+{
+  const auto frame = costmap_ros_->getGlobalFrameID();
+  geometry_msgs::msg::PoseStamped in_costmap_frame;
+  if (!transformPose(frame, pose, in_costmap_frame) || in_costmap_frame.header.frame_id != frame) {
+    throw nav2_core::PlannerException("Cannot transform physical pose into the raw costmap frame");
+  }
+  auto * map = costmap_ros_->getCostmap();
+  if (!map) {
+    throw nav2_core::PlannerException("A raw local costmap is required for corner tracking");
+  }
+  // This lock is released on return BEFORE select_path_tracking acquires
+  // native RPP's mutex. Do not invert Base's native-mutex/costmap lock order.
+  std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> map_lock(*(map->getMutex()));
+  return raw_obstacle_near(map->getCharMap(), map->getSizeInCellsX(), map->getSizeInCellsY(),
+    map->getResolution(), map->getOriginX(), map->getOriginY(),
+    in_costmap_frame.pose.position.x, in_costmap_frame.pose.position.y);
 }
 
 void RegulatedPathFollower::observe_yaw(const geometry_msgs::msg::PoseStamped & pose)
@@ -187,6 +290,32 @@ void RegulatedPathFollower::observe_yaw(const geometry_msgs::msg::PoseStamped & 
     yaw_frame_ = pose.header.frame_id;
     have_yaw_sample_ = true;
   }
+}
+
+double RegulatedPathFollower::actual_goal_distance(const geometry_msgs::msg::PoseStamped & pose)
+{
+  if (last_unpruned_plan_.poses.empty()) {
+    throw nav2_core::PlannerException("The actual unpruned goal is required");
+  }
+  const double age = clock_->now().seconds() - rclcpp::Time(pose.header.stamp).seconds();
+  if (!std::isfinite(age) || age < -0.05 || age > 0.5) {
+    throw nav2_core::PlannerException("Fresh physical pose is required for terminal heading");
+  }
+  auto goal = last_unpruned_plan_.poses.back();
+  goal.header.frame_id = last_unpruned_plan_.header.frame_id;
+  goal.header.stamp = pose.header.stamp;
+  geometry_msgs::msg::PoseStamped transformed;
+  if (!transformPose(pose.header.frame_id, goal, transformed)) {
+    throw nav2_core::PlannerException("Cannot transform actual goal at the current pose timestamp");
+  }
+  const auto & current = pose.pose.position;
+  const auto & target = transformed.pose.position;
+  if (!std::isfinite(current.x) || !std::isfinite(current.y) ||
+    !std::isfinite(target.x) || !std::isfinite(target.y))
+  {
+    throw nav2_core::PlannerException("Actual goal position must be finite");
+  }
+  return std::hypot(target.x - current.x, target.y - current.y);
 }
 
 void RegulatedPathFollower::brake_final_rotation(
@@ -339,7 +468,32 @@ geometry_msgs::msg::TwistStamped RegulatedPathFollower::computeVelocityCommands(
     if (final_braking_failed_) {
       throw nav2_core::PlannerException("Final heading braking correction budget exhausted");
     }
-    auto command = Base::computeVelocityCommands(pose, command_reference, goal_checker);
+    if (!goal_checker) {
+      throw nav2_core::PlannerException("The original goal checker is required");
+    }
+    const double goal_distance = actual_goal_distance(pose);
+    geometry_msgs::msg::Pose tolerance;
+    geometry_msgs::msg::Twist velocity_tolerance;
+    // Humble computes a command before checking arrival. Position-only goal
+    // checkers use pi yaw tolerance. Emit zero at their actual XY endpoint
+    // so they cannot request a final turn on the arrival tick.
+    if (goal_checker->getTolerances(tolerance, velocity_tolerance) &&
+      std::abs(tf2::getYaw(tolerance.orientation)) >= std::acos(-1.) - 1e-9 &&
+      actual_goal_within_xy_tolerance(goal_distance, tolerance.position.x))
+    {
+      control_duration_ = native_duration;
+      reset_reference();
+      geometry_msgs::msg::TwistStamped stopped;
+      stopped.header = pose.header;
+      return stopped;
+    }
+    select_path_tracking(pose);
+    // Humble's terminal-heading heuristic uses carrot distance. A short carrot
+    // must not masquerade as arrival while the actual unpruned goal is far.
+    // Only RPP sees this view; ControllerServer and final braking retain the
+    // original checker and its exact acceptance tolerances/state.
+    GoalHeadingView heading_view(*goal_checker, goal_distance);
+    auto command = Base::computeVelocityCommands(pose, command_reference, &heading_view);
     control_duration_ = native_duration;
     const double v = command.twist.linear.x;
     const double w = command.twist.angular.z;
@@ -348,8 +502,10 @@ geometry_msgs::msg::TwistStamped RegulatedPathFollower::computeVelocityCommands(
     }
     // Match the final gate's limits without converting a tight arc into a
     // wider, unsafe one. Uniform slowdown traverses the same checked arc.
-    const double vmax = node->get_parameter(plugin_name_ + ".max_linear_vel").as_double();
-    const double wmax = node->get_parameter(plugin_name_ + ".max_angular_vel").as_double();
+    const double configured_vmax = node->get_parameter(plugin_name_ + ".max_linear_vel").as_double();
+    const double configured_wmax = node->get_parameter(plugin_name_ + ".max_angular_vel").as_double();
+    const double vmax = corner_tracking_ ? std::min(configured_vmax, 0.08) : configured_vmax;
+    const double wmax = corner_tracking_ ? std::min(configured_wmax, 0.40) : configured_wmax;
     const double scale = std::min({1., std::abs(v) > 0. ? vmax / std::abs(v) : 1.,
         std::abs(w) > 0. ? wmax / std::abs(w) : 1.});
     command.twist.linear.x *= scale;

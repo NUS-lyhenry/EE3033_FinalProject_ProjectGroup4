@@ -53,7 +53,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: progress_checker
-    goal_checker_plugins: [goal_checker]
+    goal_checker_plugins: [goal_checker, mapping_goal_checker, home_goal_checker, observation_goal_checker, approach_goal_checker]
     controller_plugins: [FollowPath]
     progress_checker:
       plugin: nav2_controller::SimpleProgressChecker
@@ -64,9 +64,14 @@ controller_server:
       xy_goal_tolerance: 0.12
       yaw_goal_tolerance: 0.20
       stateful: true
-    observation_goal_checker:
+    mapping_goal_checker:
       plugin: nav2_controller::SimpleGoalChecker
       xy_goal_tolerance: 0.12
+      yaw_goal_tolerance: 3.141592653589793
+      stateful: false
+    observation_goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.10
       yaw_goal_tolerance: 0.03
       stateful: true
     home_goal_checker:
@@ -74,6 +79,11 @@ controller_server:
       xy_goal_tolerance: 0.12
       yaw_goal_tolerance: 3.141592653589793
       stateful: true
+    approach_goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.025
+      yaw_goal_tolerance: 0.10
+      stateful: false
     FollowPath:
       plugin: dwb_core::DWBLocalPlanner
       min_vel_x: 0.0
@@ -122,7 +132,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.106801
+      robot_radius: 0.10
       footprint: "[]"
       footprint_padding: 0.01
       transform_tolerance: 0.3
@@ -145,7 +155,7 @@ local_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         enabled: true
-        inflation_radius: 0.24
+        inflation_radius: 0.12
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
 global_costmap:
@@ -156,7 +166,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_footprint
       resolution: 0.05
-      robot_radius: 0.106801
+      robot_radius: 0.10
       footprint: "[]"
       footprint_padding: 0.01
       transform_tolerance: 0.3
@@ -164,6 +174,7 @@ global_costmap:
       plugins: [static_layer, obstacle_layer, inflation_layer]
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer
+        map_topic: /project/navigation_map
         map_subscribe_transient_local: true
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
@@ -182,7 +193,7 @@ global_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         enabled: true
-        inflation_radius: 0.24
+        inflation_radius: 0.12
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
 planner_server:

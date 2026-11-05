@@ -30,3 +30,12 @@ class ObservationMotion:
             if stamp-2*self.settings[0] <= sample[0] <= stamp:
                 window.add(*sample)
         return window.evaluate(stamp)
+
+    def uncertainty_at(self, stamp, distance):
+        """Capture-time motion adds error; a complete stationary window is optional."""
+        past=[p for p in self.history if 0<=stamp-p[0]<=.25]
+        if not past:return dict(sigma=.05,verified=False,reason='capture_motion_unavailable')
+        sample=max(past,key=lambda p:p[0])
+        return dict(sigma=math.hypot(.1*abs(sample[4]),.1*abs(distance*sample[5])),
+            verified=True,stamp=sample[0],linear=sample[4],angular=sample[5],
+            reason='capture_motion_uncertainty')

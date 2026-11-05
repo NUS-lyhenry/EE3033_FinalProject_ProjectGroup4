@@ -9,7 +9,10 @@ from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
-from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map, calibration_pose_source, require_preserved_unknown
+from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, atomic_json, mission_options, require_current_mapping_map, calibration_pose_source, require_preserved_unknown
+from . import gap
+from .trial import validate_trial
+from .grid_settings import GRID_DEFAULTS, GRID_LIMITS, validate_grid_settings
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
@@ -23,7 +26,25 @@ class Workflow(CameraSetup):
         self.record = TrialRecord(self.p['session_directory'])
         self.status_after=-math.inf
         self.selected_map = None
-        self.mission_options = mission_options({})
+        session = Path(self.p['session_directory']).expanduser()
+        self.mission_options_path = session/'mission_settings.json'
+        saved_mission = json.loads(self.mission_options_path.read_text()) if self.mission_options_path.is_file() else {}
+        self.mission_options = mission_options(saved_mission)
+        self.navigation_settings_path = session/'navigation_settings.json'
+        self.navigation_settings = {}
+        self.grid_defaults = dict(GRID_DEFAULTS, mapping_resolution=self.p['mapping_resolution'])
+        if self.navigation_settings_path.is_file():
+            saved_navigation = json.loads(self.navigation_settings_path.read_text())
+            if 'trial' in saved_navigation:
+                self.navigation_settings['trial'] = validate_trial(saved_navigation['trial'])
+            if 'gap' in saved_navigation:
+                saved_gap = saved_navigation['gap']
+                policy = gap.manual_policy(saved_gap)
+                self.navigation_settings['gap'] = policy
+                if policy != saved_gap:
+                    atomic_json(self.navigation_settings_path, dict(saved_navigation, gap=policy))
+            if 'grids' in saved_navigation:
+                self.navigation_settings['grids'] = validate_grid_settings(saved_navigation['grids'])
         self.initial_pose_sent = False
         self.perception_data = None
         self.result_data = None
@@ -37,7 +58,7 @@ class Workflow(CameraSetup):
             allow_motion=self.p['allow_motion'], model=self.p['model'],
             calibration_file=self.p['calibration_file'],
             hardware={name:self.p['stage_'+name] for name in ('base','lidar','camera')}) if self.p['manage_stages'] else None
-        self.vision_settings = dict(camera_height=0., camera_pitch=.4991641660703783, use_pitch_override=True, camera_yaw=0.,
+        self.vision_settings = dict(camera_height=0., camera_pitch=0., use_pitch_override=False, camera_yaw=0.,
             camera_x=0., camera_y=0., horizontal_fov=0., camera_min_range=.35, camera_max_range=2.)
         saved = Path(self.p['vision_config']).expanduser() if self.p['vision_config'] else Path(self.p['session_directory']).expanduser()/'vision.yaml'
         if saved.is_file():
@@ -47,13 +68,55 @@ class Workflow(CameraSetup):
             self.p['vision_config'] = str(saved.resolve())
         if self.stage:
             self.stage.navigation_profile = self.p['navigation_profile']
-            self.stage.mapping_resolution = self.p['mapping_resolution']
+            self.stage.grid_settings = dict(self.grid_defaults, **self.navigation_settings.get('grids', {}))
+            self.stage.mapping_resolution = self.stage.grid_settings['mapping_resolution']
             self.stage.vision_config = self.p['vision_config']
         self.init_camera_setup()
         self.create_subscription(Twist,'/cmd_vel',self.on_final_command,10)
         self.create_subscription(Odometry,'/odom',self.on_workflow_odom,qos_profile_sensor_data)
         self.create_subscription(String,'/project/mission_result',self.on_result,LATCHED)
         self.create_timer(.5,self.workflow_tick)
+
+    def save_navigation_settings(self, section, values):
+        updated = dict(self.navigation_settings, **{section: values})
+        atomic_json(self.navigation_settings_path, updated)
+        self.navigation_settings = updated
+
+    def restore_navigation_settings(self):
+        """Restore verified settings before releasing the stage transition lock."""
+        trial = self.navigation_settings.get('trial')
+        policy = self.navigation_settings.get('gap')
+        if not (trial or policy):
+            return True
+        deadline = time.monotonic() + 25.
+        problem = 'Waiting for stage status'
+        while time.monotonic() < deadline:
+            if self.stage.cancel.is_set():
+                return False
+            if self.stage.process.poll() is not None:
+                raise RuntimeError('Stage exited while restoring saved navigation settings')
+            with self.lock:
+                ready = (self.state['state'] == 'WAITING' and
+                         time.monotonic() - self.freshness.get('Mission', -math.inf) < 2.)
+            if ready:
+                try:
+                    self.require_zero_command()
+                    if trial:
+                        self.read_trial_nodes()
+                    if policy:
+                        gap.describe(self.read_gap_nodes(), self.p['phase'])
+                except (RuntimeError, ValueError) as exc:
+                    problem = str(exc)
+                else:
+                    break
+            self.stage.cancel.wait(.15)
+        else:
+            raise RuntimeError('Saved navigation settings could not be restored: ' + problem)
+        if trial and not self.stage.cancel.is_set():
+            self.trial_settings(trial, save=False)
+        if policy and not self.stage.cancel.is_set():
+            self.gap_settings(**policy, save=False)
+        return not self.stage.cancel.is_set()
 
     def on_final_command(self,msg):
         with self.lock:
@@ -113,7 +176,8 @@ class Workflow(CameraSetup):
                     selected_map=self.selected_map,mission_options=self.mission_options,
                     initial_pose_sent=self.initial_pose_sent,perception=self.perception_data,
                     vision_settings=self.vision_settings, navigation_profile=self.p['navigation_profile'],
-                    mapping_resolution=self.p['mapping_resolution'],
+                    mapping_resolution=self.stage.mapping_resolution if self.stage else self.p['mapping_resolution'],
+                    grid_settings=self.grid_settings_snapshot(),
                     mission_result=self.result_data,workflow_fault=self.workflow_fault)
 
     def workflow_get(self,path):
@@ -123,6 +187,18 @@ class Workflow(CameraSetup):
                         selected_map=self.selected_map,settings=self.mission_options,
                         phase=self.p['phase'],software_version=self.p['software_version'])
         return None
+
+    def grid_settings_snapshot(self):
+        selected = dict(self.grid_defaults, **self.navigation_settings.get('grids', {}))
+        stage = self.stage.snapshot() if self.stage else {}
+        active = stage.get('grid_settings')
+        resolution = self.map_data['resolution'] if active and self.map_data is not None else None
+        return dict(selected=selected, defaults=self.grid_defaults, active=active,
+                    map_resolution=resolution,
+                    effective_path_resolution=self.navigation_grid_resolution if active else None,
+                    active_phase=stage.get('phase') if active else None,
+                    limits={key: dict(min=low,max=high) for key,(low,high) in GRID_LIMITS.items()},
+                    editable=bool(self.stage) and not stage.get('transitioning') and self.state['state'] not in ACTIVE)
 
     def require_idle(self):
         with self.lock:
@@ -138,6 +214,15 @@ class Workflow(CameraSetup):
                 raise ValueError('Wait for fresh zero velocity output before changing stages')
 
     def workflow_command(self,path,body):
+        if path=='/api/grid_settings':
+            self.require_idle()
+            if self.stage is None:
+                raise ValueError('Grid settings require the managed workflow')
+            tuning = dict(self.navigation_settings.get('grids', {}), **validate_grid_settings(body))
+            self.save_navigation_settings('grids', tuning)
+            self.stage.grid_settings = dict(self.grid_defaults, **tuning)
+            self.stage.mapping_resolution = self.stage.grid_settings['mapping_resolution']
+            return dict(self.grid_settings_snapshot(), success=True, message='Grid settings saved for the next stage')
         if path=='/api/retry_search':
             self.require_idle()
             if self.p['phase']!='mission' or not self.selected_map:
@@ -155,8 +240,8 @@ class Workflow(CameraSetup):
                 raise ValueError('Mission status is stale; wait for fresh localization and sensors')
             if not self.state.get('ready'):
                 raise ValueError(self.state.get('readiness_reason') or 'Wait for valid localization and sensors')
-            if self.trial_fault or self.gap_fault or self.workflow_fault:
-                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault)
+            if self.trial_fault or self.gap_fault or self.workflow_fault or self.recovery_fault:
+                raise ValueError(self.trial_fault or self.gap_fault or self.workflow_fault or self.recovery_fault)
             if self.selected_map.get('path'):require_preserved_unknown(self.selected_map['path'])
             previous=json.loads(json.dumps(self.record.data))
             cutoff=self.retry_after_stamp
@@ -183,6 +268,7 @@ class Workflow(CameraSetup):
                     return dict(success=False,message='Start canceled by Stop',canceled_by_stop=True)
                 self.control_generation+=1
                 self.result_data=self.target_estimate=None
+                if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
                 self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
                 self.events.clear()
             return dict(result,message='Searching again on the loaded map; previous attempt saved')
@@ -206,7 +292,8 @@ class Workflow(CameraSetup):
             phase=body.get('phase')
             if phase not in ('mapping','mission','calibration'): raise ValueError('Select camera setup, mapping or mission')
             self.require_camera_idle()
-            map_path=None;selected=None;options=mission_options(body);reuse_saved_map=False
+            map_path=None;selected=None;reuse_saved_map=False
+            options = mission_options({**self.mission_options, **body}) if phase == 'mission' else self.mission_options
             self.stage.calibration_initial_pose = None
             if phase=='calibration':
                 if not body.get('map_id'):
@@ -283,14 +370,15 @@ class Workflow(CameraSetup):
                     self.status_after=self.get_clock().now().nanoseconds*1e-9
                     self.p['phase']=phase
                     self.state=dict(state='WAITING',reason='Starting '+phase+' services; waiting for fresh status',home=None,target=None)
-                    self.map_data=None;self.map_revision+=1;self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
+                    self.map_data=None;self.navigation_grid_resolution=None;self.map_revision+=1;self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
                     self.saved_map=None
                     self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None
                     self.target_estimate=None
+                    if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
                     self.gate_status=None
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
-                    self.selected_map=selected;self.mission_options=options
+                    self.selected_map=selected
                     self.trial_fault=self.gap_fault=self.workflow_fault=None
                     self.gap_reapply_required=False
                 self.refresh_camera_profile()
@@ -300,7 +388,13 @@ class Workflow(CameraSetup):
                 self.stage.map_partial=bool(selected and selected.get('quality')!='mapped')
                 if not self.stage.launch(phase,map_path,options,self.p['map_directory']):
                     return dict(success=True,message='Stage transition stopped; no stage remains active')
-                if phase=='mapping':
+                if phase != 'calibration' and not self.restore_navigation_settings():
+                    self.stage.stop()
+                    return dict(success=True,message='Stage transition stopped; no stage remains active')
+                if phase == 'mission':
+                    atomic_json(self.mission_options_path, options)
+                    self.mission_options = options
+                elif phase == 'mapping':
                     self.record.start('mapping')
             except Exception as exc:
                 self.workflow_fault='Stage load failed; no automatic restart: '+str(exc)

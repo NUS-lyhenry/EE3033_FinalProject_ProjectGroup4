@@ -67,3 +67,17 @@ def test_heading_follows_path_arc_instead_of_cutting_to_later_point():
     angle=path_reference([(0.,0.),(.1,0.),(.1,.2)],(0.,0.,0.))
     assert angle==pytest.approx(math.atan2(.08,.1))
     assert path_reference([(0.,0.)],(0.,0.,0.)) is None
+
+
+def test_disabling_reverse_keeps_two_bounded_planning_retries():
+    b=RecoveryBudget(10.,60.)
+    assert b.next(20.,True,allow_reverse=False)=='refresh'
+    assert b.next(30.,True,allow_reverse=False)=='refresh'
+    assert b.next(40.,True,allow_reverse=False) is None
+    assert b.count==2 and b.deadline==70.
+
+
+def test_disabling_reverse_does_not_retry_an_unreachable_goal_forever():
+    b=RecoveryBudget(0.)
+    assert b.next(1.,False,allow_reverse=False)=='refresh'
+    assert b.next(2.,False,allow_reverse=False) is None

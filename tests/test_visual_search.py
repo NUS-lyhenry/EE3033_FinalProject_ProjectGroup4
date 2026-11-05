@@ -101,8 +101,82 @@ def detection(stamp, **kwargs):
     return dict(stamp=stamp, confidence=.8, label='bottle', bearing=0., origin=[1., 1.], **kwargs)
 
 
-def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during_acquisition():
+@pytest.mark.parametrize('scale', [.5, 1., 2.])
+@pytest.mark.parametrize('box,small', [
+    ([300, 200, 310, 220], True),  # Narrow base on a short object.
+    ([300, 200, 360, 230], False),  # Short height cannot trigger an approach.
+    ([300, 200, 310, 350], True),  # Tall height cannot rescue a narrow base.
+    ([300, 200, 314, 250], False),  # Small area cannot trigger an approach.
+    ([300, 200, 324, 260], False),
+    ([0, 0, 12.8, 1], False),  # The width threshold itself is accepted.
+])
+def test_box_base_width_uses_actual_image_resolution(scale, box, small):
     target = SingleTarget()
+    d = detection(10., box=[v*scale for v in box],
+                  image_width=640*scale)
+    assert target.box_is_small(d) is small
+
+
+def test_small_box_gate_requires_two_distinct_consistent_larger_frames():
+    target = SingleTarget()
+    def frame(stamp, box):
+        return detection(stamp, box=box, image_width=640, image_height=480)
+    small = [300, 200, 310, 220]
+    large = [290, 180, 330, 280]
+    for stamp in (10., 10.2):
+        target.update([frame(stamp, small)], stamp, 9.)
+    assert target.locked and target.needs_closer_view()
+    target.update([frame(10.4, large)], 10.4, 9.)
+    target.update([frame(10.4, large)], 10.5, 9.)  # Repeated image is not a second frame.
+    assert target.needs_closer_view()
+    target.update([detection(10.6)], 10.6, 9.)  # Missing metadata cannot clear it.
+    target.update([frame(10.8, large)], 10.8, 9.)
+    assert target.needs_closer_view()
+    target.update([frame(11., large)], 11., 9.)
+    assert not target.needs_closer_view()
+    target.update([frame(11.2, small)], 11.2, 9.)
+    assert target.needs_closer_view()
+    target.reset()
+    assert not target.needs_closer_view()
+
+
+def test_small_box_approaches_on_bearing_even_with_unreliable_far_projection():
+    target = SingleTarget(enable_ab_maneuver=True)
+    d = detection(10., box=[300, 200, 310, 220], image_width=640, image_height=480,
+                  x=20., y=20., projection_valid=True)
+    target.update([d], 10., 9.)
+    planner = CoveragePlanner(np.zeros((80, 80)), .05, (0, 0, 0))
+    goal = target.observation_goal(planner, (1., 1., 0.), allowed=lambda *a: True)
+    assert goal == pytest.approx((1.1, 1., 0.))
+    assert target.last_goal_action == 'approach'
+    assert 'Small target box' in target.last_goal_reason
+    target.visited.clear()
+    assert target.observation_goal(planner, (1., 1., 0.), allowed=lambda *a: False) is None
+
+
+@pytest.mark.parametrize('changes', [dict(image_width=0), dict(image_width=math.nan),
+                                   dict(box=[1, 2]), dict(box=[20, 20, 10, 10])])
+def test_malformed_box_metadata_cannot_clear_small_view_requirement(changes):
+    d = detection(10., box=[300, 200, 324, 260], image_width=640, image_height=480)
+    d.update(changes)
+    assert SingleTarget().box_is_small(d) is True
+
+
+@pytest.mark.parametrize('height', [1., 20., 100., 400.])
+@pytest.mark.parametrize('width,small', [(10., True), (20., False)])
+def test_base_width_decision_is_independent_of_object_height(height, width, small):
+    d = detection(10., box=[100., 0., 100.+width, height], image_width=640)
+    assert SingleTarget().box_is_small(d) is small
+
+
+@pytest.mark.parametrize('threshold', [0., -.1, 1.1, math.nan])
+def test_invalid_base_width_threshold_is_rejected(threshold):
+    with pytest.raises(ValueError, match='width fraction'):
+        SingleTarget(min_box_width_fraction=threshold)
+
+
+def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during_acquisition():
+    target = SingleTarget(enable_ab_maneuver=True)
     assert not target.update([detection(10.)], 10., 9.)
     assert not target.update([detection(10.)], 10., 9.)
     assert target.update([detection(10.25)], 10.25, 9.)
@@ -115,9 +189,9 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
     target.advance_clock(1.,working=True)
     target.advance_clock(16.,working=False,traveling=True)
     target.advance_clock(76.,working=True)
-    assert not target.expired(76.)  # the minute of navigation is excluded
+    assert not target.expired(76.)  # 75 of the shared 90 wall-clock seconds used
     target.advance_clock(106.)
-    assert target.expired(46.)
+    assert target.expired(91.)  # navigation consumes the same absolute budget
     target.reset()
     assert not target.update([detection(20., x=1., y=1.)], 20., 19.)
     assert not target.update([detection(20.25, x=2., y=1.)], 20.25, 19.)
@@ -125,7 +199,7 @@ def test_single_target_requires_distinct_fresh_frames_and_does_not_switch_during
 
 def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10., x=2., y=1., sigma=.3)
     goal = target.observation_goal(planner, (1., 1., 0.))
     assert goal and planner.safe[planner.world_to_cell(*goal[:2])]
@@ -138,7 +212,7 @@ def test_approach_is_reachable_and_bearing_only_centers_before_a_baseline():
 
 def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline():
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=detection(10.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=detection(10.)
     pose=(2.,2.,.5)
     first=target.observation_goal(planner,pose)
     assert first[:2]==pose[:2]
@@ -154,7 +228,7 @@ def test_repeated_turns_cannot_exhaust_motion_budget_before_a_lateral_baseline()
 
 def test_bad_floor_depth_and_first_nav2_rejected_side_still_try_another_baseline():
     planner=CoveragePlanner(np.zeros((50,50)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=detection(10.,x=20.,y=20.)
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=detection(10.,x=20.,y=20.)
     pose=(2.,2.,0.)
     target.candidate['origin']=list(pose[:2])
     # The north-side point is Nav2-blocked; south is usable.
@@ -175,7 +249,7 @@ def test_fast_profile_synchronizes_both_stages_and_search_estimates():
 
 def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
     planner = CoveragePlanner(np.zeros((60, 60)), .05, (0, 0, 0))
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10., x=2., y=1., sigma=.12, close_view=False)
     pose = (1.4, 1., 0.)
     goal = target.observation_goal(planner, pose)
@@ -186,7 +260,7 @@ def test_uncertain_target_requests_a_closer_observation_not_the_current_pose():
 
 
 def test_centered_bearing_only_target_does_not_spend_a_step_on_a_noop():
-    target = SingleTarget()
+    target = SingleTarget(enable_ab_maneuver=True)
     target.candidate = detection(10.)
     planner = CoveragePlanner(np.zeros((40, 40)), .1, (0, 0, 0))
     # An already centered target should acquire parallax, not another turn.
@@ -207,7 +281,7 @@ def test_camera_settings_reject_nonfinite_values_without_inventing_mount_dimensi
 
 def test_horizontal_clipping_only_guides_a_mapped_retreat_not_depth():
     planner=CoveragePlanner(np.zeros((40,40)),.1,(0,0,0))
-    target=SingleTarget();target.candidate=dict(stamp=10.,label='cup',confidence=.9,
+    target=SingleTarget(enable_ab_maneuver=True);target.candidate=dict(stamp=10.,label='cup',confidence=.9,
         box=[0,100,60,350],steering_bearing=0.,steering_origin=[1.,1.])
     goal=target.observation_goal(planner,(1.,1.,0.))
     assert goal and goal[0]<1. and goal[1]==pytest.approx(1.)

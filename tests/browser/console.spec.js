@@ -1,12 +1,80 @@
 const {test,expect}=require('@playwright/test');
-async function view(page,name){await page.evaluate(p=>location.hash='/'+p,name);await expect(page.locator('.page-tabs [data-page-link="'+name+'"]')).toHaveAttribute('aria-current','page');}
+async function view(page,name,expandLegacy=true){
+  await page.evaluate(p=>location.hash='/'+p,name);
+  await expect(page.locator('.page-tabs [data-page-link="'+name+'"]')).toHaveAttribute('aria-current','page');
+  if(name==='navigation'&&expandLegacy)
+    await page.locator('#settingsLayout .settings-fold').evaluateAll(folds=>folds.forEach(fold=>{fold.open=true;}));
+}
+
+test('manual live map confirms without a previous save or map library entry',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  f.state.saved_map=null;f.state.mission.state='STOPPED';
+  await expect(page.locator('#mapLibrary')).toBeVisible();
+  await expect(page.locator('#targetClass')).toBeVisible();
+  await expect(page.locator('#reviewMap')).toBeEnabled();
+  await expect(page.locator('#mapReviewNote')).toContainText('Confirm saves this mapping session');
+  await page.locator('#reviewMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  expect(f.calls.map(c=>c.path)).toEqual(['/api/save_map','/api/review_map','/api/stage']);
+  expect(f.calls[1].body.map_id).toBe(f.calls[2].body.map_id);
+  expect(f.state.initial_pose_sent).toBe(false);
+  await expect(page.locator('#startMission')).toBeDisabled();
+  expect(f.errors).toEqual([]);
+});
+
+test('manual confirmation saves the live map instead of the selected older map',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  f.setMaps([{id:'older/map.yaml',path:'/SIMULATED/maps/older/map.yaml',reviewed:true,quality:'mapped'}]);
+  f.state.saved_map=null;
+  f.state.mission.saved_map='/SIMULATED/maps/older/map.yaml';
+  await page.locator('#refreshMaps').click();
+  await expect(page.locator('#reviewMap')).toBeEnabled();
+  await page.locator('#reviewMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  expect(f.calls.find(c=>c.path==='/api/stage').body.map_id).toBe('onsite_simulated/map.yaml');
+  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
+});
+
+test('manual map confirmation stays locked during mapping and with a stale map',async({page})=>{
+  const f=await fixture(page,{active:true});await view(page,'workflow');
+  f.state.saved_map=null;
+  await expect(page.locator('#reviewMap')).toBeDisabled();
+  f.state.mission.state='STOPPED';f.state.health.Map.ok=false;
+  await expect(page.locator('#reviewMap')).toBeDisabled();
+  f.state.health.Map.ok=true;
+  await expect(page.locator('#reviewMap')).toBeEnabled();
+  expect(f.calls).toEqual([]);
+});
+
+test('mission start quote explains blockers and clears when ready',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  f.state.mission.ready=false;
+  f.state.mission.readiness_reason='Camera geometry unavailable: attitude_reference_missing';
+  const quote=page.locator('blockquote#missionStartReason');
+  await expect(page.locator('#startMission')).toBeDisabled();
+  await expect(quote).toContainText('controller attitude reference is missing');
+  await expect(quote).toContainText('Capture controller reference');
+  await expect(quote).toContainText('Set the assigned start pose');
+  f.state.initial_pose_sent=true;
+  f.state.mission.readiness_reason='Localization uncertainty is too high';
+  await expect(quote).toContainText('Localization uncertainty is too high');
+  await expect(quote).not.toContainText('controller attitude reference is missing');
+  f.state.mission.ready=true;f.state.mission.readiness_reason='Ready';
+  await expect(page.locator('#startMission')).toBeEnabled();
+  await expect(quote).toBeHidden();
+  await page.locator('#targetClass').selectOption('bottle');
+  await expect(page.locator('#startMission')).toBeDisabled();
+  await expect(quote).toContainText('Apply settings & reload mission');
+  expect(f.calls).toEqual([]);
+  expect(f.errors).toEqual([]);
+});
 
 test('live uncertain estimates update without becoming reported targets',async({page})=>{
   const f=await fixture(page,{phase:'mission'});
   f.state.target_estimate={x:2,y:1.5,sigma:.65,label:'bottle',samples:5,age:.2,stale:false,confirmed:false};
   await expect(page.locator('#targetEstimateStatus')).toContainText('Estimated bottle: (2.00, 1.50)');
-  await expect(page.locator('#confidence')).toContainText('Estimated bottle · σ 0.65 m');
-  await expect(page.locator('#resultTarget')).toHaveText('Awaiting target');
+  await expect(page.locator('#confidence')).toContainText('Estimated bottle · position σ 0.65 m');
+  await expect(page.locator('#resultTarget')).toHaveText('No coordinate reported');
   f.state.target_estimate={...f.state.target_estimate,x:2.3,sigma:.4,samples:8};
   await expect(page.locator('#targetEstimateStatus')).toContainText('(2.30, 1.50)');
   f.state.target_estimate.stale=true;f.state.target_estimate.age=4;
@@ -36,13 +104,28 @@ test('map ruler supports two clicks and dragging without pose commands',async({p
 
 async function fixture(page,{phase='mapping',active=false}={}){
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  const state={simulated:true,read_only:false,phase,allow_motion:true,token:'test-only',control_generation:0,
+  const state={return_home_supported:true,simulated:true,read_only:false,phase,allow_motion:true,token:'test-only',control_generation:0,
     mission:{phase,state:active?(phase==='mapping'?'MAPPING':'SEARCHING'):'WAITING',reason:'SIMULATED UI TEST · no robot motion',home:null,target:null,ready:true,return_verified:false},
     stage:{managed:true,running:true,phase,transitioning:false},assessment:{elapsed_seconds:65,started:10,finished:null,running:true,timing_valid:true,includes_mapping:true,maps:[]},
-    mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2,preferred_target_sigma:.1},
+    mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90},
+    recovery:{success:true,value:true,live_value:true,available:true,synchronized:true,editable:true,fault:null},
+    scan_filter:{success:true,value:.20,live_value:.20,available:true,synchronized:true,editable:true},
+    slam_settings:{success:true,selected:{occupancy_threshold:.1,minimum_pass_through:2},live:{occupancy_threshold:.1,minimum_pass_through:2},available:true,synchronized:true,editable:true,requires_new_map:false,message:'Active mapper readback matches the saved settings.'},
     map_revision:1,pose:[1,1,0],route:[],path:[],health:Object.fromEntries(['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(k=>[k,{ok:true,age:.1}])),
     events:[],camera_source:null,battery:{voltage:11.87,fresh:true,age:.1},control_fault:null,initial_pose_sent:false};
-  let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60};const calls=[];
+  let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35};const calls=[];
+  let clearanceOverrides={};
+  const clearanceDefaults={robot_radius:.10,footprint_radius:.116801,footprint_padding:.01,
+    inflation_radius:.12,clearance:.04,stop_distance:.12,rotation_clearance:.116801};
+  const clearanceLimits=Object.fromEntries(Object.entries(clearanceDefaults).map(([key,min])=>[key,{min,max:.5}]));
+  clearanceLimits.robot_radius.min=.06;
+  clearanceLimits.footprint_radius.min=.07;
+  const gridDefaults={mapping_resolution:.05,path_search_spacing:.02,viewpoint_spacing:.65,coverage_spacing:.15};
+  state.grid_settings={defaults:gridDefaults,selected:{...gridDefaults},active:gridDefaults,
+    active_phase:'mapping',map_resolution:.05,effective_path_resolution:.016667,editable:true,
+    limits:{mapping_resolution:{min:.01,max:.1},path_search_spacing:{min:.01,max:.1},
+      viewpoint_spacing:{min:.15,max:1.5},coverage_spacing:{min:.05,max:.5}}};
+  let attitude={success:true,mode:'fixed',topic:'/project/body_attitude',pivot:[0,0,.033],reference:null,sample:{age:.1,frame:'base_link'},ready:true,editable:true,reason:'',requires_reload:false};
   const cells=Array.from({length:2400},(_,i)=>i<60||i>=2340||i%60===0||i%60===59?100:0);
   const map={width:60,height:40,resolution:.1,origin:[0,0,0],cells};
   let stageDelay=null;
@@ -72,7 +155,7 @@ async function fixture(page,{phase='mapping',active=false}={}){
         state.mission={phase:body.phase,state:'WAITING',reason:'SIMULATED stage ready',home:null,target:null,ready:body.phase==='mapping',return_verified:false};
         state.initial_pose_sent=false;
         if(body.phase==='calibration')state.selected_map=maps.find(m=>m.id===body.map_id);
-        if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance,preferred_target_sigma:body.preferred_target_sigma};state.health.AMCL.ok=false;}
+        if(body.phase==='mission'){state.selected_map=maps[0];state.mission_options={target_class:body.target_class,localization_method:body.localization_method,return_tolerance:body.return_tolerance,preferred_target_sigma:body.preferred_target_sigma,enable_ab_maneuver:body.enable_ab_maneuver,acquisition_seconds:body.acquisition_seconds,bottle_min_range:body.bottle_min_range,bottle_max_range:body.bottle_max_range};state.health.AMCL.ok=false;}
       }
     }else if(path==='/api/calibration_target'){state.calibration_live.target={xy:[body.x,body.y]};state.calibration_live.plan={goals:[],reverse_extent_m:.8};}
     else if(path==='/api/initial_pose'){state.initial_pose_sent=true;state.health.AMCL.ok=true;state.mission.ready=true;}
@@ -83,21 +166,41 @@ async function fixture(page,{phase='mapping',active=false}={}){
       state.assessment={...state.assessment,finished:null,includes_mapping:false,timing_valid:false,elapsed_seconds:0};
     }
     else if(path==='/api/map_waypoint'){state.mission.state='MAPPING';state.mission.mapping_mode='waypoint';state.mission.waypoint=[body.x,body.y,body.yaw];state.mission.waypoint_verified=false;}
+    else if(path==='/api/return_home'){state.mission.state='RETURNING';json={success:true,message:'Return to home requested'};}
     else if(path==='/api/stop'){state.mission.state='STOPPED';state.control_generation++;}
     else if(path==='/api/result')json={simulated:true,assessment:state.assessment,mission:state.mission,selected_map:state.selected_map};
     else if(path==='/api/gap'){
       if(method==='POST'){if('enabled' in body)gap=body.enabled;if('audacity' in body)audacity=body.audacity;}
+      if(method==='POST'&&'tuning' in body)clearanceOverrides=body.tuning;
       const p={robot_radius:gap?.18:.14,footprint_padding:.01,resolution:.05};
       const options=[['cautious','Cautious',.22,.16],['balanced','Balanced',.18,.15],['bold','Bold',.14,.14]].map(([id,label,c,t])=>({id,label,clearance:c+(gap?.04:0),turn_stop_distance:t,nominal_min_opening:2*Math.max(c+(gap?.04:0),p.robot_radius+.01)}));
       json={success:true,enabled:gap,audacity,audacity_options:options,synchronized:true,nodes:{'global_costmap/global_costmap':p,'local_costmap/local_costmap':p,[state.phase==='mapping'?'project_mapper':'project_mission']:{clearance:options.find(o=>o.id===audacity).clearance}}};
+      json.tuning={defaults:clearanceDefaults,limits:clearanceLimits,overrides:clearanceOverrides,
+        live:{...clearanceDefaults,...clearanceOverrides}};
+    }else if(path==='/api/grid_settings'){
+      state.grid_settings.selected={...state.grid_settings.selected,...body};
+      json={success:true,...state.grid_settings};
+    }else if(path==='/api/slam_settings'){
+      if(method==='POST')state.slam_settings={...state.slam_settings,selected:body,synchronized:false,requires_new_map:true,message:'Saved settings differ from the active mapper. Rebuild the map to apply them.'};
+      json=state.slam_settings;
+    }else if(path==='/api/recovery'){
+      if(method==='POST')state.recovery={...state.recovery,value:body.enabled,live_value:body.enabled};
+      json=state.recovery;
     }else if(path==='/api/trial'){
       if(method==='POST')trial=body;
       json={success:true,values:trial,synchronized:true,protection:{stop_distance:.22,rotation_clearance:{cautious:.16,balanced:.15,bold:.14}[audacity]}};
     }else if(path==='/api/navigation'){
-      trial={max_linear:body.profile==='fast'?.16:.12,max_angular:body.profile==='fast'?.6:.4,goal_timeout:60};
+      trial={...trial,max_linear:body.profile==='fast'?.16:.12,max_angular:body.profile==='fast'?.6:.4,goal_timeout:60};
       json={success:true,values:trial,synchronized:true,profile:body.profile};
+    }else if(path==='/api/scan_filter'){
+      if(method==='POST')state.scan_filter={...state.scan_filter,value:body.radius,live_value:body.radius};
+      json=state.scan_filter;
     }else if(path==='/api/vision'){
       state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
+    }else if(path==='/api/attitude'){
+      if(method==='POST'&&body.action==='configure')attitude={...attitude,...body,reason:'Settings saved for next mission load',requires_reload:true};
+      if(method==='POST'&&body.action==='reference')attitude={...attitude,reference:{valid:true,roll:0.5,pitch:1.2,samples:10,span:[.1,.1]},reason:'Controller reference saved',requires_reload:true};
+      json=attitude;
     }else if(path==='/api/simulation_camera'){
       state.simulation_camera={...body,revision:(state.simulation_camera.revision||0)+1};
       json={success:true,camera:state.simulation_camera,message:'Physical simulated camera updated'};
@@ -177,30 +280,30 @@ test('workflow can load a reviewed saved map after restart without rebuilding or
 test('localization work and waypoint travel use separate displayed timers',async({page})=>{
   const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
   f.state.mission={...f.state.mission,state:'LOCALIZING',target_detected:true,
-    localization_active_seconds:8.2,localization_travel_seconds:61.4,
+    localization_elapsed_seconds:68.2,localization_work_seconds:8.2,localization_active_seconds:8.2,
+    localization_travel_seconds:61.4,acquisition_seconds:90,
     localization_stage:'B: collecting settled bearing frames',
     bearing_progress:{sites:[{ready:true,frames:4},{ready:false,frames:2}]}};
-  await expect(page.locator('#localizationProgress')).toContainText('8.2 / 45 s');
-  await expect(page.locator('#localizationProgress')).toContainText('Travel between views: 61.4 s');
+  await expect(page.locator('#localizationProgress')).toContainText('68.2 / 90 s wall time (includes travel)');
+  await expect(page.locator('#localizationProgress')).toContainText('work 8.2 s · travel 61.4 s');
   await expect(page.locator('#localizationProgress')).toContainText('A: ready · B: 2/4 frames');
   expect(f.errors).toEqual([]);
 });
 
-test('camera setup is a preparation page and shows saved profile reuse',async({page})=>{
-  const f=await fixture(page);f.state.stage.running=false;
-  await page.route('http://127.0.0.1:8780/**',route=>route.fulfill({contentType:'text/html',body:'Camera setup fixture'}));
-  f.setMaps([{id:'room/map.yaml',path:'/maps/room/map.yaml',reviewed:true}]);await page.locator('#refreshMaps').click();
-  await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeEnabled();
-  await page.locator('#loadCalibration').click();
-  expect(f.calls.find(c=>c.path==='/api/stage').body).toEqual({phase:'calibration',map_id:'room/map.yaml'});
-  f.state.calibration_live={ready:true,motion:'idle'};
-  f.state.camera_calibration={ready:true,path:'/SIMULATED/camera_checked.json',message:'Saved calibration will be used automatically when the mission loads.'};
-  await expect(page.locator('#calibrationFrame')).toBeVisible();
-  await expect(page.locator('#calibrationBadge')).toHaveText('Saved calibration ready');
-  await expect(page.locator('#calibrationSummary')).toContainText('automatically');
-  await expect(page.locator('#startMission')).toBeDisabled();
-  await expect(page.locator('#stop')).toBeEnabled();
-  expect(f.errors).toEqual([]);
+test('retired camera setup controls never appear on the real robot',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  for(const name of ['cup','bottle']){
+    await view(page,'mission');
+    await page.locator('#targetClass').selectOption(name);
+    for(const route of ['workflow','mission','navigation','mapping']){
+      await view(page,route);
+      await expect(page.locator('#cameraMountTitle')).toHaveCount(0);
+      await expect(page.locator('#visionPitch')).toHaveCount(0);
+      await expect(page.locator('#attitudePanel')).toHaveCount(0);
+      await expect(page.locator('#legacyCalibration')).toBeHidden();
+    }
+  }
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
 });
 
 test('mapping reports excluded failures and bounded navigation recovery',async({page})=>{
@@ -230,11 +333,8 @@ test('map distinguishes global route, local prediction, travelled path and recov
 test('complete basic workflow: map save review, stage transition, assigned pose, search, target and verified return',async({page})=>{
   const f=await fixture(page);
   await view(page,'navigation');
-  await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
-  await page.locator('[data-audacity="cautious"]').click();
-  await expect(page.locator('[data-audacity="cautious"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mapping');
-  await expect(page.locator('#totalElapsed')).toHaveText('01:05');
+  await expect(page.locator('#totalElapsed')).toHaveText('00:00');
   await page.locator('#saveMap').click();await expect(page.locator('#savedMaps')).toContainText('onsite_simulated');
   await expect(page.locator('#loadMission')).toBeDisabled();
   await page.locator('#reviewMap').click();await expect(page.locator('#mapQuality')).toContainText('Reviewed');
@@ -244,9 +344,8 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await page.locator('#loadMission').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
   await view(page,'navigation');
-  await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mission');
-  const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15,preferred_target_sigma:.1});
+  const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90});
   await expect(page.locator('#mappingControls')).toBeHidden();await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#poseX').fill('1');await page.locator('#poseY').fill('1');await page.locator('#poseYaw').fill('90');
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -257,13 +356,54 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await expect(page.locator('#target')).toHaveText('2.10, 1.80 m');await expect(page.locator('#confidence')).toContainText('88%');
   await expect(page.locator('#resultStop')).toHaveText('Pending');await expect(page.locator('#coverage')).toHaveText('67%');
   f.state.mission.state='VERIFYING';await expect(page.locator('#resultStop')).toContainText('Checking');
-  f.state.mission={...f.state.mission,state:'COMPLETE',return_verified:true,return_distance:.08,reason:'SIMULATED home distance and stationary hold verified'};
+  f.state.mission={...f.state.mission,state:'COMPLETE',elapsed_seconds:130,return_verified:true,return_distance:.08,reason:'SIMULATED home distance and stationary hold verified'};
   f.state.assessment={...f.state.assessment,elapsed_seconds:195,finished:205,running:false};
   await expect(page.locator('#resultOutcome')).toHaveText('Complete');await expect(page.locator('#resultReturn')).toHaveText('Verified · 0.08 m');
-  await expect(page.locator('#resultStop')).toHaveText('Verified stationary');await expect(page.locator('#totalElapsed')).toHaveText('03:15');
+  await expect(page.locator('#resultStop')).toHaveText('Verified position hold');await expect(page.locator('#totalElapsed')).toHaveText('02:10');
   await view(page,'results');
   const download=page.waitForEvent('download');await page.locator('#exportResult').click();expect((await download).suggestedFilename()).toBe('assessment.json');
   expect(f.errors).toEqual([]);await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'test-results/simulated-basic-workflow.png',fullPage:true});
+});
+
+test('advanced mission options submit the opt-in maneuver and acquisition window',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
+  await page.locator('#missionAdvanced').evaluate(el=>el.open=true);
+  await page.locator('#enableAbManeuver').check();await page.locator('#acquisitionSeconds').fill('120');
+  await expect(page.locator('#loadMission')).toContainText('Apply settings');
+  await page.locator('#loadMission').click();
+  const body=f.calls.filter(c=>c.path==='/api/stage').at(-1).body;
+  expect(body.enable_ab_maneuver).toBe(true);expect(body.acquisition_seconds).toBe(120);
+  expect(f.state.mission_options.enable_ab_maneuver).toBe(true);
+  expect(f.errors).toEqual([]);
+});
+
+test('position confidence stays separate from detector confidence and reports estimate freshness',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.mission={...f.state.mission,state:'COMPLETE',return_verified:true,target:{x:2,y:1,class:'cup',confidence:.84,
+    position_confidence:.91,confidence_radius_m:.2,sigma:.12,quality:'approximate',stale:true,age:2.5,preferred_sigma:.1},reason:'Returned inside assigned tolerance'};
+  await expect(page.locator('#confidence')).toContainText('84% detector confidence');
+  await expect(page.locator('#resultPositionConfidence')).toHaveText('91% within 0.20 m · stale · 2.5 s old');
+  await expect(page.locator('#resultTarget')).toContainText('approximate estimate');
+  await expect(page.locator('#resultOutcome')).toHaveText('Complete · estimated confidence 91% within 0.20 m');
+  await expect(page.locator('#resultReason')).toContainText('Returned inside assigned tolerance');
+  expect(f.errors).toEqual([]);
+});
+
+test('retired attitude reference controls never appear on the real robot',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  for(const name of ['cup','bottle']){
+    await view(page,'mission');
+    await page.locator('#targetClass').selectOption(name);
+    for(const route of ['workflow','mission','navigation','mapping']){
+      await view(page,route);
+      await expect(page.locator('#cameraMountTitle')).toHaveCount(0);
+      await expect(page.locator('#visionPitch')).toHaveCount(0);
+      await expect(page.locator('#attitudePanel')).toHaveCount(0);
+      await expect(page.locator('#legacyCalibration')).toBeHidden();
+    }
+  }
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
 });
 
 for(const phase of ['mapping','mission'])test(`active ${phase} locks setup and manual intervention`,async({page})=>{
@@ -271,8 +411,7 @@ for(const phase of ['mapping','mission'])test(`active ${phase} locks setup and m
   await expect(page.locator('#loadMapping')).toBeDisabled();await expect(page.locator('#loadMission')).toBeDisabled();
   await expect(page.locator('#saveMap')).toBeDisabled();await expect(page.locator('#setPose')).toBeDisabled();
   await expect(page.locator('#targetClass')).toBeDisabled();await expect(page.locator('#stop')).toBeEnabled();
-  await view(page,'navigation');await expect(page.locator('#gapToggle')).toBeDisabled();
-  for(const level of ['cautious','balanced','bold'])await expect(page.locator(`[data-audacity="${level}"]`)).toBeDisabled();
+  await view(page,'navigation');await expect(page.locator('#clearanceNavRadius')).toBeDisabled();
   if(phase==='mapping'){await view(page,'mapping');await page.locator('#mappingControls > summary').click();await expect(page.getByLabel('Drive forward')).toBeDisabled();}
 });
 
@@ -281,7 +420,7 @@ test('unverified home success and absent targets never look like a complete miss
   f.state.mission={...f.state.mission,state:'COMPLETE',target:{x:1,y:2,class:'cup'},return_verified:false};
   await expect(page.locator('#state')).toHaveText('COMPLETE');await expect(page.locator('#resultOutcome')).toHaveText('Trial not complete');
   f.state.mission={...f.state.mission,state:'NOT_FOUND',target:null,return_verified:true,return_distance:.05};
-  await expect(page.locator('#resultOutcome')).toHaveText('Search completed · target not found');await expect(page.locator('#resultTarget')).toHaveText('Awaiting target');
+  await expect(page.locator('#resultOutcome')).toHaveText('Search completed · target not found');await expect(page.locator('#resultTarget')).toHaveText('No coordinate reported');
 });
 
 test('target selector contains only model labels and locks mission setup until labels arrive',async({page})=>{
@@ -305,58 +444,33 @@ test('stale telemetry and disconnection disable driving and mark unavailable dat
   await expect(page.locator('#setPose')).toBeDisabled();await expect(page.locator('#loadMapping')).toBeDisabled();
 });
 
-test('optional gap reserve and trial settings retain verified readback',async({page})=>{
+test('higher speed and timeout ranges come from verified backend limits',async({page})=>{
+  const f=await fixture(page);let values={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35};const posted=[];
+  const limits={max_linear:{min:.04,max:.30,step:.01},max_angular:{min:.15,max:1.,step:.05},goal_timeout:{min:20,max:300,step:5}};
+  await page.route('**/api/trial',async route=>{
+    if(route.request().method()==='POST'){values=route.request().postDataJSON();posted.push(values);}
+    await route.fulfill({json:{success:true,values,limits,synchronized:true}});
+  });
+  await view(page,'navigation');await page.evaluate(()=>pollParameters());
+  for(const [id,max] of [['trialLinear','0.3'],['trialAngular','1'],['trialTimeout','300']]){
+    await expect(page.locator('#'+id)).toHaveAttribute('max',max);
+    await page.locator('#'+id).focus();await page.keyboard.press('End');
+  }
+  await expect(page.locator('#trialLinearValue')).toHaveText('0.30 m/s');
+  await expect(page.locator('#trialAngularValue')).toHaveText('1.00 rad/s');
+  await expect(page.locator('#trialTimeoutValue')).toHaveText('300 s');
+  await page.locator('#applyTrial').click();
+  await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.30 m/s');
+  expect(posted).toEqual([{max_linear:.30,max_angular:1.,goal_timeout:300,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35}]);
+  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);expect(f.errors).toEqual([]);
+});
+
+test('trial settings retain verified readback',async({page})=>{
   const f=await fixture(page);await view(page,'navigation');
-  await expect(page.locator('#gapToggle')).toBeEnabled();await page.locator('#gapToggle').click();
-  await expect(page.locator('#gapToggle')).toHaveAttribute('aria-pressed','true');
-  await expect(page.locator('#gapStatus')).toContainText('clearance 0.18 m');
   await expect(page.locator('#trialLinear')).toBeEnabled();await page.locator('#trialLinear').focus();await page.keyboard.press('End');
   await expect(page.locator('#trialLinearValue')).toHaveText('0.18 m/s');await page.locator('#applyTrial').click();
   await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.18 m/s');
   expect(f.calls.find(c=>c.path==='/api/trial').body.max_linear).toBe(.18);
-});
-
-for(const phase of ['mapping','mission'])test(`three audacity levels use verified readback and retain gap reserve in ${phase}`,async({page})=>{
-  const f=await fixture(page,{phase});await view(page,'navigation');
-  const cautious=page.getByRole('button',{name:/1 · Cautious/}),balanced=page.getByRole('button',{name:/2 · Balanced/}),bold=page.getByRole('button',{name:/3 · Bold/});
-  await expect(bold).toHaveAttribute('aria-pressed','true');
-  await expect(cautious).toContainText('22 cm clearance · ~44 cm opening');
-  await balanced.click();await expect(balanced).toHaveAttribute('aria-pressed','true');
-  await expect(balanced).toContainText('18 cm clearance · ~36 cm opening');
-  await expect(balanced).toContainText('Turn stop 15 cm · gentle turning');
-  await bold.click();await expect(bold).toHaveAttribute('aria-pressed','true');
-  await expect(bold).toContainText('14 cm clearance · ~30 cm opening');
-  await expect(bold).toContainText('Turn stop 14 cm · firm turning');
-  expect(f.calls.filter(c=>c.path==='/api/gap').map(c=>c.body)).toEqual([{audacity:'balanced',enabled:false},{audacity:'bold',enabled:false}]);
-  await page.locator('#gapToggle').click();
-  await expect(bold).toHaveAttribute('aria-pressed','true');await expect(bold).toContainText('18 cm clearance · ~38 cm opening');
-  await cautious.click();await expect(cautious).toContainText('26 cm clearance · ~52 cm opening');
-  await expect(page.locator('#gapToggle')).toHaveAttribute('aria-pressed','true');
-  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
-  expect(f.errors).toEqual([]);
-  if(phase==='mapping')await page.screenshot({path:'test-results/simulated-audacity-levels.png',fullPage:true});
-});
-
-test('a rejected audacity change never appears applied',async({page})=>{
-  const f=await fixture(page);await view(page,'navigation');
-  const cautious=page.locator('[data-audacity="cautious"]'),bold=page.locator('[data-audacity="bold"]');
-  await expect(bold).toHaveAttribute('aria-pressed','true');
-  await page.route('**/api/gap',route=>route.request().method()==='POST'?route.fulfill({status:503,json:{error:'Parameter update rejected; original values restored'}}):route.fallback());
-  await cautious.click();await expect(page.locator('#feedback')).toContainText('original values restored');
-  await expect(cautious).toHaveAttribute('aria-pressed','false');
-  await expect(page.locator('#audacityLive')).toHaveText('Unverified');
-  expect(f.errors).toEqual([]);
-});
-
-test('mapping reload restores Bold after choosing a different level',async({page})=>{
-  const f=await fixture(page);await view(page,'navigation');
-  await page.locator('[data-audacity="cautious"]').click();
-  await expect(page.locator('[data-audacity="cautious"]')).toHaveAttribute('aria-pressed','true');
-  await view(page,'mapping');await page.locator('#loadMapping').click();
-  await expect(page.locator('#loadMapping')).toBeEnabled();
-  await view(page,'navigation');
-  await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
-  expect(f.errors).toEqual([]);
 });
 
 test('stationary window progress and failure keep the detected target visible',async({page})=>{
@@ -383,11 +497,11 @@ test('Stop remains available while a stage request is pending',async({page})=>{
 
 test('subpages separate functions and retain Stop and direct links',async({page})=>{
   const f=await fixture(page);
-  for(const [name,panel] of [['overview','.workspace-grid'],['mapping','#mappingPanel'],['mission','#missionPanel'],['navigation','#audacityPanel'],['results','#resultsPanel']]){
+  for(const [name,panel] of [['overview','.workspace-grid'],['mapping','#mappingPanel'],['mission','#missionPanel'],['navigation','#settingsLayout'],['results','#resultsPanel']]){
     await view(page,name);await expect(page.locator(panel)).toBeVisible();await expect(page.locator('#stop')).toBeVisible();
     if(name!=='mapping')await expect(page.locator('#mappingPanel')).toBeHidden();
     if(name!=='mission')await expect(page.locator('#missionPanel')).toBeHidden();
-    if(name!=='navigation')await expect(page.locator('#audacityPanel')).toBeHidden();
+    if(name!=='navigation')await expect(page.locator('#settingsLayout')).toBeHidden();
   }
   await page.reload();await expect(page.locator('#resultsPanel')).toBeVisible();
   expect(f.errors).toEqual([]);
@@ -430,19 +544,14 @@ test('mobile layout keeps required controls on screen without horizontal overflo
   expect(f.errors).toEqual([]);await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'test-results/simulated-mobile-console.png',fullPage:true});
 });
 
-test('camera setup forwards the reviewed map and can establish localization while idle',async({page})=>{
-  const f=await fixture(page);
-  await page.locator('#saveMap').click();await expect(page.locator('#reviewMap')).toBeEnabled();
-  await page.locator('#reviewMap').click();await view(page,'calibration');
-  await page.locator('#loadCalibration').click();
-  expect(f.calls.find(c=>c.path==='/api/stage').body).toEqual({phase:'calibration',map_id:'onsite_simulated/map.yaml'});
-  await page.getByText('Establish localization if needed',{exact:true}).click();
-  await expect(page.locator('#calSetPose')).toBeEnabled();
-  await page.locator('#calPoseX').fill('1.2');await page.locator('#calPoseY').fill('1.1');await page.locator('#calPoseYaw').fill('90');
-  await page.locator('#calSetPose').click();
-  expect(f.calls.find(c=>c.path==='/api/initial_pose').body).toEqual({x:1.2,y:1.1,yaw:Math.PI/2});
-  f.state.mission.state='CALIBRATING';
-  await expect(page.locator('#calSetPose')).toBeDisabled();expect(f.errors).toEqual([]);
+test('reviewed mapping map can prepare mission without the retired camera setup',async({page})=>{
+  const f=await fixture(page);await page.locator('#saveMap').click();
+  await page.locator('#reviewMap').click();
+  expect(f.calls.find(c=>c.path==='/api/review_map').body.map_id).toBe('onsite_simulated/map.yaml');
+  await view(page,'mission');await page.locator('#loadMission').click();
+  expect(f.calls.find(c=>c.path==='/api/stage').body.map_id).toBe('onsite_simulated/map.yaml');
+  expect(f.calls.some(c=>c.path==='/api/stage'&&c.body.phase==='calibration')).toBe(false);
+  expect(f.errors).toEqual([]);
 });
 
 
@@ -457,46 +566,42 @@ test('newly saved map stays selected over the map loaded by an earlier stage',as
   await expect(page.locator('#savedMaps')).toHaveValue('onsite_simulated/map.yaml');
   await page.locator('#refreshMaps').click();
   await expect(page.locator('#savedMaps')).toHaveValue('onsite_simulated/map.yaml');
-  await page.locator('#reviewMap').click();await view(page,'calibration');
-  await expect(page.locator('#calibrationMapChoice')).toContainText('onsite_simulated/map.yaml');
-  await page.locator('#loadCalibration').click();
+  await page.locator('#reviewMap').click();await view(page,'mission');
+  await expect(page.locator('#savedMaps')).toHaveValue('onsite_simulated/map.yaml');
+  await page.locator('#loadMission').click();
   expect(f.calls.find(c=>c.path==='/api/stage').body.map_id).toBe('onsite_simulated/map.yaml');
   expect(f.errors).toEqual([]);
 });
 
-test('unsaved live mapping cannot silently load or review an old calibration map',async({page})=>{
+test('retired calibration route cannot silently load or review an old map',async({page})=>{
   const f=await fixture(page);f.setMaps([{id:'old/map.yaml',path:'/old/map.yaml',reviewed:true,quality:'mapped'}]);
   await page.locator('#refreshMaps').click();await expect(page.locator('#reviewMap')).toBeDisabled();
-  await view(page,'calibration');await expect(page.locator('#loadCalibration')).toBeDisabled();
-  await expect(page.locator('#calibrationMapChoice')).toContainText('Save the current mapping session');
-  expect(f.calls.some(c=>c.path==='/api/stage')).toBe(false);
+  await page.goto('/#/calibration');
+  await expect(page.locator('.page-tabs [data-page-link="workflow"]')).toHaveAttribute('aria-current','page');
+  await expect(page.locator('#legacyCalibration')).toBeHidden();
+  expect(f.calls.some(c=>c.path==='/api/stage'||c.path==='/api/review_map')).toBe(false);
 });
 
 
-test('camera map tool sends bottle coordinates on the currently loaded map',async({page})=>{
-  const f=await fixture(page);f.state.phase='calibration';f.state.stage.phase='calibration';
-  f.state.selected_map={id:'current/map.yaml',path:'/maps/current/map.yaml'};
-  f.state.calibration_live={ready:true,motion:'idle'};
-  await page.route('http://127.0.0.1:8780/**',r=>r.fulfill({contentType:'text/html',body:'Camera fixture'}));
-  await view(page,'calibration');await expect(page.locator('#calSetBottle')).toBeEnabled();
-  await expect(page.locator('#calMapTool')).toHaveValue('bottle');
+test('retired camera map tool cannot send bottle coordinates',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await page.goto('/#/calibration');
+  await expect(page.locator('#calSetBottle')).toBeHidden();
+  await expect(page.locator('#calMapTool')).toBeHidden();
   const b=await page.locator('#map').boundingBox();await page.mouse.click(b.x+b.width*.4,b.y+b.height*.5);
-  await expect.poll(()=>f.calls.filter(c=>c.path==='/api/calibration_target').length).toBe(1);
-  const call=f.calls.find(c=>c.path==='/api/calibration_target');
-  expect(call.body.map_id).toBe('current/map.yaml');expect(call.body.x).toBeCloseTo(2.4,1);expect(call.body.y).toBeCloseTo(2,1);
-  await expect(page.locator('#calBottleStatus')).toContainText('Bottle base marker');
-  expect(f.calls.some(c=>c.path==='/api/initial_pose')).toBe(false);expect(f.errors).toEqual([]);
+  expect(f.calls.some(c=>c.path==='/api/calibration_target')).toBe(false);
+  expect(f.errors).toEqual([]);
 });
 
 test('single-page workflow hides optional tools and prepares a visual mission after map confirmation',async({page})=>{
   const f=await fixture(page);await view(page,'workflow');
+  const savedMethod=f.state.mission_options.localization_method;
   await expect(page.locator('#advancedTools')).not.toHaveAttribute('open','');
   await expect(page.locator('#loadMapping')).toBeHidden();await expect(page.locator('#localizationMethod')).toBeHidden();
   await expect(page.locator('#profileFast')).toBeHidden();await expect(page.locator('#mappingControls')).toBeHidden();
-  await expect(page.locator('#targetClass')).toBeHidden();
+  await expect(page.locator('#targetClass')).toBeVisible();
   await page.locator('#saveMap').click();await expect(page.locator('#targetClass')).toBeVisible();await page.locator('#reviewMap').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
-  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe('hybrid');
+  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe(savedMethod);
   await expect(page.locator('#setup')).toBeVisible();await page.locator('#setPose').click();
   await page.locator('#startMission').click();await expect(page.locator('#state')).toHaveText('SEARCHING');
   f.state.mission.state='ACQUIRING';await expect(page.locator('#startMission')).toBeDisabled();
@@ -507,6 +612,7 @@ test('single-page workflow hides optional tools and prepares a visual mission af
 
 test('default workflow can apply a changed target without starting the mission',async({page})=>{
   const f=await fixture(page);await view(page,'workflow');
+  const savedMethod=f.state.mission_options.localization_method;
   await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -522,24 +628,18 @@ test('default workflow can apply a changed target without starting the mission',
   await expect(page.locator('#loadMission')).toBeHidden();
   expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body).toEqual({
     phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'bottle',
-    localization_method:'hybrid',return_tolerance:.2,preferred_target_sigma:.1});
+    localization_method:savedMethod,return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90,bottle_min_range:.35,bottle_max_range:.95});
   expect(new URL(page.url()).hash).toBe('#/workflow');
   await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
   expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);expect(f.errors).toEqual([]);
 });
 
-test('advanced camera settings and fast profile use explicit values and verified responses',async({page})=>{
-  const f=await fixture(page);await view(page,'workflow');
-  await page.locator('#advancedTools > summary').click();
-  await page.locator('#visionHeight').fill('0.22');await page.locator('#visionPitch').fill('10');
-  await page.locator('#saveVision').click();
-  await expect(page.locator('#feedback')).toHaveText('Camera geometry saved');
-  const settings=f.calls.find(c=>c.path==='/api/vision').body;
-  expect(settings.camera_height).toBe(.22);expect(settings.camera_pitch).toBeCloseTo(Math.PI/18);
-  await page.locator('#profileFast').click();
-  await expect(page.locator('#navigationProfileStatus')).toContainText('Applied and verified: fast');
-  expect(f.calls.find(c=>c.path==='/api/navigation').body).toEqual({profile:'fast'});
+test('real camera angle form is absent while navigation controls still work',async({page})=>{
+  const f=await fixture(page);await view(page,'navigation');
+  await expect(page.locator('#cameraMountTitle')).toHaveCount(0);
+  await expect(page.locator('#visionHeight')).toHaveCount(0);
+  await expect(page.locator('#profileOriginal')).toBeVisible();
   expect(f.errors).toEqual([]);
 });
 
@@ -587,13 +687,13 @@ test('preferred MMSE precision is applied through a reload and locked during sea
   expect(f.errors).toEqual([]);
 });
 
-test('accepted map display uses the reported posterior even while a new message is pending',async({page})=>{
+test('reported map display uses the reported posterior even while a new message is pending',async({page})=>{
   const f=await fixture(page,{phase:'mission'});
   f.state.target_estimate={x:7,y:8,sigma:.8,label:'bottle',samples:7,age:0,stale:false};
   f.state.mission.target={x:2.1,y:1.8,class:'bottle',sigma:.15,variance:.0225,quality:'best_available'};
   await expect(page.locator('#target')).toHaveText('2.10, 1.80 m');
   await expect(page.locator('#targetEstimateStatus')).toContainText('Estimated bottle: (2.10, 1.80) m · σ 0.15 m');
-  await expect(page.locator('#targetEstimateStatus')).toContainText('accepted');
+  await expect(page.locator('#targetEstimateStatus')).toContainText('reported');
   expect(f.calls).toEqual([]);
 });
 
@@ -614,17 +714,18 @@ test('found without coordinates and incomplete search have distinct return outco
   f.state.mission={...f.state.mission,state:'SEARCH_INCOMPLETE',target_detected:false,reason:'Wall-side region remains blocked'};
   await expect(page.locator('#resultOutcome')).toHaveText('Search incomplete');
   await expect(page.locator('#resultReason')).toContainText('Wall-side region');
+  f.state.mission={...f.state.mission,state:'STOPPED',internal_error:'Safety stop: navigation fault'};
+  await expect(page.locator('#resultOutcome')).toHaveText('Stopped · safety error');
+  await expect(page.locator('#resultReason')).toContainText('Safety stop');
 });
 
-test('TF pitch override is saved as a boolean with radians',async({page})=>{
-  const f=await fixture(page,{phase:'mission'});
-  await page.goto('/#/workflow');await page.locator('#advancedTools').evaluate(el=>el.open=true);
-  await page.locator('#visionPitch').fill('28.6');
-  await page.locator('#visionPitchOverride').check();
-  await page.locator('#saveVision').click();
-  await expect.poll(()=>f.calls.some(c=>c.path==='/api/vision')).toBe(true);
-  const body=f.calls.find(c=>c.path==='/api/vision').body;
-  expect(body.use_pitch_override).toBe(true);expect(body.camera_pitch).toBeCloseTo(28.6*Math.PI/180,8);
+test('physical workflow has no pitch override or legacy geometry save',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  await page.locator('#advancedTools > summary').click();
+  await expect(page.locator('#visionPitchOverride')).toHaveCount(0);
+  await expect(page.locator('#visionPitch')).toHaveCount(0);
+  await expect(page.locator('#saveVision')).toHaveCount(0);
+  expect(f.calls.some(c=>c.path==='/api/vision')).toBe(false);expect(f.errors).toEqual([]);
 });
 
 function enableScenario(f){
@@ -680,6 +781,7 @@ test('simulation target coordinate entry validates input and shows server reject
 
 test('simulation editor fits a mobile screen and retains Stop',async({page})=>{
   await page.setViewportSize({width:390,height:844});
+  await page.evaluate(()=>window.scrollTo(0,0));
   const f=await fixture(page);enableScenario(f);await view(page,'workflow');
   await expect(page.locator('#simulationPanel')).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -706,5 +808,374 @@ test('simulated camera form changes physical mount and lens through its isolated
   await expect(page.locator('#simulationGeometryHelp')).toContainText('0.31 m high, 28.6° downward');
   f.state.mission.state='SEARCHING';f.state.simulation_can_apply=false;
   await expect(page.locator('#saveVision')).toBeDisabled();
+  expect(f.errors).toEqual([]);
+});
+
+
+test('bottle ranging retires angle controls and accepts a model without pitch metadata',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  await page.locator('#targetClass').selectOption('bottle');
+  await expect(page.locator('#attitudePanel')).toBeHidden();
+  await expect(page.locator('#cameraMountTitle')).toBeHidden();
+  await expect(page.locator('#localizationMethod')).toBeHidden();
+  f.state.perception={ready:true,stamp:Date.now()/1000,target_class:'bottle',
+    localization_method:'bottom_inverse',latency:.3,camera_model:{model:'bottom_inverse_17pt_20261031',
+      width:640,height:480,k:[[450,0,320],[0,450,240],[0,0,1]],d:[],min_range:.35,max_range:3}};
+  await expect(page.locator('#methodSummary')).toContainText('timestamped single exposure');
+  await expect(page.locator('#methodSummary')).toContainText('±32 px');
+  await expect(page.locator('#methodSummary')).not.toContainText('60–80 cm');
+  expect(f.errors).toEqual([]);
+  expect(f.calls).toEqual([]);
+});
+
+
+test('bottle camera range defaults to 35-95 cm, caps 100 and is forwarded with mission settings',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
+  await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
+  await page.locator('#targetClass').selectOption('bottle');
+  await expect(page.locator('#bottleRangePanel')).toBeVisible();
+  await expect(page.locator('#bottleRangeMin')).toHaveValue('35');
+  await expect(page.locator('#bottleRangeMax')).toHaveValue('95');
+  await expect(page.locator('#bottleRangeMax')).toHaveAttribute('max','100');
+  await page.locator('#bottleRangeMax').fill('101');
+  await expect(page.locator('#loadMission')).toBeDisabled();
+  await page.locator('#bottleRangeMax').fill('100');
+  await expect(page.locator('#loadMission')).toBeEnabled();
+  await page.locator('#loadMission').click();
+  const call=f.calls.filter(c=>c.path==='/api/stage').at(-1);
+  expect(call.body.bottle_min_range).toBe(.35);expect(call.body.bottle_max_range).toBe(1);
+  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
+  expect(f.errors).toEqual([]);
+});
+
+test('first uncertain frame appears on the map before confirmation and remains visible when lost',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.target_preview={x:2.1,y:1.4,sigma:.8,label:'bottle',samples:1,age:.2,stamp:10,
+    display_only:true,stable:false,confirmed:false,source:'visual_preview'};
+  f.state.perception={ready:true,target_class:'bottle',frame_age:.3,latency:.22,detected_candidates:1,
+    localized_candidates:0,motion_check:{verified:false,samples:30,linear_mean:.3,angular_mean:.02,position_span:.18,reason:'Mean linear speed is too high'},attitude:{valid:true,span:[.01,.02]}};
+  f.state.perception_details={raw_count:1,in_range_count:1,age:.3,selected:{box:[300,100,340,300],
+    confidence:.85,range_m:.7,center_error_px:0,settled:false},diagnostic:{mmse:{batch_frames:3,required_frames:8}}};
+  await expect(page.locator('#targetEstimateStatus')).toContainText('single-frame preview; not confirmed');
+  await expect(page.locator('#visionMapPosition')).toHaveText('(2.10, 1.40) m');
+  await expect(page.locator('#visionFrames')).toContainText('3 / 8');
+  await expect(page.locator('#visionMotionDetail')).toContainText('0.300 m/s');
+  await expect(page.locator('#visionBottom')).toHaveText('300.0 px');
+  await expect(page.locator('#visionConfidence')).toHaveText('85%');
+  await expect(page.locator('#visionReason')).not.toContainText('Mean linear speed is too high');
+  await expect(page.locator('#visionMotion')).toHaveText('Motion recorded');
+  await expect.poll(async()=>{const value=await page.locator('#map').getAttribute('data-target-estimate');return value&&JSON.parse(value).displayOnly;}).toBe(true);
+  await expect(page.locator('#resultTarget')).toHaveText('No coordinate reported');
+  f.state.target_preview={...f.state.target_preview,stale:true,age:50};
+  f.state.perception_details={...f.state.perception_details,raw_count:0,in_range_count:0,selected:null,last_seen_age:50};
+  await expect(page.locator('#visionMapQuality')).toContainText('Last seen 50.0 s ago');
+  await expect.poll(async()=>JSON.parse(await page.locator('#map').getAttribute('data-target-estimate')).stale).toBe(true);
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('outside range shows a direction rather than an invented map point',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.perception={ready:true,target_class:'bottle',frame_age:.2,latency:.2,detected_candidates:0,localized_candidates:0};
+  f.state.perception_details={raw_count:1,in_range_count:0,age:.2,selected:{confidence:.9,
+    box:[300,20,340,150],range_state:'too_far',search_eligible:false,origin:[1,1],bearing:.3}};
+  await expect(page.locator('#visionState')).toHaveText('Outside range');
+  await expect(page.locator('#visionRange')).toHaveText('>95 cm');
+  await expect(page.locator('#visionRangeKind')).toContainText('direction only');
+  await expect.poll(()=>page.locator('#map').getAttribute('data-target-bearing-only')).toBe('true');
+  await expect(page.locator('#map')).not.toHaveAttribute('data-target-estimate',/.+/);
+  await expect(page.locator('#resultTarget')).toHaveText('No coordinate reported');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('an off-map preview stays visibly labelled without clamping its actual coordinates',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});
+  f.state.target_preview={x:20,y:10,sigma:2,label:'bottle',samples:1,display_only:true,age:.2};
+  await expect(page.locator('#visionMapPosition')).toHaveText('(20.00, 10.00) m');
+  await expect.poll(async()=>{const value=await page.locator('#map').getAttribute('data-target-estimate');return value&&JSON.parse(value).outside;}).toBe(true);
+  expect(f.errors).toEqual([]);
+});
+
+test('mobile detection telemetry fits the page and keeps unconfirmed estimates visible',async({page})=>{
+  await page.setViewportSize({width:390,height:844});const f=await fixture(page,{phase:'mission'});
+  f.state.target_preview={x:2,y:1,sigma:.3,label:'bottle',samples:1,display_only:true,age:.1};
+  await expect(page.locator('#visionMapPosition')).toHaveText('(2.00, 1.00) m');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await expect(page.locator('#stop')).toBeVisible();expect(f.errors).toEqual([]);
+});
+
+
+test('recovery reverse switch saves OFF and ON without starting motion, and locks while active',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');
+  await page.locator('#advancedTools > summary').click();
+  const toggle=page.locator('#reverseRecoveryToggle');
+  await expect(toggle).toHaveText('Recovery reverse · ON');
+  await toggle.click();await expect(toggle).toHaveText('Recovery reverse · OFF');
+  expect(f.calls.filter(c=>c.path==='/api/recovery').map(c=>c.body)).toEqual([{enabled:false}]);
+  await page.reload();await expect(toggle).toHaveText('Recovery reverse · OFF');
+  if(await page.locator('#advancedTools').getAttribute('open')===null)await page.locator('#advancedTools > summary').click();
+  await toggle.click();await expect(toggle).toHaveText('Recovery reverse · ON');
+  f.state.mission.state='MAPPING';await expect(toggle).toBeDisabled();
+  expect(f.calls.some(c=>['/api/start','/api/stage','/api/new_trial'].includes(c.path))).toBe(false);
+  expect(f.errors).toEqual([]);
+});
+
+test('rejected recovery reverse change keeps verified setting visible',async({page})=>{
+  const f=await fixture(page);await view(page,'workflow');await page.locator('#advancedTools > summary').click();
+  await page.route('**/api/recovery',r=>r.request().method()==='POST'?r.fulfill({status:400,json:{error:'Stop navigation before changing recovery reverse'}}):r.fulfill({json:f.state.recovery}));
+  await page.locator('#reverseRecoveryToggle').click();
+  await expect(page.locator('#reverseRecoveryToggle')).toHaveText('Recovery reverse · ON');
+  await expect(page.locator('#feedback')).toContainText('Stop navigation before changing recovery reverse');
+  expect(f.state.recovery.value).toBe(true);expect(f.errors).toEqual([]);
+});
+
+
+test('Return to home is available in both stages and uses only recorded home',async({page})=>{
+  const f=await fixture(page,{active:true});await view(page,'workflow');
+  await expect(page.locator('#returnHome')).toBeDisabled();
+  f.state.mission.home=[1,1,0];
+  await expect(page.locator('#returnHome')).toBeEnabled();await page.locator('#returnHome').click();
+  await expect(page.locator('#returnHome')).toBeDisabled();
+  expect(f.calls.find(c=>c.path==='/api/return_home').body).toEqual({});
+  f.state.phase='mission';f.state.stage.phase='mission';f.state.mission.state='STOPPED';
+  await expect(page.locator('#returnHome')).toBeEnabled();await page.locator('#returnHome').click();
+  expect(f.calls.filter(c=>c.path==='/api/return_home')).toHaveLength(2);
+  expect(f.state.mission.home).toEqual([1,1,0]);expect(f.errors).toEqual([]);
+});
+
+test('mobile Return to home and Stop remain visible without overflow',async({page})=>{
+  await page.setViewportSize({width:390,height:844});const f=await fixture(page,{active:true});
+  f.state.mission.home=[1,1,0];await view(page,'workflow');
+  await expect(page.locator('#returnHome')).toBeInViewport();await expect(page.locator('#stop')).toBeInViewport();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  f.state.mission.state='CANCELING';await expect(page.locator('#returnHome')).toBeDisabled();
+  await expect(page.locator('#stop')).toBeEnabled();expect(f.errors).toEqual([]);
+});
+
+test('search reset locks setup while Return can supersede a queued research cancellation',async({page})=>{
+  const f=await fixture(page,{phase:'mission',active:true});await view(page,'workflow');
+  f.state.mission.home=[1,1,0];f.state.mission.state='RESETTING';
+  await expect(page.locator('#startMission')).toBeDisabled();
+  await expect(page.locator('#setPose')).toBeDisabled();
+  await expect(page.locator('#returnHome')).toBeEnabled();
+  f.state.mission.state='CANCELING';f.state.mission.pending_action='RESEARCH';
+  await expect(page.locator('#returnHome')).toBeEnabled();
+  f.state.mission.pending_action='STOPPED';
+  await expect(page.locator('#returnHome')).toBeDisabled();
+  await expect(page.locator('#stop')).toBeEnabled();expect(f.errors).toEqual([]);
+});
+
+
+test('retained home allows current pose setup before return without replacing home',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'workflow');
+  f.state.mission.home=[1,1,0];f.state.mission.started_stamp=0;f.state.pose=null;f.state.initial_pose_sent=false;
+  await expect(page.locator('#returnHome')).toBeDisabled();await expect(page.locator('#setPose')).toBeEnabled();
+  await page.locator('#setPose').click();f.state.pose=[.5,.5,0];
+  await expect(page.locator('#returnHome')).toBeEnabled();
+  expect(f.state.mission.home).toEqual([1,1,0]);expect(f.errors).toEqual([]);
+});
+
+
+test('single exposure result preserves accepted, reported and stopped facts independently',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'results');
+  Object.assign(f.state.mission,{state:'LOCALIZING',target_detected:true,target_ever_detected:true,
+    target_reported:false,home:[1,1,0],target:{x:.7,y:.2,class:'bottle',quality:'approximate',sigma:.18,
+      variance:.0324,source:'bottom_inverse_single',source_frames:[10.],frames:1,samples:1,
+      measurement_stable:false,age:.4,stale:false,preferred_sigma:.1}});
+  await expect(page.locator('#resultDetection')).toHaveText('Target detected');
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('Accepted estimate · not reported');
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('1 source exposure');
+  await expect.poll(()=>page.evaluate(()=>displayTarget(snapshot).stable)).toBe(false);
+  f.state.mission.target_reported=true;f.state.mission.state='RETURNING';
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('Reported · approximate');
+  f.state.mission.state='STOPPED';f.state.mission.internal_error='Return navigation failed: start is not safe';
+  await expect(page.locator('#resultDetection')).toHaveText('Target detected');
+  await expect(page.locator('#resultTarget')).toHaveText('(0.70, 0.20) m · approximate estimate');
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('Reported · approximate');
+  await expect(page.locator('#resultReturn')).toHaveText('Return not verified');
+  await expect(page.locator('#resultReason')).toContainText('Return navigation failed: start is not safe');
+  await expect(page.locator('#resultOutcome')).not.toHaveText('Complete');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('stopped accepted estimate stays visible without pretending it was reported',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'results');
+  Object.assign(f.state.mission,{state:'STOPPED',target_ever_detected:true,target_reported:false,
+    reason:'Stop requested',target:{x:.7,y:.2,class:'bottle',quality:'approximate',sigma:.18,
+      source_frames:[10.],frames:1,measurement_stable:false,age:20.,stale:true}});
+  await expect(page.locator('#resultTarget')).toContainText('(0.70, 0.20) m');
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('Accepted estimate · not reported');
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('20.0 s old');
+  await expect(page.locator('#resultReturn')).toHaveText('Return not verified');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('a preview or invalid target cannot become a reported coordinate or complete outcome',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'results');
+  Object.assign(f.state.mission,{state:'STOPPED',target:null,target_ever_detected:true});
+  f.state.target_preview={x:.8,y:.3,sigma:.2,stamp:10.,samples:1,display_only:true,confirmed:true,stable:false};
+  await expect(page.locator('#resultDetection')).toHaveText('Target detected');
+  await expect(page.locator('#resultTarget')).toHaveText('No coordinate reported');
+  await expect(page.locator('#resultCoordinateStatus')).toHaveText('Preview only · not reported');
+  Object.assign(f.state.mission,{state:'COMPLETE',return_verified:true,target_reported:true,target:{x:null,y:.3}});
+  await expect(page.locator('#resultTarget')).toHaveText('No coordinate reported');
+  await expect(page.locator('#resultOutcome')).toHaveText('Trial not complete');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('moving timestamped single exposure needs no stationary gate or fabricated eight frames',async({page})=>{
+  const f=await fixture(page,{phase:'mission'});await view(page,'overview');
+  f.state.perception={ready:true,target_class:'bottle',localization_method:'bottom_inverse',frame_age:.1,
+    latency:.2,detected_candidates:1,localized_candidates:1,
+    motion_check:{verified:false,samples:15,linear_mean:.08,angular_mean:.2,position_span:.05,reason:'Not stationary'}};
+  f.state.perception_details={raw_count:1,in_range_count:1,age:.1,selected:{box:[320,100,360,300],
+    image_width:640,center_error_px:20,confidence:.9,projection_valid:true,settled:false},
+    diagnostic:{mmse:{required_frames:1,updated:true}}};
+  f.state.target_estimate={x:.7,y:.2,sigma:.2,label:'bottle',source:'bottom_inverse_single',source_frames:[10.],
+    samples:1,frames:1,single_frame:true,stable:false,measurement_valid:true,reportable:true,age:.1};
+  await expect(page.locator('#visionFrames')).toHaveText('1 source exposure · single-frame estimate');
+  await expect(page.locator('#visionMotion')).toHaveText('Motion recorded');
+  await expect(page.locator('#visionAlignment')).toHaveText('Within preferred ±32 px');
+  await expect(page.locator('#visionReason')).not.toContainText('Not stationary');
+  await expect(page.locator('#resultCoordinateStatus')).toHaveText('Preview only · not reported');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+for(const [label,width,height] of [['desktop',1440,1100],['mobile',390,844]])test(`single-frame result evidence fits ${label}`,async({page},testInfo)=>{
+  await page.setViewportSize({width,height});const f=await fixture(page,{phase:'mission'});await view(page,'results');
+  Object.assign(f.state.mission,{state:'COMPLETE',target_reported:true,target_ever_detected:true,return_verified:true,
+    return_distance:.05,target:{x:.7,y:.2,class:'bottle',quality:'approximate',sigma:.18,variance:.0324,
+      source_frames:[10.],frames:1,samples:1,measurement_stable:false,age:2.4,stale:true,preferred_sigma:.1}});
+  await expect(page.locator('#resultOutcome')).toHaveText('Complete');
+  await expect(page.locator('#resultCoordinateStatus')).toContainText('1 source exposure');
+  await expect(page.locator('#resultStop')).toHaveText('Verified position hold');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath(`single-frame-results-${label}.png`),fullPage:true});
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('SLAM settings save for next map without replacing active readback and lock while mapping',async({page})=>{
+  const f=await fixture(page);await view(page,'mapping');
+  await page.locator('#slamSettingsPanel summary').click();
+  await expect(page.locator('#slamOccupancyThreshold')).toBeEnabled();
+  await page.locator('#slamOccupancyThreshold').fill('0.20');
+  await page.locator('#slamMinimumPassThrough').fill('4');
+  await page.locator('#saveSlamSettings').click();
+  await expect(page.locator('#slamSettingsSelected')).toContainText('threshold 0.20');
+  await expect(page.locator('#slamSettingsLive')).toContainText('threshold 0.10');
+  await expect(page.locator('#slamSettingsStatus')).toContainText('Rebuild the map');
+  expect(f.calls).toEqual([{path:'/api/slam_settings',body:{occupancy_threshold:.2,minimum_pass_through:4}}]);
+  f.state.mission.state='MAPPING';
+  await expect(page.locator('#slamOccupancyThreshold')).toBeDisabled();
+  await expect(page.locator('#slamMinimumPassThrough')).toBeDisabled();
+  await expect(page.locator('#saveSlamSettings')).toBeDisabled();
+  f.state.mission.state='WAITING';f.state.control_generation++;
+  f.state.slam_settings={...f.state.slam_settings,live:{occupancy_threshold:.2,minimum_pass_through:4},synchronized:true,requires_new_map:false,message:'Active mapper readback matches the saved settings.'};
+  await expect(page.locator('#slamSettingsLive')).toContainText('threshold 0.20');
+  await expect(page.locator('#slamSettingsStatus')).toContainText('matches the saved settings');
+  await page.screenshot({path:'validation/20261104/slam-settings-ui.png',fullPage:true});
+  expect(f.errors).toEqual([]);
+});
+
+
+test('original shared filter uses baseline cutoff API without diagnostic fields',async({page})=>{
+  const f=await fixture(page);await view(page,'navigation');
+  await expect(page.locator('#scanFilterPanel h3')).toHaveText('Near-return filter');
+  await expect(page.locator('#scanFilterLive')).toContainText('Live: 20.0 cm');
+  await expect(page.locator('#scanFilterHelp')).toContainText('mapping, localization, navigation and obstacle protection');
+  await expect(page.locator('#navigationScanFilterLive')).toHaveCount(0);
+  await page.locator('#scanFilterRadius').fill('18');await page.locator('#saveScanFilter').click();
+  await expect(page.locator('#scanFilterLive')).toContainText('Live: 18.0 cm');
+  expect(f.calls.filter(c=>c.path==='/api/scan_filter').map(c=>c.body)).toEqual([{radius:.18}]);expect(f.errors).toEqual([]);
+});
+
+test('original shared filter missing live readback is displayed honestly',async({page})=>{
+  const f=await fixture(page);await view(page,'navigation');
+  f.state.scan_filter={...f.state.scan_filter,live_value:null,available:false};
+  await expect(page.locator('#scanFilterLive')).toHaveText('Live: unavailable');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+
+for(const phase of ['mapping','mission'])test(`turning controls apply live settings and lock during ${phase}`,async({page})=>{
+  const f=await fixture(page,{phase});await view(page,'navigation');
+  await expect(page.locator('#trialLookahead')).toHaveValue('0.18');
+  await expect(page.locator('#trialAlignmentValue')).toHaveText('0.35 rad (20.1°)');
+  await expect(page.locator('#trialAlignment')).toBeEnabled();
+  await page.locator('#trialAlignment').focus();await page.keyboard.press('Home');
+  for(let i=0;i<15;i++)await page.keyboard.press('ArrowRight');
+  await page.locator('#trialLookahead').focus();await page.keyboard.press('Home');
+  for(let i=0;i<4;i++)await page.keyboard.press('ArrowRight');
+  await page.locator('#trialCornerLookahead').focus();await page.keyboard.press('ArrowRight');
+  await page.locator('#applyTrial').click();
+  await expect(page.locator('#trialAlignmentLive')).toHaveText('Live: 0.20 rad (11.5°)');
+  await expect(page.locator('#trialLookaheadLive')).toHaveText('Live: 0.10 m');
+  const request=f.calls.find(c=>c.path==='/api/trial');
+  expect(request.body.alignment_angle).toBe(.20);
+  expect(request.body.lookahead_dist).toBe(.10);
+  expect(request.body.corner_lookahead_dist).toBe(.09);
+  await page.locator('#profileFast').click();
+  await expect(page.locator('#trialAlignment')).toHaveValue('0.2');
+  await expect(page.locator('#trialLookahead')).toHaveValue('0.1');
+  f.state.mission.state=phase==='mapping'?'MAPPING':'SEARCHING';await page.evaluate(()=>poll());
+  await expect(page.locator('#trialAlignment')).toBeDisabled();
+  await expect(page.locator('#trialLookahead')).toBeDisabled();
+  await expect(page.locator('#trialCornerLookahead')).toBeDisabled();
+  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
+  expect(f.errors).toEqual([]);
+});
+
+
+test('load defaults is a draft until navigation settings are applied',async({page})=>{
+  await fixture(page);
+  let values={max_linear:.20,max_angular:.65,goal_timeout:80,lookahead_dist:.11,corner_lookahead_dist:.12,alignment_angle:.28};
+  const defaults={max_linear:.16,max_angular:.60,goal_timeout:60,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35};
+  const posted=[];
+  await page.route('**/api/trial',async route=>{
+    if(route.request().method()==='POST'){values=route.request().postDataJSON();posted.push(values);}
+    await route.fulfill({json:{success:true,values,defaults,synchronized:true}});
+  });
+  await view(page,'navigation');
+  await expect(page.locator('#trialLookaheadLive')).toHaveText('Live: 0.11 m · Default: 0.18 m');
+  await page.getByRole('button',{name:'Load defaults'}).click();
+  await expect(page.locator('#trialLookahead')).toHaveValue('0.18');
+  await expect(page.locator('#trialAlignment')).toHaveValue('0.35');
+  await expect(page.locator('#trialLookaheadLive')).toContainText('Live: 0.11 m');
+  expect(posted).toEqual([]);
+  await page.locator('#applyTrial').click();
+  await expect(page.locator('#trialLookaheadLive')).toContainText('Live: 0.18 m');
+  expect(posted).toEqual([defaults]);
+});
+
+test('navigation settings separate live clearance from grids saved for the next stage',async({page},testInfo)=>{
+  const f=await fixture(page);await view(page,'navigation',false);
+  await expect(page.locator('#settingsSpeed #trialCornerLookahead')).toBeVisible();
+  await expect(page.locator('#audacityPanel, #gapToggle')).toHaveCount(0);
+  await expect(page.locator('#settingsClearance #clearanceNavRadius')).toHaveAttribute('min','0.06');
+  await expect(page.locator('#settingsClearance #clearanceFootprint')).toHaveAttribute('min','0.07');
+  await expect(page.locator('#settingsGrids #gridPathLive')).toContainText('Active: 0.01667 m');
+  await expect(page.locator('#settingsScan #scanFilterRadius')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('navigation-settings-desktop.png'),fullPage:true});
+  await page.locator('#clearanceNavRadius').fill('0.06');
+  await page.locator('#clearanceFootprint').fill('0.07');
+  await page.locator('#applyClearance').click();
+  await expect(page.locator('#clearanceFootprintLive')).toContainText('Live: 0.07 m');
+  expect(f.calls.find(call=>call.path==='/api/gap').body.tuning).toEqual({robot_radius:.06,footprint_radius:.07});
+  await page.locator('#gridMapping').fill('0.04');
+  await page.locator('#gridPath').fill('0.03');
+  await page.locator('#gridViewpoints').fill('0.45');
+  await page.locator('#gridCoverage').fill('0.1');
+  await page.locator('#applyGridSettings').click();
+  await expect(page.locator('#gridMappingLive')).toContainText('Active: 0.05 m');
+  expect(f.calls.find(call=>call.path==='/api/grid_settings').body).toEqual(
+    {mapping_resolution:.04,path_search_spacing:.03,viewpoint_spacing:.45,coverage_spacing:.1});
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await expect(page.locator('#stop')).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('navigation-settings-mobile.png'),fullPage:true});
+  f.state.mission.state='MAPPING';
+  await expect(page.locator('#clearanceNavRadius')).toBeDisabled();
+  await expect(page.locator('#gridMapping')).toBeDisabled();
+  expect(f.calls.some(call=>call.path==='/api/start')).toBe(false);
   expect(f.errors).toEqual([]);
 });

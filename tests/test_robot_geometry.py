@@ -29,8 +29,9 @@ def test_default_measured_circle_conservatively_contains_all_four_measured_corne
     assert value['body_radius']==.106801
     assert exact<=value['body_radius']<exact+1e-6
     assert value['padding']==.01 and value['footprint_radius']==.116801
+    assert value['navigation_radius']==.10
     assert value['model']=='conservative_circumscribed_circle'
-    assert value['front_stop_distance']==.186801
+    assert value['front_stop_distance']==.12
     assert value['rotation_clearances']==dict(cautious=.136801,balanced=.126801,bold=.116801)
 
 
@@ -38,6 +39,7 @@ def test_explicit_legacy_profile_preserves_the_old_pressure_geometry():
     value=json.loads(selected('legacy').stdout)
     assert value['profile']=='legacy' and value['length'] is None
     assert value['width']==.20 and value['body_radius']==.14
+    assert value['navigation_radius']==.14
     assert value['padding']==.01 and value['footprint_radius']==.15
     assert value['front_stop_distance']==.22
     assert value['rotation_clearances']==dict(cautious=.16,balanced=.15,bold=.14)

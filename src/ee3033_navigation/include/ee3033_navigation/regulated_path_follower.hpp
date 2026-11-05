@@ -12,6 +12,7 @@
 
 #include "nav2_regulated_pure_pursuit_controller/regulated_pure_pursuit_controller.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "ee3033_navigation/corner_tracking.hpp"
 
 namespace ee3033_navigation
 {
@@ -41,6 +42,9 @@ private:
   using Base = nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController;
   void reset_reference();
   void observe_yaw(const geometry_msgs::msg::PoseStamped & pose);
+  void select_path_tracking(const geometry_msgs::msg::PoseStamped & pose);
+  bool nearby_raw_obstacle(const geometry_msgs::msg::PoseStamped & pose);
+  double actual_goal_distance(const geometry_msgs::msg::PoseStamped & pose);
   void brake_final_rotation(
     geometry_msgs::msg::TwistStamped & command,
     const geometry_msgs::msg::PoseStamped & pose, nav2_core::GoalChecker * goal_checker,
@@ -51,6 +55,8 @@ private:
   std::mutex reference_mutex_;
   std::atomic<bool> reset_requested_{true};
   bool have_reference_{false};
+  bool corner_tracking_{false};
+  std::vector<PathPoint> sharp_bends_;
   double last_angular_command_{0.};
   Clock::time_point last_command_time_{};
   nav_msgs::msg::Path last_unpruned_plan_;

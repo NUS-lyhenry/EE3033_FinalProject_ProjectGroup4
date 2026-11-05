@@ -4,7 +4,9 @@ project_mission:
     base_frame: base_footprint
     target_class: cup  # Overridden by the target_class launch argument.
     allow_motion: false
-    clearance: 0.14
+    clearance: 0.04
+    search_strategy: greedy  # Immediate unseen coverage per travel/turn/observation second.
+    adaptive_margin: 0.08
     viewpoint_spacing: 0.65
     camera_range: 2.0
     camera_fov: 1.35  # Conservative horizontal field of view, radians.
@@ -22,10 +24,10 @@ project_mission:
     mission_timeout: 900.0
     return_tolerance: 0.20  # Replace with examiner's specified tolerance.
     return_heading_required: false
-    verify_seconds: 2.0
+    verify_seconds: 0.5
     max_stationary_speed: 0.035  # Mean absolute linear speed, m/s, over verify_seconds.
     max_stationary_angular_speed: 0.10  # Mean absolute yaw rate, rad/s.
-    stationary_position_span: 0.05  # Maximum odometry XY window span, metres.
+    stationary_position_span: 0.05  # Return completion: 5 cm XY span in the 0.5 s hold.
     stationary_heading_span: 0.12  # Maximum unwrapped yaw span, radians.
     stationary_max_gap: 0.25  # Maximum gap/age of odometry samples, seconds.
     stationary_command_timeout: 0.30  # Fresh zero final commands are required.
@@ -35,6 +37,16 @@ project_mission:
     sensor_timeout: 1.0
     perception_timeout: 3.0
     localize_wait_seconds: 2.0  # Allow exposure-time motion window + distinct frames.
+    enable_ab_maneuver: false  # Optional active A–B maneuver; natural target crossings remain enabled.
+    acquisition_seconds: 90.0
+    reacquisition_timeout: 10.0
+    localization_stall_timeout: 10.0
+    max_search_restarts: 2
+    filter_reset_timeout: 3.0
+    # AABB base-width gate: (x2-x1)/image_width; default 12.8 px at 640 px wide.
+    # Object height and box area do not affect this threshold.
+    # Try checked short approaches before accepting early precision success.
+    min_target_box_width_fraction: 0.02
     results_directory: ~/ee3033_results
 
 project_perception:
@@ -84,7 +96,7 @@ project_velocity_gate:
     scan_timeout: 0.7
     max_linear: 0.12
     max_angular: 0.40
-    stop_distance: 0.186801
+    stop_distance: 0.12
     rotation_clearance: 0.116801
     enforce_swept_map: true
     swept_horizon: 1.0

@@ -186,8 +186,13 @@ class FakeRobot(Node):
         self.status_pub.publish(String(data=json.dumps(self.perception_status())))
 
     def perception_status(self):
-        return {'stamp':time.time(), 'ready':True, 'target_class':'bottle',
-                'detected_candidates':0}
+        from ee3033_project.bottom_range import BottomCamera,CALIBRATION_K,CALIBRATION_D
+        stamp=time.time()
+        return {'stamp':stamp,'ready':True,'target_class':'bottle','detected_candidates':0,
+                'geometry_ready':True,
+                'camera_model':BottomCamera(640,480,CALIBRATION_K,CALIBRATION_D).metadata(),
+                'capture_pose':dict(stamp=stamp,frame_id='map',x=self.xy_yaw[0],
+                                    y=self.xy_yaw[1],yaw=self.xy_yaw[2])}
 
     def make_odometry(self, stamp):
         odom=Odometry()
@@ -246,8 +251,8 @@ class Integration(unittest.TestCase):
             # Allow any late acceptance/cancellation and terminal heartbeat to settle.
             time.sleep(0.7)
             expected = {'found':'COMPLETE','absent':'SEARCH_INCOMPLETE','search_abort':'SEARCH_INCOMPLETE',
-                        'stale':'FAILED','delayed_accept':'STOPPED',
-                        'false_home_success':'FAILED'}[scenario]
+                        'stale':'STOPPED','delayed_accept':'STOPPED',
+                        'false_home_success':'STOPPED'}[scenario]
             self.assertEqual(mission.state, expected, mission.summary())
             self.assertLessEqual(robot.max_active_goals,1)
             self.assertTrue(robot.commands)

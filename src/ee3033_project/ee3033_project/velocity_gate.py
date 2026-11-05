@@ -13,10 +13,10 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from .ros_utils import LATCHED, parameters, run
 from .trial import guarded_parameters
-from .gap import DEFAULT_AUDACITY, TURNING, guard_rotation
+from .gap import DEFAULT_AUDACITY, GATE_FIELDS, TURNING, guard_gate_tuning
 from .core import quaternion_yaw, stamp_seconds
 from .reverse_safety import reverse_clearance
-from .robot_geometry import DEFAULT_STOP_DISTANCE, geometry_metadata
+from .robot_geometry import DEFAULT_STOP_DISTANCE, MIN_COLLISION_RADIUS, MIN_CONFIGURED_COLLISION_RADIUS, geometry_metadata
 from .motion_safety import (FOOTPRINT_RADIUS, limit_twist, swept_arc,
                             swept_map_clearance, swept_scan_clearance)
 
@@ -39,7 +39,8 @@ class VelocityGate(Node):
         })
         if (not math.isfinite(self.p['swept_horizon']) or self.p['swept_horizon']<=0
                 or not math.isfinite(self.p['braking_deceleration']) or self.p['braking_deceleration']<=0
-                or not math.isfinite(self.p['footprint_radius']) or self.p['footprint_radius']<FOOTPRINT_RADIUS):
+                or not math.isfinite(self.p['footprint_radius'])
+                or self.p['footprint_radius']<MIN_CONFIGURED_COLLISION_RADIUS):
             raise ValueError('Swept motion requires a positive horizon, braking limit and full footprint')
         if self.p['reverse_policy'] not in ('recovery','calibration'):
             raise ValueError('reverse_policy must be recovery or calibration')
@@ -52,7 +53,7 @@ class VelocityGate(Node):
         self.automatic = False
         guarded_parameters(self, ('max_linear','max_angular'),
                            lambda: not self.enabled and not self.automatic)
-        guard_rotation(self, lambda: not self.enabled and not self.automatic)
+        guard_gate_tuning(self, lambda: not self.enabled and not self.automatic)
         self.automatic_time = -math.inf
         self.enable_time = self.command_time = self.scan_time = -math.inf
         self.command = Twist()
@@ -122,7 +123,8 @@ class VelocityGate(Node):
                 (o.position.x,o.position.y,quaternion_yaw(o.orientation)),
                 (p.x,p.y,quaternion_yaw(q)),covariance,
                 distance=min(.20,self.p['reverse_distance'])-traveled+.04,
-                radius=max(FOOTPRINT_RADIUS,self.p['reverse_radius']),reserve=max(.04,self.p['reverse_reserve']))
+                radius=max(FOOTPRINT_RADIUS,self.p['footprint_radius'],self.p['reverse_radius']),
+                reserve=max(.04,self.p['reverse_reserve']))
             self.reverse_envelope = envelope
             return allowed, reason
         except (TransformException, ValueError, TypeError):
@@ -179,8 +181,9 @@ class VelocityGate(Node):
         # output check, not a second path planner or an authorization to move.
         horizon=max(self.p['swept_horizon'], self.p['command_timeout']+
                     abs(linear)/self.p['braking_deceleration'])
-        radius=max(FOOTPRINT_RADIUS,self.p['footprint_radius'])
-        laser=swept_scan_clearance(hits,linear,angular,horizon,radius)
+        radius=max(MIN_CONFIGURED_COLLISION_RADIUS,self.p['footprint_radius'])
+        protect_body = radius < MIN_COLLISION_RADIUS
+        laser=swept_scan_clearance(hits,linear,angular,horizon,radius,protect_body=protect_body)
         self.output_arc=swept_arc(linear,angular,horizon)[:,:2].tolist()
         self.output_arc_frame=self.p['base_frame']
         if not laser.allowed:
@@ -199,13 +202,13 @@ class VelocityGate(Node):
             m=self.map;o=m.info.origin
             check=swept_map_clearance(np.asarray(m.data).reshape(m.info.height,m.info.width),
                 m.info.resolution,(o.position.x,o.position.y,quaternion_yaw(o.orientation)),
-                pose,linear,angular,horizon,radius)
+                pose,linear,angular,horizon,radius,protect_body=protect_body)
             return check.allowed,check.reason
         except (TransformException,ValueError,TypeError,ZeroDivisionError):
             return False,'swept_pose_unavailable'
 
     def tick(self):
-        for name in ('max_linear','max_angular','rotation_clearance'):
+        for name in ('max_linear','max_angular',*GATE_FIELDS):
             self.p[name] = self.get_parameter(name).value
         now = time.monotonic()
         out = Twist()
@@ -284,7 +287,8 @@ class VelocityGate(Node):
                 requested=[finite(self.command.linear.x), finite(self.command.angular.z)],
                 output=[out.linear.x, out.angular.z], speed_scale=self.speed_scale,
                 safety_reason=self.safety_reason, output_arc=self.output_arc,
-                output_arc_frame=self.output_arc_frame, footprint_radius=FOOTPRINT_RADIUS,
+                output_arc_frame=self.output_arc_frame,
+                footprint_radius=max(MIN_COLLISION_RADIUS,self.p['footprint_radius']),
                 robot_geometry=geometry_metadata(),
                 nearest=nearest, bearing=bearing,
                 command_age=finite(now-self.command_time), scan_age=finite(now-self.scan_time),

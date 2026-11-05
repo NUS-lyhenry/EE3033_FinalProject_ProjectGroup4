@@ -16,6 +16,7 @@ from urllib.error import HTTPError
 from urllib.request import Request,urlopen
 
 import rclpy
+from rcl_interfaces.srv import GetParameters
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.parameter import Parameter
 from ee3033_project.console import Console
@@ -35,6 +36,12 @@ class WorkflowIntegration(unittest.TestCase):
         rclpy.init()
         self.root=tempfile.TemporaryDirectory(prefix='group4_workflow_')
         self.map_root=Path(self.root.name)/'maps'
+        self.launched=[]
+        self.executor=MultiThreadedExecutor(num_threads=4)
+        self.make_console()
+        self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
+
+    def make_console(self):
         self.console=Console(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
             port=0,phase='mapping',allow_motion=True,manage_stages=True,
             map_directory=str(self.map_root),session_directory=self.root.name+'/records').items()])
@@ -45,10 +52,8 @@ class WorkflowIntegration(unittest.TestCase):
         self.console.model_labels=ModelLabels(weights)
         self.console.model_labels.signature=self.console.model_labels.identity()
         self.console.model_labels.cache=self.console.model_labels.response(labels=['bottle','cup'])
-        self.executor=MultiThreadedExecutor(num_threads=4);self.executor.add_node(self.console)
-        self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
+        self.executor.add_node(self.console)
         self.base=f'http://127.0.0.1:{self.console.p["port"]}'
-        self.launched=[]
         def fixture(args,**kwargs):
             self.launched.append(args)
             phase='mapping' if 'mapping.launch.py' in args else 'mission'
@@ -127,6 +132,70 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertFalse(self.get()['assessment']['includes_mapping'])
         self.assertEqual(self.console.count_publishers('/cmd_vel'),1)
         print('PASS: native HTTP two-stage trial, same-map Search again, archived results, reused-map-only timing and saved-map load without motion')
+
+    def test_manual_snapshot_is_invalidated_by_driving_and_prepares_search_without_start(self):
+        self.post('stage',{'phase':'mapping'})
+        self.assertTrue(wait(lambda:self.get()['mission'].get('ready')))
+        first=self.post('save_map')['map']
+        self.assertEqual(first['quality'],'snapshot')
+        self.post('teleop',{'linear':.05,'angular':0.})
+        self.assertIsNone(self.get()['saved_map'])
+        with self.assertRaises(HTTPError):
+            self.post('review_map',{'map_id':first['id']})
+        self.post('teleop',{'linear':0.,'angular':0.})
+        second=self.post('save_map')['map']
+        self.assertNotEqual(first['id'],second['id'])
+        self.post('review_map',{'map_id':second['id']})
+        self.post('stage',dict(phase='mission',map_id=second['id'],target_class='bottle'))
+        self.assertTrue(wait(lambda:self.get()['mission'].get('phase')=='mission' and self.get()['mission'].get('ready')))
+        state=self.get()
+        self.assertEqual(state['mission']['state'],'WAITING')
+        self.assertFalse(state['initial_pose_sent'])
+        self.assertEqual(state['selected_map']['quality'],'snapshot')
+        self.assertEqual(state['selected_map']['id'],second['id'])
+        self.assertEqual(len(self.get('maps')['maps']),2)
+
+    def test_operator_settings_survive_stage_switch_and_restart(self):
+        grids=dict(mapping_resolution=.04,path_search_spacing=.025,viewpoint_spacing=.45,coverage_spacing=.10)
+        self.assertEqual(self.post('grid_settings',grids)['selected'],grids)
+        self.post('stage',{'phase':'mapping'})
+        self.assertTrue(wait(lambda:self.get()['mission'].get('ready')))
+        self.assertIn('mapping_resolution:=0.04',self.launched[-1])
+        self.assertEqual(self.get()['grid_settings']['active'],grids)
+        self.assertTrue(wait(lambda:self.get()['velocity_gate'] is not None))
+        chosen=dict(max_linear=.19,max_angular=.55,goal_timeout=85.,lookahead_dist=.11,corner_lookahead_dist=.09,alignment_angle=.28)
+        tuning=dict(robot_radius=.08,footprint_radius=.14,stop_distance=.16)
+        self.assertEqual(self.post('trial',chosen)['values'],chosen)
+        with self.assertRaises(HTTPError):
+            self.post('gap',{'enabled':True,'audacity':'cautious'})
+        self.assertTrue(self.post('gap',{'tuning':tuning})['synchronized'])
+        entry=self.post('save_map')['map']
+        self.post('review_map',{'map_id':entry['id']})
+        options=dict(target_class='bottle',localization_method='lidar',return_tolerance=.25)
+        self.post('stage',dict(phase='mission',map_id=entry['id'],**options))
+        self.assertEqual(self.get('trial')['values'],chosen)
+        self.assertTrue(self.get('trial')['synchronized'])
+        self.assertFalse(self.get('gap')['enabled'])
+        self.assertEqual(self.get('gap')['tuning']['overrides'],tuning)
+        self.assertEqual(self.get()['grid_settings']['active'],grids)
+        search = self.console.parameter_request('project_mission', 'get_parameters',
+            GetParameters.Request(names=['viewpoint_spacing','coverage_spacing']))
+        self.assertEqual([value.double_value for value in search.values], [.45,.10])
+        self.assertEqual(self.get()['mission']['state'],'WAITING')
+        self.console.stage.stop()
+        self.executor.remove_node(self.console)
+        self.console.destroy_node()
+        self.make_console()
+        self.assertEqual({k:self.get()['mission_options'][k] for k in options},options)
+        self.assertEqual(self.get()['grid_settings']['selected'],grids)
+        self.post('new_trial')
+        self.assertEqual(self.get('trial')['values'],chosen)
+        self.assertFalse(self.get('gap')['enabled'])
+        self.assertEqual(self.get('gap')['tuning']['overrides'],tuning)
+        self.assertEqual(self.get()['grid_settings']['active'],grids)
+        self.assertEqual({k:self.get()['mission_options'][k] for k in options},options)
+        self.assertEqual(self.get()['mission']['state'],'WAITING')
+        print('PASS: speed, tracking, clearances and mission choices survive stage change and console restart')
 
     def test_stop_during_loading_prevents_late_stage(self):
         entered=threading.Event();release=threading.Event();factory=self.console.stage.popen
