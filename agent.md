@@ -9,7 +9,7 @@ Inspect both static and dynamically generated text before delivering UI changes.
 
 ## Release ownership
 
-This branch records `merged_single_frame_wall_tip_20261101_513edd1751`.
+This branch records `manual_clearance_20261105_89a6af1ef1`.
 Read README.md, DEPLOYMENT.md, TESTING.md and release-manifest.json first.
 Preserve the recorded source fingerprints when reproducing the deployed version.
 Do not equate builds, simulation, GitHub pushes or a connected UI with completed

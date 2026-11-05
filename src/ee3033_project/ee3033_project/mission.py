@@ -31,6 +31,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import angle_difference, quaternion_yaw, stamp_seconds
 from .coverage import CoveragePlanner, returned_home
+from .grid_settings import GRID_DEFAULTS, stage_grid_settings
 from .navigation_supervision import home_navigation_timeout
 from .gap import DEFAULT_CLEARANCE, guard_clearance
 from .ros_utils import LATCHED, parameters, run, set_yaw
@@ -52,7 +53,9 @@ class Mission(Node):
         super().__init__('project_mission', **kwargs)
         self.p = parameters(self, {
             'map_frame': 'map', 'base_frame': 'base_footprint', 'allow_motion': False,
-            'target_class': 'cup', 'clearance': DEFAULT_CLEARANCE, 'viewpoint_spacing': 0.65,
+            'target_class': 'cup', 'clearance': DEFAULT_CLEARANCE,
+            'viewpoint_spacing': GRID_DEFAULTS['viewpoint_spacing'],
+            'coverage_spacing': GRID_DEFAULTS['coverage_spacing'],
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
             'max_candidates': 250, 'max_goals': 120, 'coverage_fraction': 0.98,
             'candidate_limit': 1000, 'map_partial': False,
@@ -82,6 +85,14 @@ class Mission(Node):
             'home_behavior_tree': '',
             'return_home_seed': '',
         })
+        search_grids = {key: value for key, value in stage_grid_settings().items()
+                        if key in ('viewpoint_spacing', 'coverage_spacing')}
+        if search_grids:
+            from rclpy.parameter import Parameter
+            result = self.set_parameters_atomically([Parameter(key, value=value) for key, value in search_grids.items()])
+            if not result.successful:
+                raise ValueError(result.reason)
+            self.p.update(search_grids)
         for key in ('reacquisition_timeout','localization_stall_timeout','filter_reset_timeout'):
             if (type(self.p[key]) not in (int,float) or not math.isfinite(self.p[key]) or self.p[key]<=0):
                 raise ValueError(key+' must be a finite positive duration')
@@ -739,7 +750,8 @@ class Mission(Node):
                 max(.15,self.p['clearance']), self.p['viewpoint_spacing'], self.p['camera_range'],
                 self.p['camera_fov'], self.p['viewpoint_headings'],
                 self.p['max_candidates'], self.p['max_goals'], self.p['coverage_fraction'],
-                candidate_limit=self.p['candidate_limit'], camera_model=self.camera_model)
+                candidate_limit=self.p['candidate_limit'], camera_model=self.camera_model,
+                coverage_spacing=self.p['coverage_spacing'])
             self.planner.declared_partial = self.p['map_partial']
             if self.camera_model is not None:
                 self.planner.range = min(self.planner.range, self.camera_model.max_range)

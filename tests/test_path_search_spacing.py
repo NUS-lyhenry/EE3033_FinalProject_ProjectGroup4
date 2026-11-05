@@ -77,6 +77,17 @@ def test_native_costmap_is_projected_at_refined_search_locations():
     assert not mask[0,0] and mask[0,2]
 
 
+def test_custom_grid_size_preserves_occupied_cells_and_finer_source_maps(monkeypatch):
+    from ee3033_project import path_validation
+    grid = np.array([[100,-1],[0,24]])
+    monkeypatch.setattr(path_validation, 'PATH_SEARCH_SPACING', .025)
+    refined, resolution, _ = path_search_grid(grid, .05)
+    assert resolution == .025
+    assert np.array_equal(refined, grid.repeat(2,axis=0).repeat(2,axis=1))
+    same, resolution, _ = path_search_grid(grid, .0125)
+    assert resolution == .0125 and np.array_equal(same, grid)
+
+
 @pytest.mark.skipif(GEOMETRY_PROFILE!='measured',reason='Recording uses measured geometry')
 def test_recorded_original_map_recheck_uses_same_continuous_sampling_budget():
     with np.load(Path(__file__).parent/'fixtures/original_map_sampling_20261030.npz') as d:

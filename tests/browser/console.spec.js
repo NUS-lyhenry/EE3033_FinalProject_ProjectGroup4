@@ -1,5 +1,10 @@
 const {test,expect}=require('@playwright/test');
-async function view(page,name){await page.evaluate(p=>location.hash='/'+p,name);await expect(page.locator('.page-tabs [data-page-link="'+name+'"]')).toHaveAttribute('aria-current','page');}
+async function view(page,name,expandLegacy=true){
+  await page.evaluate(p=>location.hash='/'+p,name);
+  await expect(page.locator('.page-tabs [data-page-link="'+name+'"]')).toHaveAttribute('aria-current','page');
+  if(name==='navigation'&&expandLegacy)
+    await page.locator('#settingsLayout .settings-fold').evaluateAll(folds=>folds.forEach(fold=>{fold.open=true;}));
+}
 
 test('manual live map confirms without a previous save or map library entry',async({page})=>{
   const f=await fixture(page);await view(page,'workflow');
@@ -108,7 +113,18 @@ async function fixture(page,{phase='mapping',active=false}={}){
     slam_settings:{success:true,selected:{occupancy_threshold:.1,minimum_pass_through:2},live:{occupancy_threshold:.1,minimum_pass_through:2},available:true,synchronized:true,editable:true,requires_new_map:false,message:'Active mapper readback matches the saved settings.'},
     map_revision:1,pose:[1,1,0],route:[],path:[],health:Object.fromEntries(['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(k=>[k,{ok:true,age:.1}])),
     events:[],camera_source:null,battery:{voltage:11.87,fresh:true,age:.1},control_fault:null,initial_pose_sent:false};
-  let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,alignment_angle:.35};const calls=[];
+  let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35};const calls=[];
+  let clearanceOverrides={};
+  const clearanceDefaults={robot_radius:.10,footprint_radius:.116801,footprint_padding:.01,
+    inflation_radius:.12,clearance:.04,stop_distance:.12,rotation_clearance:.116801};
+  const clearanceLimits=Object.fromEntries(Object.entries(clearanceDefaults).map(([key,min])=>[key,{min,max:.5}]));
+  clearanceLimits.robot_radius.min=.06;
+  clearanceLimits.footprint_radius.min=.07;
+  const gridDefaults={mapping_resolution:.05,path_search_spacing:.02,viewpoint_spacing:.65,coverage_spacing:.15};
+  state.grid_settings={defaults:gridDefaults,selected:{...gridDefaults},active:gridDefaults,
+    active_phase:'mapping',map_resolution:.05,effective_path_resolution:.016667,editable:true,
+    limits:{mapping_resolution:{min:.01,max:.1},path_search_spacing:{min:.01,max:.1},
+      viewpoint_spacing:{min:.15,max:1.5},coverage_spacing:{min:.05,max:.5}}};
   let attitude={success:true,mode:'fixed',topic:'/project/body_attitude',pivot:[0,0,.033],reference:null,sample:{age:.1,frame:'base_link'},ready:true,editable:true,reason:'',requires_reload:false};
   const cells=Array.from({length:2400},(_,i)=>i<60||i>=2340||i%60===0||i%60===59?100:0);
   const map={width:60,height:40,resolution:.1,origin:[0,0,0],cells};
@@ -155,9 +171,15 @@ async function fixture(page,{phase='mapping',active=false}={}){
     else if(path==='/api/result')json={simulated:true,assessment:state.assessment,mission:state.mission,selected_map:state.selected_map};
     else if(path==='/api/gap'){
       if(method==='POST'){if('enabled' in body)gap=body.enabled;if('audacity' in body)audacity=body.audacity;}
+      if(method==='POST'&&'tuning' in body)clearanceOverrides=body.tuning;
       const p={robot_radius:gap?.18:.14,footprint_padding:.01,resolution:.05};
       const options=[['cautious','Cautious',.22,.16],['balanced','Balanced',.18,.15],['bold','Bold',.14,.14]].map(([id,label,c,t])=>({id,label,clearance:c+(gap?.04:0),turn_stop_distance:t,nominal_min_opening:2*Math.max(c+(gap?.04:0),p.robot_radius+.01)}));
       json={success:true,enabled:gap,audacity,audacity_options:options,synchronized:true,nodes:{'global_costmap/global_costmap':p,'local_costmap/local_costmap':p,[state.phase==='mapping'?'project_mapper':'project_mission']:{clearance:options.find(o=>o.id===audacity).clearance}}};
+      json.tuning={defaults:clearanceDefaults,limits:clearanceLimits,overrides:clearanceOverrides,
+        live:{...clearanceDefaults,...clearanceOverrides}};
+    }else if(path==='/api/grid_settings'){
+      state.grid_settings.selected={...state.grid_settings.selected,...body};
+      json={success:true,...state.grid_settings};
     }else if(path==='/api/slam_settings'){
       if(method==='POST')state.slam_settings={...state.slam_settings,selected:body,synchronized:false,requires_new_map:true,message:'Saved settings differ from the active mapper. Rebuild the map to apply them.'};
       json=state.slam_settings;
@@ -311,9 +333,6 @@ test('map distinguishes global route, local prediction, travelled path and recov
 test('complete basic workflow: map save review, stage transition, assigned pose, search, target and verified return',async({page})=>{
   const f=await fixture(page);
   await view(page,'navigation');
-  await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
-  await page.locator('[data-audacity="cautious"]').click();
-  await expect(page.locator('[data-audacity="cautious"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mapping');
   await expect(page.locator('#totalElapsed')).toHaveText('00:00');
   await page.locator('#saveMap').click();await expect(page.locator('#savedMaps')).toContainText('onsite_simulated');
@@ -325,7 +344,6 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await page.locator('#loadMission').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
   await view(page,'navigation');
-  await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mission');
   const load=f.calls.find(c=>c.path==='/api/stage');expect(load.body).toEqual({phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'cup',localization_method:'ground_plane',return_tolerance:.15,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90});
   await expect(page.locator('#mappingControls')).toBeHidden();await expect(page.locator('#startMission')).toBeDisabled();
@@ -393,8 +411,7 @@ for(const phase of ['mapping','mission'])test(`active ${phase} locks setup and m
   await expect(page.locator('#loadMapping')).toBeDisabled();await expect(page.locator('#loadMission')).toBeDisabled();
   await expect(page.locator('#saveMap')).toBeDisabled();await expect(page.locator('#setPose')).toBeDisabled();
   await expect(page.locator('#targetClass')).toBeDisabled();await expect(page.locator('#stop')).toBeEnabled();
-  await view(page,'navigation');await expect(page.locator('#gapToggle')).toBeDisabled();
-  for(const level of ['cautious','balanced','bold'])await expect(page.locator(`[data-audacity="${level}"]`)).toBeDisabled();
+  await view(page,'navigation');await expect(page.locator('#clearanceNavRadius')).toBeDisabled();
   if(phase==='mapping'){await view(page,'mapping');await page.locator('#mappingControls > summary').click();await expect(page.getByLabel('Drive forward')).toBeDisabled();}
 });
 
@@ -427,23 +444,8 @@ test('stale telemetry and disconnection disable driving and mark unavailable dat
   await expect(page.locator('#setPose')).toBeDisabled();await expect(page.locator('#loadMapping')).toBeDisabled();
 });
 
-test('v2 low planning clearance keeps the physical passage floor',async({page})=>{
-  const f=await fixture(page);
-  await page.route('**/api/gap',route=>route.fulfill({json:{success:true,enabled:false,audacity:'bold',synchronized:true,nodes:{},audacity_options:[
-    {id:'cautious',label:'Cautious',clearance:.10,nominal_min_opening:.233602,turn_stop_distance:.136801},
-    {id:'balanced',label:'Balanced',clearance:.08,nominal_min_opening:.233602,turn_stop_distance:.126801},
-    {id:'bold',label:'Bold',clearance:.04,nominal_min_opening:.233602,turn_stop_distance:.116801}
-  ]}}));
-  await view(page,'navigation');await page.evaluate(()=>pollParameters());
-  await expect(page.locator('[data-audacity="bold"]')).toContainText('4 cm clearance · ~23.4 cm opening');
-  await expect(page.locator('[data-audacity="balanced"]')).toContainText('8 cm clearance · ~23.4 cm opening');
-  await expect(page.locator('[data-audacity="cautious"]')).toContainText('10 cm clearance · ~23.4 cm opening');
-  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
-  expect(f.errors).toEqual([]);
-});
-
 test('higher speed and timeout ranges come from verified backend limits',async({page})=>{
-  const f=await fixture(page);let values={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,alignment_angle:.35};const posted=[];
+  const f=await fixture(page);let values={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35};const posted=[];
   const limits={max_linear:{min:.04,max:.30,step:.01},max_angular:{min:.15,max:1.,step:.05},goal_timeout:{min:20,max:300,step:5}};
   await page.route('**/api/trial',async route=>{
     if(route.request().method()==='POST'){values=route.request().postDataJSON();posted.push(values);}
@@ -459,62 +461,16 @@ test('higher speed and timeout ranges come from verified backend limits',async({
   await expect(page.locator('#trialTimeoutValue')).toHaveText('300 s');
   await page.locator('#applyTrial').click();
   await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.30 m/s');
-  expect(posted).toEqual([{max_linear:.30,max_angular:1.,goal_timeout:300,lookahead_dist:.18,alignment_angle:.35}]);
+  expect(posted).toEqual([{max_linear:.30,max_angular:1.,goal_timeout:300,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35}]);
   expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);expect(f.errors).toEqual([]);
 });
 
-test('optional gap reserve and trial settings retain verified readback',async({page})=>{
+test('trial settings retain verified readback',async({page})=>{
   const f=await fixture(page);await view(page,'navigation');
-  await expect(page.locator('#gapToggle')).toBeEnabled();await page.locator('#gapToggle').click();
-  await expect(page.locator('#gapToggle')).toHaveAttribute('aria-pressed','true');
-  await expect(page.locator('#gapStatus')).toContainText('clearance 0.18 m');
   await expect(page.locator('#trialLinear')).toBeEnabled();await page.locator('#trialLinear').focus();await page.keyboard.press('End');
   await expect(page.locator('#trialLinearValue')).toHaveText('0.18 m/s');await page.locator('#applyTrial').click();
   await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.18 m/s');
   expect(f.calls.find(c=>c.path==='/api/trial').body.max_linear).toBe(.18);
-});
-
-for(const phase of ['mapping','mission'])test(`three audacity levels use verified readback and retain gap reserve in ${phase}`,async({page})=>{
-  const f=await fixture(page,{phase});await view(page,'navigation');
-  const cautious=page.getByRole('button',{name:/1 · Cautious/}),balanced=page.getByRole('button',{name:/2 · Balanced/}),bold=page.getByRole('button',{name:/3 · Bold/});
-  await expect(bold).toHaveAttribute('aria-pressed','true');
-  await expect(cautious).toContainText('22 cm clearance · ~44 cm opening');
-  await balanced.click();await expect(balanced).toHaveAttribute('aria-pressed','true');
-  await expect(balanced).toContainText('18 cm clearance · ~36 cm opening');
-  await expect(balanced).toContainText('Turn stop 15 cm · gentle turning');
-  await bold.click();await expect(bold).toHaveAttribute('aria-pressed','true');
-  await expect(bold).toContainText('14 cm clearance · ~30 cm opening');
-  await expect(bold).toContainText('Turn stop 14 cm · firm turning');
-  expect(f.calls.filter(c=>c.path==='/api/gap').map(c=>c.body)).toEqual([{audacity:'balanced',enabled:false},{audacity:'bold',enabled:false}]);
-  await page.locator('#gapToggle').click();
-  await expect(bold).toHaveAttribute('aria-pressed','true');await expect(bold).toContainText('18 cm clearance · ~38 cm opening');
-  await cautious.click();await expect(cautious).toContainText('26 cm clearance · ~52 cm opening');
-  await expect(page.locator('#gapToggle')).toHaveAttribute('aria-pressed','true');
-  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
-  expect(f.errors).toEqual([]);
-  if(phase==='mapping')await page.screenshot({path:'test-results/simulated-audacity-levels.png',fullPage:true});
-});
-
-test('a rejected audacity change never appears applied',async({page})=>{
-  const f=await fixture(page);await view(page,'navigation');
-  const cautious=page.locator('[data-audacity="cautious"]'),bold=page.locator('[data-audacity="bold"]');
-  await expect(bold).toHaveAttribute('aria-pressed','true');
-  await page.route('**/api/gap',route=>route.request().method()==='POST'?route.fulfill({status:503,json:{error:'Parameter update rejected; original values restored'}}):route.fallback());
-  await cautious.click();await expect(page.locator('#feedback')).toContainText('original values restored');
-  await expect(cautious).toHaveAttribute('aria-pressed','false');
-  await expect(page.locator('#audacityLive')).toHaveText('Unverified');
-  expect(f.errors).toEqual([]);
-});
-
-test('mapping reload restores Bold after choosing a different level',async({page})=>{
-  const f=await fixture(page);await view(page,'navigation');
-  await page.locator('[data-audacity="cautious"]').click();
-  await expect(page.locator('[data-audacity="cautious"]')).toHaveAttribute('aria-pressed','true');
-  await view(page,'mapping');await page.locator('#loadMapping').click();
-  await expect(page.locator('#loadMapping')).toBeEnabled();
-  await view(page,'navigation');
-  await expect(page.locator('[data-audacity="bold"]')).toHaveAttribute('aria-pressed','true');
-  expect(f.errors).toEqual([]);
 });
 
 test('stationary window progress and failure keep the detected target visible',async({page})=>{
@@ -541,11 +497,11 @@ test('Stop remains available while a stage request is pending',async({page})=>{
 
 test('subpages separate functions and retain Stop and direct links',async({page})=>{
   const f=await fixture(page);
-  for(const [name,panel] of [['overview','.workspace-grid'],['mapping','#mappingPanel'],['mission','#missionPanel'],['navigation','#audacityPanel'],['results','#resultsPanel']]){
+  for(const [name,panel] of [['overview','.workspace-grid'],['mapping','#mappingPanel'],['mission','#missionPanel'],['navigation','#settingsLayout'],['results','#resultsPanel']]){
     await view(page,name);await expect(page.locator(panel)).toBeVisible();await expect(page.locator('#stop')).toBeVisible();
     if(name!=='mapping')await expect(page.locator('#mappingPanel')).toBeHidden();
     if(name!=='mission')await expect(page.locator('#missionPanel')).toBeHidden();
-    if(name!=='navigation')await expect(page.locator('#audacityPanel')).toBeHidden();
+    if(name!=='navigation')await expect(page.locator('#settingsLayout')).toBeHidden();
   }
   await page.reload();await expect(page.locator('#resultsPanel')).toBeVisible();
   expect(f.errors).toEqual([]);
@@ -638,13 +594,14 @@ test('retired camera map tool cannot send bottle coordinates',async({page})=>{
 
 test('single-page workflow hides optional tools and prepares a visual mission after map confirmation',async({page})=>{
   const f=await fixture(page);await view(page,'workflow');
+  const savedMethod=f.state.mission_options.localization_method;
   await expect(page.locator('#advancedTools')).not.toHaveAttribute('open','');
   await expect(page.locator('#loadMapping')).toBeHidden();await expect(page.locator('#localizationMethod')).toBeHidden();
   await expect(page.locator('#profileFast')).toBeHidden();await expect(page.locator('#mappingControls')).toBeHidden();
   await expect(page.locator('#targetClass')).toBeVisible();
   await page.locator('#saveMap').click();await expect(page.locator('#targetClass')).toBeVisible();await page.locator('#reviewMap').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
-  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe('hybrid');
+  expect(f.calls.find(c=>c.path==='/api/stage').body.localization_method).toBe(savedMethod);
   await expect(page.locator('#setup')).toBeVisible();await page.locator('#setPose').click();
   await page.locator('#startMission').click();await expect(page.locator('#state')).toHaveText('SEARCHING');
   f.state.mission.state='ACQUIRING';await expect(page.locator('#startMission')).toBeDisabled();
@@ -655,6 +612,7 @@ test('single-page workflow hides optional tools and prepares a visual mission af
 
 test('default workflow can apply a changed target without starting the mission',async({page})=>{
   const f=await fixture(page);await view(page,'workflow');
+  const savedMethod=f.state.mission_options.localization_method;
   await page.locator('#saveMap').click();await page.locator('#reviewMap').click();
   await expect(page.locator('#phase')).toHaveText('Stage 2 · Autonomous');
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -670,7 +628,7 @@ test('default workflow can apply a changed target without starting the mission',
   await expect(page.locator('#loadMission')).toBeHidden();
   expect(f.calls.filter(c=>c.path==='/api/stage').at(-1).body).toEqual({
     phase:'mission',map_id:'onsite_simulated/map.yaml',target_class:'bottle',
-    localization_method:'hybrid',return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90,bottle_min_range:.35,bottle_max_range:.95});
+    localization_method:savedMethod,return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90,bottle_min_range:.35,bottle_max_range:.95});
   expect(new URL(page.url()).hash).toBe('#/workflow');
   await expect(page.locator('#startMission')).toBeDisabled();
   await page.locator('#setPose').click();await expect(page.locator('#startMission')).toBeEnabled();
@@ -823,6 +781,7 @@ test('simulation target coordinate entry validates input and shows server reject
 
 test('simulation editor fits a mobile screen and retains Stop',async({page})=>{
   await page.setViewportSize({width:390,height:844});
+  await page.evaluate(()=>window.scrollTo(0,0));
   const f=await fixture(page);enableScenario(f);await view(page,'workflow');
   await expect(page.locator('#simulationPanel')).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -1147,18 +1106,21 @@ for(const phase of ['mapping','mission'])test(`turning controls apply live setti
   for(let i=0;i<15;i++)await page.keyboard.press('ArrowRight');
   await page.locator('#trialLookahead').focus();await page.keyboard.press('Home');
   for(let i=0;i<4;i++)await page.keyboard.press('ArrowRight');
+  await page.locator('#trialCornerLookahead').focus();await page.keyboard.press('ArrowRight');
   await page.locator('#applyTrial').click();
   await expect(page.locator('#trialAlignmentLive')).toHaveText('Live: 0.20 rad (11.5°)');
   await expect(page.locator('#trialLookaheadLive')).toHaveText('Live: 0.10 m');
   const request=f.calls.find(c=>c.path==='/api/trial');
   expect(request.body.alignment_angle).toBe(.20);
   expect(request.body.lookahead_dist).toBe(.10);
+  expect(request.body.corner_lookahead_dist).toBe(.09);
   await page.locator('#profileFast').click();
   await expect(page.locator('#trialAlignment')).toHaveValue('0.2');
   await expect(page.locator('#trialLookahead')).toHaveValue('0.1');
   f.state.mission.state=phase==='mapping'?'MAPPING':'SEARCHING';await page.evaluate(()=>poll());
   await expect(page.locator('#trialAlignment')).toBeDisabled();
   await expect(page.locator('#trialLookahead')).toBeDisabled();
+  await expect(page.locator('#trialCornerLookahead')).toBeDisabled();
   expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
   expect(f.errors).toEqual([]);
 });
@@ -1166,8 +1128,8 @@ for(const phase of ['mapping','mission'])test(`turning controls apply live setti
 
 test('load defaults is a draft until navigation settings are applied',async({page})=>{
   await fixture(page);
-  let values={max_linear:.20,max_angular:.65,goal_timeout:80,lookahead_dist:.11,alignment_angle:.28};
-  const defaults={max_linear:.16,max_angular:.60,goal_timeout:60,lookahead_dist:.18,alignment_angle:.35};
+  let values={max_linear:.20,max_angular:.65,goal_timeout:80,lookahead_dist:.11,corner_lookahead_dist:.12,alignment_angle:.28};
+  const defaults={max_linear:.16,max_angular:.60,goal_timeout:60,lookahead_dist:.18,corner_lookahead_dist:.08,alignment_angle:.35};
   const posted=[];
   await page.route('**/api/trial',async route=>{
     if(route.request().method()==='POST'){values=route.request().postDataJSON();posted.push(values);}
@@ -1183,4 +1145,37 @@ test('load defaults is a draft until navigation settings are applied',async({pag
   await page.locator('#applyTrial').click();
   await expect(page.locator('#trialLookaheadLive')).toContainText('Live: 0.18 m');
   expect(posted).toEqual([defaults]);
+});
+
+test('navigation settings separate live clearance from grids saved for the next stage',async({page},testInfo)=>{
+  const f=await fixture(page);await view(page,'navigation',false);
+  await expect(page.locator('#settingsSpeed #trialCornerLookahead')).toBeVisible();
+  await expect(page.locator('#audacityPanel, #gapToggle')).toHaveCount(0);
+  await expect(page.locator('#settingsClearance #clearanceNavRadius')).toHaveAttribute('min','0.06');
+  await expect(page.locator('#settingsClearance #clearanceFootprint')).toHaveAttribute('min','0.07');
+  await expect(page.locator('#settingsGrids #gridPathLive')).toContainText('Active: 0.01667 m');
+  await expect(page.locator('#settingsScan #scanFilterRadius')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('navigation-settings-desktop.png'),fullPage:true});
+  await page.locator('#clearanceNavRadius').fill('0.06');
+  await page.locator('#clearanceFootprint').fill('0.07');
+  await page.locator('#applyClearance').click();
+  await expect(page.locator('#clearanceFootprintLive')).toContainText('Live: 0.07 m');
+  expect(f.calls.find(call=>call.path==='/api/gap').body.tuning).toEqual({robot_radius:.06,footprint_radius:.07});
+  await page.locator('#gridMapping').fill('0.04');
+  await page.locator('#gridPath').fill('0.03');
+  await page.locator('#gridViewpoints').fill('0.45');
+  await page.locator('#gridCoverage').fill('0.1');
+  await page.locator('#applyGridSettings').click();
+  await expect(page.locator('#gridMappingLive')).toContainText('Active: 0.05 m');
+  expect(f.calls.find(call=>call.path==='/api/grid_settings').body).toEqual(
+    {mapping_resolution:.04,path_search_spacing:.03,viewpoint_spacing:.45,coverage_spacing:.1});
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await expect(page.locator('#stop')).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('navigation-settings-mobile.png'),fullPage:true});
+  f.state.mission.state='MAPPING';
+  await expect(page.locator('#clearanceNavRadius')).toBeDisabled();
+  await expect(page.locator('#gridMapping')).toBeDisabled();
+  expect(f.calls.some(call=>call.path==='/api/start')).toBe(false);
+  expect(f.errors).toEqual([]);
 });

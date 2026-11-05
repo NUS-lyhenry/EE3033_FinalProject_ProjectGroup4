@@ -46,11 +46,12 @@ def console(tmp_path):
 
 def test_tracking_readback_and_old_speed_clients_preserve_selected_values(tmp_path):
     c=console(tmp_path);assert c.trial_settings()['values']['alignment_angle']==.35
-    chosen=dict(max_linear=.12,max_angular=.4,goal_timeout=60.,lookahead_dist=.08,alignment_angle=.10)
+    chosen=dict(max_linear=.12,max_angular=.4,goal_timeout=60.,lookahead_dist=.08,corner_lookahead_dist=.12,alignment_angle=.10)
     result=c.trial_settings(chosen);assert result['synchronized']
     assert result['values']==chosen
     speed=c.trial_settings(dict(max_linear=.16,max_angular=.6,goal_timeout=75.))
     assert speed['values']['lookahead_dist']==.08
+    assert speed['values']['corner_lookahead_dist']==.12
     assert speed['values']['alignment_angle']==.10
     assert speed['values']['max_linear']==.16
     assert json.loads(c.navigation_settings_path.read_text())['trial']==speed['values']
@@ -68,7 +69,7 @@ def test_failed_later_node_rolls_back_tracking_and_speed_together(tmp_path):
         write(name,entries)
     c.write_trial_node=reject_once
     with pytest.raises(RuntimeError,match='original values restored'):
-        c.trial_settings(dict(max_linear=.16,max_angular=.6,goal_timeout=75.,lookahead_dist=.08,alignment_angle=.10))
+        c.trial_settings(dict(max_linear=.16,max_angular=.6,goal_timeout=75.,lookahead_dist=.08,corner_lookahead_dist=.12,alignment_angle=.10))
     assert c.nodes==before and c.trial_fault is None
     assert c.trial_settings()['synchronized']
 
@@ -83,7 +84,7 @@ def test_tracking_is_locked_during_navigation(tmp_path,phase,state):
 
 def test_storage_failure_rolls_back_live_settings_and_preserves_previous_file(tmp_path):
     c=console(tmp_path)
-    chosen=dict(max_linear=.16,max_angular=.6,goal_timeout=80.,lookahead_dist=.09,alignment_angle=.31)
+    chosen=dict(max_linear=.16,max_angular=.6,goal_timeout=80.,lookahead_dist=.09,corner_lookahead_dist=.07,alignment_angle=.31)
     c.trial_settings(chosen)
     before=c.navigation_settings_path.read_bytes()
     def fail(section, values):

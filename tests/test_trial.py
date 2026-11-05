@@ -4,7 +4,7 @@ from ee3033_project.trial import parameter_plan, validate_trial
 
 
 def values(**overrides):
-    return dict({'max_linear':.12,'max_angular':.4,'goal_timeout':60.,'lookahead_dist':.18,'alignment_angle':.35},**overrides)
+    return dict({'max_linear':.12,'max_angular':.4,'goal_timeout':60.,'lookahead_dist':.18,'corner_lookahead_dist':.08,'alignment_angle':.35},**overrides)
 
 
 def test_trial_plan_keeps_controller_and_gate_in_sync():
@@ -26,7 +26,8 @@ def test_trial_plan_keeps_controller_and_gate_in_sync():
     ('goal_timeout',301),('max_linear',True),
     ('max_linear','0.12'),
     ('lookahead_dist',0.),('lookahead_dist',.31),
-    ('lookahead_dist',float('nan')),('alignment_angle',.01),
+    ('lookahead_dist',float('nan')),('corner_lookahead_dist',.059),
+    ('corner_lookahead_dist',.31),('alignment_angle',.01),
     ('alignment_angle',1.58),('alignment_angle',True),
 ])
 def test_trial_rejects_invalid_values(key,bad):
@@ -66,12 +67,13 @@ def test_trial_requires_exact_fields():
 
 @pytest.mark.parametrize('phase',['mapping','mission'])
 def test_tracking_settings_apply_without_changing_speed_or_protection(phase):
-    requested=values(lookahead_dist=.08,alignment_angle=.10)
+    requested=values(lookahead_dist=.18,corner_lookahead_dist=.10,alignment_angle=.10)
     plan=parameter_plan(requested,phase)
     controller=plan['controller_server']
-    assert controller['FollowPath.lookahead_dist']==.08
-    assert controller['FollowPath.min_lookahead_dist']==.08
-    assert controller['FollowPath.max_lookahead_dist']==.08
+    assert controller['FollowPath.lookahead_dist']==.18
+    assert controller['FollowPath.min_lookahead_dist']==.18
+    assert controller['FollowPath.max_lookahead_dist']==.18
+    assert controller['FollowPath.corner_lookahead_dist']==.10
     assert controller['FollowPath.rotate_to_heading_min_angle']==.10
     assert plan['project_velocity_gate']=={'max_linear':.12,'max_angular':.4}
     assert not any('collision' in key or 'radius' in key

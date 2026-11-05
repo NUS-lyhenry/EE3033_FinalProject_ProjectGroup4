@@ -79,14 +79,19 @@ def twist():return NS(linear=NS(x=0.,y=0.,z=0.),angular=NS(x=0.,y=0.,z=0.))
 
 
 def gate_fixture(v=.12,w=.4):
+    from ee3033_project.gap import GATE_FIELDS
+    from ee3033_project.robot_geometry import MIN_COLLISION_RADIUS, MIN_CONFIGURED_COLLISION_RADIUS
+
     source=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project/velocity_gate.py'
     cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef))
     env=dict(Node=object,np=np,math=math,time=time,json=json,Twist=twist,
         Time=lambda:None,TransformException=LookupError,String=lambda **kw:NS(**kw),
         reverse_clearance=reverse_clearance,stamp_seconds=stamp_seconds,quaternion_yaw=quaternion_yaw,
-        FOOTPRINT_RADIUS=motion.FOOTPRINT_RADIUS,geometry_metadata=lambda:{},limit_twist=motion.limit_twist,
+        FOOTPRINT_RADIUS=motion.FOOTPRINT_RADIUS,MIN_COLLISION_RADIUS=MIN_COLLISION_RADIUS,
+        MIN_CONFIGURED_COLLISION_RADIUS=MIN_CONFIGURED_COLLISION_RADIUS,
+        geometry_metadata=lambda:{},limit_twist=motion.limit_twist,
         swept_arc=motion.swept_arc,swept_map_clearance=motion.swept_map_clearance,
-        swept_scan_clearance=motion.swept_scan_clearance)
+        swept_scan_clearance=motion.swept_scan_clearance,GATE_FIELDS=GATE_FIELDS)
     exec(compile(ast.Module(body=[cls],type_ignores=[]),str(source),'exec'),env)
     gate=env['VelocityGate'].__new__(env['VelocityGate'])
     now=time.monotonic()
@@ -129,6 +134,48 @@ def test_production_gate_stops_both_components_when_front_obstacle_blocks():
     gate.tick()
     assert outputs[-1].linear.x==outputs[-1].angular.z==0.
     assert statuses[-1]['reason']=='forward_obstacle'
+
+
+def test_lower_turning_stop_still_checks_the_full_body_during_rotation():
+    from ee3033_project.gap import TUNING_LIMITS
+
+    gate, outputs, statuses = gate_fixture(0., .35)
+    gate.p['rotation_clearance'] = TUNING_LIMITS['rotation_clearance'][0]
+    gate.p['footprint_radius'] = TUNING_LIMITS['footprint_radius'][0]
+    gate.scan.ranges[270] = motion.ROBOT_WIDTH / 2
+    gate.tick()
+    assert outputs[-1].angular.z == 0.
+    assert statuses[-1]['safety_reason'] == 'swept_laser_obstacle'
+
+
+def test_reduced_collision_radius_changes_the_swept_check():
+    from ee3033_project.gap import TUNING_LIMITS
+
+    minimum = TUNING_LIMITS['footprint_radius'][0]
+    distance = (minimum + motion.FOOTPRINT_RADIUS) / 2
+    for radius, expected in ((minimum, .35), (motion.FOOTPRINT_RADIUS, 0.)):
+        gate, outputs, _ = gate_fixture(0., .35)
+        gate.p['rotation_clearance'] = TUNING_LIMITS['rotation_clearance'][0]
+        gate.p['footprint_radius'] = radius
+        gate.scan.ranges[180] = distance
+        gate.tick()
+        assert outputs[-1].angular.z == expected
+
+
+@pytest.mark.skipif(motion.ROBOT_LENGTH is None, reason='Requires measured length')
+def test_body_sweep_catches_interior_rotation_and_rotated_map_cells_at_minimum_radius():
+    hit = [[-.095/math.sqrt(2), .095/math.sqrt(2)]]
+    assert motion.swept_scan_clearance(hit, 0., 0., 0., .07, protect_body=True).allowed
+    assert not motion.swept_scan_clearance(hit, 0., math.pi/2, 1., .07, protect_body=True).allowed
+
+    data = np.zeros((80,80), dtype=int)
+    resolution = .005
+    origin = (1., 2., math.pi/2)
+    pose = (.80, 2.20, math.pi/2)
+    data[57,40] = -1
+    assert motion.swept_map_clearance(data,resolution,origin,pose,0.,0.,1.,.07).allowed
+    result = motion.swept_map_clearance(data,resolution,origin,pose,0.,0.,1.,.07,protect_body=True)
+    assert result.reason == 'swept_footprint_unknown'
 
 
 def test_production_gate_rejects_future_footprint_collision_and_unknown_space():

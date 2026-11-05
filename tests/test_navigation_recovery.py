@@ -190,7 +190,7 @@ def gate_fixture():
         origin=NS(position=NS(x=origin[0],y=origin[1]),orientation=q)),data=grid.ravel())
     full=np.zeros((6,6));full[np.ix_([0,1,5],[0,1,5])]=cov
     gate.localization=NS(header=NS(stamp=stamp),pose=NS(covariance=full.ravel()))
-    gate.p=dict(reverse_distance=.20,reverse_radius=.15,reverse_reserve=.04,
+    gate.p=dict(reverse_distance=.20,reverse_radius=.15,reverse_reserve=.04,footprint_radius=FOOTPRINT_RADIUS,
                 base_frame='base_footprint',odom_frame='odom_combined')
     gate.reverse_start=None
     return gate

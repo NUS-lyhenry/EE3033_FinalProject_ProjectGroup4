@@ -7,11 +7,12 @@ LIMITS = {
     'max_angular': (0.15, 1.00, 0.05, 'rad/s'),
     'goal_timeout': (20.0, 300.0, 5.0, 's'),
     'lookahead_dist': (0.06, 0.30, 0.01, 'm'),
+    'corner_lookahead_dist': (0.06, 0.30, 0.01, 'm'),
     'alignment_angle': (0.05, 1.57, 0.01, 'rad'),
 }
 
 
-TRACKING_DEFAULTS = dict(lookahead_dist=.18, alignment_angle=.35)
+TRACKING_DEFAULTS = dict(lookahead_dist=.18, corner_lookahead_dist=.08, alignment_angle=.35)
 
 
 def validate_trial(values):
@@ -47,6 +48,7 @@ def parameter_plan(values, phase='mapping'):
             'FollowPath.desired_linear_vel': linear, 'FollowPath.max_linear_vel': linear,
             'FollowPath.rotate_to_heading_angular_vel': angular, 'FollowPath.max_angular_vel': angular,
             'FollowPath.lookahead_dist': values['lookahead_dist'],
+            'FollowPath.corner_lookahead_dist': values['corner_lookahead_dist'],
             'FollowPath.min_lookahead_dist': values['lookahead_dist'],
             'FollowPath.max_lookahead_dist': values['lookahead_dist'],
             'FollowPath.rotate_to_heading_min_angle': values['alignment_angle'],

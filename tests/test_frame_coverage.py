@@ -15,6 +15,14 @@ from test_mission_policy import mission,namespace
 namespace.update(exposure_view=exposure_view,FloorCamera=FloorCamera,angle_difference=angle_difference)
 
 
+def test_camera_coverage_spacing_is_independent_of_viewpoint_spacing():
+    grid = np.zeros((32,32), dtype=int)
+    default = CoveragePlanner(grid,.05,(0.,0.,0.))
+    denser = CoveragePlanner(grid,.05,(0.,0.,0.),spacing=.45,coverage_spacing=.10)
+    assert default.spacing == .65 and default.target_stride == 3
+    assert denser.spacing == .45 and denser.target_stride == 2
+
+
 def frame(stamp=10.,pose=(1.23,1.27,0.),**overrides):
     value=dict(stamp=stamp,ready=True,target_class='bottle',geometry_ready=True,
         camera_model=BottomCamera(640,480,CALIBRATION_K,CALIBRATION_D).metadata(),

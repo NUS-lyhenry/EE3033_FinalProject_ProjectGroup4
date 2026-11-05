@@ -43,11 +43,11 @@ int main(){
  RegulatedPathFollower controller;
  for(double distance:{.06,.08,.18,.30})for(double angle:{.05,.10,.35,1.57}) {
   const auto result=controller.validate_caps({{"FollowPath.lookahead_dist",distance},
-    {"FollowPath.min_lookahead_dist",distance},{"FollowPath.max_lookahead_dist",distance},
+    {"FollowPath.corner_lookahead_dist",distance},{"FollowPath.min_lookahead_dist",distance},{"FollowPath.max_lookahead_dist",distance},
     {"FollowPath.rotate_to_heading_min_angle",angle}});
   assert(result.successful);
  }
- for(const auto &name:{"lookahead_dist","min_lookahead_dist","max_lookahead_dist","rotate_to_heading_min_angle"}) {
+ for(const auto &name:{"lookahead_dist","corner_lookahead_dist","min_lookahead_dist","max_lookahead_dist","rotate_to_heading_min_angle"}) {
   std::string key="FollowPath.";key+=name;
   for(double bad:{0.,-.1,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})
    assert(!controller.validate_caps({{key,bad}}).successful);

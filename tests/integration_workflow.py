@@ -16,6 +16,7 @@ from urllib.error import HTTPError
 from urllib.request import Request,urlopen
 
 import rclpy
+from rcl_interfaces.srv import GetParameters
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.parameter import Parameter
 from ee3033_project.console import Console
@@ -155,32 +156,46 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(len(self.get('maps')['maps']),2)
 
     def test_operator_settings_survive_stage_switch_and_restart(self):
+        grids=dict(mapping_resolution=.04,path_search_spacing=.025,viewpoint_spacing=.45,coverage_spacing=.10)
+        self.assertEqual(self.post('grid_settings',grids)['selected'],grids)
         self.post('stage',{'phase':'mapping'})
         self.assertTrue(wait(lambda:self.get()['mission'].get('ready')))
+        self.assertIn('mapping_resolution:=0.04',self.launched[-1])
+        self.assertEqual(self.get()['grid_settings']['active'],grids)
         self.assertTrue(wait(lambda:self.get()['velocity_gate'] is not None))
-        chosen=dict(max_linear=.19,max_angular=.55,goal_timeout=85.,lookahead_dist=.11,alignment_angle=.28)
-        policy=dict(enabled=True,audacity='cautious')
+        chosen=dict(max_linear=.19,max_angular=.55,goal_timeout=85.,lookahead_dist=.11,corner_lookahead_dist=.09,alignment_angle=.28)
+        tuning=dict(robot_radius=.08,footprint_radius=.14,stop_distance=.16)
         self.assertEqual(self.post('trial',chosen)['values'],chosen)
-        self.assertTrue(self.post('gap',policy)['synchronized'])
+        with self.assertRaises(HTTPError):
+            self.post('gap',{'enabled':True,'audacity':'cautious'})
+        self.assertTrue(self.post('gap',{'tuning':tuning})['synchronized'])
         entry=self.post('save_map')['map']
         self.post('review_map',{'map_id':entry['id']})
         options=dict(target_class='bottle',localization_method='lidar',return_tolerance=.25)
         self.post('stage',dict(phase='mission',map_id=entry['id'],**options))
         self.assertEqual(self.get('trial')['values'],chosen)
         self.assertTrue(self.get('trial')['synchronized'])
-        for key,value in policy.items():self.assertEqual(self.get('gap')[key],value)
+        self.assertFalse(self.get('gap')['enabled'])
+        self.assertEqual(self.get('gap')['tuning']['overrides'],tuning)
+        self.assertEqual(self.get()['grid_settings']['active'],grids)
+        search = self.console.parameter_request('project_mission', 'get_parameters',
+            GetParameters.Request(names=['viewpoint_spacing','coverage_spacing']))
+        self.assertEqual([value.double_value for value in search.values], [.45,.10])
         self.assertEqual(self.get()['mission']['state'],'WAITING')
         self.console.stage.stop()
         self.executor.remove_node(self.console)
         self.console.destroy_node()
         self.make_console()
         self.assertEqual({k:self.get()['mission_options'][k] for k in options},options)
+        self.assertEqual(self.get()['grid_settings']['selected'],grids)
         self.post('new_trial')
         self.assertEqual(self.get('trial')['values'],chosen)
-        for key,value in policy.items():self.assertEqual(self.get('gap')[key],value)
+        self.assertFalse(self.get('gap')['enabled'])
+        self.assertEqual(self.get('gap')['tuning']['overrides'],tuning)
+        self.assertEqual(self.get()['grid_settings']['active'],grids)
         self.assertEqual({k:self.get()['mission_options'][k] for k in options},options)
         self.assertEqual(self.get()['mission']['state'],'WAITING')
-        print('PASS: all five controls, gap policy and mission choices survive stage change and console restart')
+        print('PASS: speed, tracking, clearances and mission choices survive stage change and console restart')
 
     def test_stop_during_loading_prevents_late_stage(self):
         entered=threading.Event();release=threading.Event();factory=self.console.stage.popen

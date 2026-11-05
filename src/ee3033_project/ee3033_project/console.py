@@ -80,6 +80,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         self.state = {'state':'WAITING','reason':'Waiting for mission status',
                       'target':None,'home':None}
         self.map_data = None
+        self.navigation_grid_resolution = None
         self.map_revision = 0
         self.target_estimate = None
         self.visual = VisualTelemetry()
@@ -130,6 +131,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         self.create_subscription(Float32,'/power_voltage',self.on_voltage,qos_profile_sensor_data)
         self.create_subscription(PoseWithCovarianceStamped,'/amcl_pose',self.on_amcl,10)
         self.create_subscription(OccupancyGrid,'/map',self.on_map,LATCHED)
+        self.create_subscription(OccupancyGrid,'/project/navigation_map',self.on_navigation_grid,LATCHED)
         self.create_subscription(NavPath,'/project/search_path',self.on_route,LATCHED)
         self.create_subscription(NavPath,'/plan',self.on_path,10)
         self.create_subscription(NavPath,'/local_plan',self.on_local_path,10)
@@ -363,6 +365,10 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         with self.lock:
             self.route = [[p.pose.position.x,p.pose.position.y] for p in msg.poses]
 
+    def on_navigation_grid(self,msg):
+        with self.lock:
+            self.navigation_grid_resolution = msg.info.resolution
+
     def on_path(self,msg):
         if self.retry_after_stamp>-math.inf and stamp_seconds(msg.header.stamp)<=self.retry_after_stamp:return
         with self.lock:
@@ -534,6 +540,8 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         if values is not None:
             if 'lookahead_dist' not in supplied:
                 values['lookahead_dist'] = original['controller_server']['FollowPath.lookahead_dist']
+            if 'corner_lookahead_dist' not in supplied:
+                values['corner_lookahead_dist'] = original['controller_server']['FollowPath.corner_lookahead_dist']
             if 'alignment_angle' not in supplied:
                 values['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
             expected = parameter_plan(values, self.p['phase'])
@@ -565,6 +573,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         gate = original['project_velocity_gate']
         current = {key:gate[key] for key in ('max_linear','max_angular')}
         current['lookahead_dist'] = original['controller_server']['FollowPath.lookahead_dist']
+        current['corner_lookahead_dist'] = original['controller_server']['FollowPath.corner_lookahead_dist']
         current['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
         current['goal_timeout'] = original['project_mapper' if self.p['phase']=='mapping' else 'project_mission']['goal_timeout']
         defaults = validate_trial(dict(PROFILES[self.default_navigation_profile],
@@ -581,8 +590,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         for name, entries in gap.parameter_plan(False,self.p['phase']).items():
             names = list(entries)
             if name in gap.COSTMAPS:
-                names += ['footprint','footprint_padding','resolution',
-                          'inflation_layer.enabled','inflation_layer.inflation_radius']
+                names += ['footprint','resolution','inflation_layer.enabled']
             elif name=='controller_server':
                 names += ['progress_checker.plugin']
             response = self.parameter_request(name,'get_parameters',GetParameters.Request(names=names))
@@ -596,11 +604,14 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
                     raise RuntimeError(f'{name}: invalid {key} readback')
         return result
 
-    def gap_settings(self, enabled=None, audacity=None, *, save=True):
+    def gap_settings(self, enabled=None, audacity=None, tuning=None, *, save=True):
         phase = self.p['phase']
-        changing = enabled is not None or audacity is not None
+        saved_policy = self.navigation_settings.get('gap')
+        changing = enabled is not None or audacity is not None or tuning is not None
         if audacity is not None:
             gap.validate_audacity(audacity)
+        if tuning is not None:
+            tuning = gap.validate_tuning(tuning)
         if changing:
             with self.lock:
                 idle = self.state['state'] in ('WAITING','STOPPED','FAILED','MAPPED','MAPPED_PARTIAL','WAYPOINT_REACHED')
@@ -611,7 +622,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
             self.manual_pub.publish(Twist())
         try:
             original = self.read_gap_nodes()
-            current = gap.describe(original,phase)  # reject unsupported geometry before any write
+            current = gap.describe(original,phase,saved_policy)
         except (RuntimeError,ValueError) as exc:
             if not self.gap_reapply_required:
                 self.gap_fault = 'Gap policy unavailable; driving locked: '+str(exc)
@@ -621,7 +632,11 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
                 enabled = current['enabled']
                 if enabled is None:
                     raise ValueError('Reapply both audacity and narrow-gap blocking to synchronize settings')
-            expected = gap.parameter_plan(enabled,phase,audacity or current['audacity'] or gap.DEFAULT_AUDACITY)
+            policy = dict(enabled=enabled, audacity=audacity or current['audacity'] or gap.DEFAULT_AUDACITY)
+            overrides = tuning if tuning is not None else current['tuning']['overrides']
+            if overrides:
+                policy['tuning'] = overrides
+            expected = gap.parameter_plan(phase=phase, **policy)
             attempted = []
             try:
                 for name,entries in expected.items():
@@ -630,9 +645,9 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
                 actual = self.read_gap_nodes()
                 if not self.trial_matches(actual,expected):
                     raise RuntimeError('Gap settings differ from live readback')
-                verified = gap.describe(actual,phase)
+                gap.describe(actual,phase,policy)
                 if save:
-                    self.save_navigation_settings('gap', dict(enabled=verified['enabled'], audacity=verified['audacity']))
+                    self.save_navigation_settings('gap', policy)
             except Exception as exc:
                 restored = True
                 for name in reversed(attempted):
@@ -645,13 +660,14 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
                     restored = self.read_gap_nodes()==original and restored
                 except Exception:
                     restored = False
-                self.gap_fault = None if restored and gap.describe(original,phase)['synchronized'] else 'Gap update/rollback unverified; driving locked; reapply gap policy'
+                self.gap_fault = None if restored and current['synchronized'] else 'Gap update/rollback unverified; driving locked; reapply gap policy'
                 self.gap_reapply_required = self.gap_fault is not None
                 raise RuntimeError(str(exc)+('; original values restored' if restored else '; driving locked')) from exc
             original = actual
+            saved_policy = policy
             self.gap_fault = None
             self.gap_reapply_required = False
-        data = gap.describe(original,phase)
+        data = gap.describe(original,phase,saved_policy)
         if not data['synchronized']:
             self.gap_fault = 'Gap parameters differ across nodes; driving locked; reapply gap policy'
             self.gap_reapply_required = True
@@ -824,13 +840,18 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
             if result.success:self.record.start('mapping')
             return dict(success=result.success,message=result.message)
         if path=='/api/gap':
-            if not body or set(body)-{'enabled','audacity'}:
-                raise ValueError('Provide enabled: true/false and/or audacity: cautious/balanced/bold')
+            if self.stage:
+                if set(body) != {'tuning'}:
+                    raise ValueError('Provide manual clearance settings')
+                return self.gap_settings(False,gap.DEFAULT_AUDACITY,gap.validate_tuning(body['tuning']))
+            if not body or set(body)-{'enabled','audacity','tuning'}:
+                raise ValueError('Provide narrow-gap blocking, an audacity preset or clearance settings')
             if 'enabled' in body and type(body['enabled']) is not bool:
                 raise ValueError('enabled must be true or false')
             if 'audacity' in body:
                 gap.validate_audacity(body['audacity'])
-            return self.gap_settings(body.get('enabled'),body.get('audacity'))
+            tuning = gap.validate_tuning(body['tuning']) if 'tuning' in body else None
+            return self.gap_settings(body.get('enabled'),body.get('audacity'),tuning)
         if path=='/api/initial_pose':
             if active or self.p['phase'] not in ('mission','calibration'):
                 raise ValueError('Initial pose is only available before the autonomous mission')

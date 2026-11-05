@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 from ee3033_project import gap
-from ee3033_project.robot_geometry import GEOMETRY_PROFILE,FOOTPRINT_PADDING,FOOTPRINT_RADIUS,ROTATION_CLEARANCES
+from ee3033_project.robot_geometry import GEOMETRY_PROFILE,FOOTPRINT_PADDING,FOOTPRINT_RADIUS,MIN_CONFIGURED_COLLISION_RADIUS,ROTATION_CLEARANCES
 
 
 def snapshot(enabled=False, phase='mapping', audacity=gap.DEFAULT_AUDACITY):
@@ -175,3 +175,49 @@ def test_low_planning_threshold_cannot_shrink_padded_physical_opening(level):
     assert data['effective_min_opening']==pytest.approx(2*FOOTPRINT_RADIUS)
     if GEOMETRY_PROFILE=='measured':
         assert data['effective_min_opening']==pytest.approx(.233602)
+
+
+def test_custom_planning_radius_respects_gap_reserve_and_independent_collision_floor():
+    tuning = dict(robot_radius=round(gap.BASE_RADIUS * .6, 6), footprint_radius=.18,
+                  footprint_padding=.02, inflation_radius=.11)
+    for enabled in (False, True):
+        policy = dict(enabled=enabled, audacity='bold', tuning=tuning)
+        actual = snapshot(enabled)
+        for name, values in gap.parameter_plan(phase='mapping', **policy).items():
+            actual[name].update(values)
+        described = gap.describe(actual, 'mapping', policy)
+        radius = gap.RESERVED_RADIUS if enabled else tuning['robot_radius']
+        assert described['synchronized']
+        assert described['tuning']['live']['robot_radius'] == radius
+        assert described['tuning']['live']['footprint_radius'] == .18
+        assert described['tuning']['live']['inflation_radius'] == max(.11, radius+.02)
+        assert described['effective_min_opening'] >= .36
+        assert not gap.describe(snapshot(enabled), 'mapping', policy)['synchronized']
+    with pytest.raises(ValueError):
+        gap.validate_tuning({'robot_radius': tuning['robot_radius']-.001})
+    with pytest.raises(ValueError):
+        gap.validate_tuning({'footprint_radius': MIN_CONFIGURED_COLLISION_RADIUS-.001})
+    reduced = gap.parameter_plan(False, 'mapping', tuning={'footprint_radius': MIN_CONFIGURED_COLLISION_RADIUS})
+    assert reduced['project_velocity_gate']['footprint_radius'] == MIN_CONFIGURED_COLLISION_RADIUS
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+@pytest.mark.parametrize('level', gap.AUDACITY)
+def test_legacy_settings_become_manual_without_changing_effective_values(enabled, level):
+    legacy = dict(enabled=enabled, audacity=level,
+                  tuning={'robot_radius':.10, 'clearance':.20, 'footprint_radius':.16})
+    manual = gap.manual_policy(legacy)
+    assert not manual['enabled'] and manual['audacity'] == gap.DEFAULT_AUDACITY
+    assert gap.manual_policy(manual) == manual
+    assert gap.parameter_plan(phase='mapping', **manual) == gap.parameter_plan(phase='mapping', **legacy)
+
+
+def test_turning_stop_can_be_set_to_sixty_percent_of_default():
+    minimum = round(ROTATION_CLEARANCES[gap.DEFAULT_AUDACITY] * .60, 6)
+    tuning = {'rotation_clearance': minimum}
+    for phase in ('mapping', 'mission'):
+        gate = gap.parameter_plan(False, phase, tuning=tuning)['project_velocity_gate']
+        assert gate['rotation_clearance'] == minimum
+        assert gate['footprint_radius'] == FOOTPRINT_RADIUS
+    with pytest.raises(ValueError):
+        gap.validate_tuning({'rotation_clearance': minimum - .000001})

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import math
 import numpy as np
 
-from .robot_geometry import PHYSICAL_RADIUS, FOOTPRINT_PADDING, FOOTPRINT_RADIUS
+from .robot_geometry import PHYSICAL_RADIUS, FOOTPRINT_PADDING, FOOTPRINT_RADIUS, ROBOT_LENGTH, ROBOT_WIDTH
 OCCUPIED_THRESHOLD = 25
 
 
@@ -28,12 +28,12 @@ def limit_twist(linear, angular, max_linear, max_angular):
     return linear * scale, angular * scale, scale
 
 
-def swept_arc(linear, angular, horizon, step=.025, pose=(0., 0., 0.)):
-    """Analytic unicycle trajectory sampled by centre travel, including t=0."""
-    if (len(pose) != 3 or not all(math.isfinite(v) for v in (linear, angular, horizon, step, *pose))
-            or horizon < 0 or step <= 0):
+def swept_arc(linear, angular, horizon, step=.025, pose=(0., 0., 0.), *, sampling_radius=0.):
+    """Analytic unicycle trajectory, sampled by maximum travel at the given radius."""
+    if (len(pose) != 3 or not all(math.isfinite(v) for v in (linear, angular, horizon, step, sampling_radius, *pose))
+            or horizon < 0 or step <= 0 or sampling_radius < 0):
         raise ValueError('Invalid motion geometry')
-    count = max(1, math.ceil(abs(linear) * horizon / step))
+    count = max(1, math.ceil((abs(linear) + abs(angular) * sampling_radius) * horizon / step))
     t = np.linspace(0., horizon, count + 1)
     if abs(angular) < 1e-9:
         x, y = linear * t, np.zeros_like(t)
@@ -99,20 +99,27 @@ def polyline_map_clearance(grid, resolution, origin, points, radius=FOOTPRINT_RA
 
 
 def swept_map_clearance(grid, resolution, origin, pose, linear, angular, horizon,
-                        radius=FOOTPRINT_RADIUS):
+                        radius=FOOTPRINT_RADIUS, *, protect_body=False):
     try:
         # Coarse maps must not add a larger sample-gap allowance than the
         # fine validated path: that can reject the current safe pose itself at
         # a corner, even when the entire requested arc moves away from it.
         # Retain full cell-square geometry, footprint and half-gap proof.
         arc = swept_arc(linear, angular, horizon, min(resolution/4., .005), pose)
-        return polyline_map_clearance(grid, resolution, origin, arc[:, :2], radius)
+        circle = polyline_map_clearance(grid, resolution, origin, arc[:, :2], radius)
+        if not circle.allowed or not protect_body:
+            return circle
+        ox, oy, yaw = origin
+        c, s = math.cos(yaw), math.sin(yaw)
+        dx, dy = pose[0]-ox, pose[1]-oy
+        map_pose = (c*dx+s*dy, -s*dx+c*dy, pose[2]-yaw)
+        return _swept_body_map(np.asarray(grid), resolution, map_pose, linear, angular, horizon)
     except (ValueError, TypeError, OverflowError):
         return MotionCheck(False, 'invalid_motion_geometry')
 
 
 def swept_scan_clearance(points, linear, angular, horizon, radius=FOOTPRINT_RADIUS,
-                         step=.01):
+                         step=.01, *, protect_body=False):
     """Collision-check valid laser hit endpoints already transformed to base.
 
     Absence of returns cannot establish free space: the independent known-map
@@ -136,6 +143,56 @@ def swept_scan_clearance(points, linear, angular, horizon, radius=FOOTPRINT_RADI
         allowance = float(np.max(np.sqrt(length)))/2.
         if np.any(distance2 <= (radius+allowance)**2):
             return MotionCheck(False, 'swept_laser_obstacle')
+        if protect_body:
+            poses, half_x, half_y = _body_samples(linear, angular, horizon, (0., 0., 0.))
+            c, s = np.cos(poses[:, 2]), np.sin(poses[:, 2])
+            dx = points[:, 0, None] - poses[:, 0]
+            dy = points[:, 1, None] - poses[:, 1]
+            if np.any((np.abs(c*dx+s*dy) <= half_x) & (np.abs(-s*dx+c*dy) <= half_y)):
+                return MotionCheck(False, 'swept_laser_obstacle')
         return MotionCheck(True, 'swept_laser_clear')
     except (ValueError, TypeError, IndexError, OverflowError):
         return MotionCheck(False, 'invalid_laser_geometry')
+
+
+def _body_samples(linear, angular, horizon, pose):
+    """Cover the measured wheel-inclusive body even between sampled poses."""
+    if ROBOT_LENGTH is None:
+        raise ValueError('Measured body length is required for the rectangular check')
+    padding = .60 * FOOTPRINT_PADDING
+    half_x, half_y = ROBOT_LENGTH/2 + padding, ROBOT_WIDTH/2 + padding
+    corner = math.hypot(half_x, half_y)
+    poses = swept_arc(linear, angular, horizon, .01, pose, sampling_radius=corner)
+    # Half the maximum translation plus corner travel between adjacent poses.
+    allowance = (abs(linear) + abs(angular)*corner)*horizon / (2*(len(poses)-1))
+    return poses, half_x+allowance, half_y+allowance
+
+
+def _swept_body_map(grid, resolution, pose, linear, angular, horizon):
+    poses, half_x, half_y = _body_samples(linear, angular, horizon, pose)
+    height, width = grid.shape
+    half_cell = resolution/2
+    for x, y, heading in poses:
+        c, s = math.cos(heading), math.sin(heading)
+        ext_x = abs(c)*half_x + abs(s)*half_y
+        ext_y = abs(s)*half_x + abs(c)*half_y
+        if x-ext_x < 0 or y-ext_y < 0 or x+ext_x > width*resolution or y+ext_y > height*resolution:
+            return MotionCheck(False, 'swept_footprint_outside_map')
+        c0 = max(0, math.ceil((x-ext_x)/resolution)-1)
+        c1 = min(width-1, math.floor((x+ext_x)/resolution))
+        r0 = max(0, math.ceil((y-ext_y)/resolution)-1)
+        r1 = min(height-1, math.floor((y+ext_y)/resolution))
+        rr, cc = np.mgrid[r0:r1+1, c0:c1+1]
+        dx, dy = (cc+.5)*resolution-x, (rr+.5)*resolution-y
+        # Separating-axis test on both sets of rectangle axes.
+        cell_projection = half_cell*(abs(c)+abs(s))
+        touched = ((np.abs(dx) <= ext_x+half_cell+1e-12) &
+                   (np.abs(dy) <= ext_y+half_cell+1e-12) &
+                   (np.abs(c*dx+s*dy) <= half_x+cell_projection+1e-12) &
+                   (np.abs(-s*dx+c*dy) <= half_y+cell_projection+1e-12))
+        values = grid[r0:r1+1, c0:c1+1][touched]
+        if np.any(values < 0):
+            return MotionCheck(False, 'swept_footprint_unknown')
+        if np.any(values >= OCCUPIED_THRESHOLD):
+            return MotionCheck(False, 'swept_footprint_obstacle')
+    return MotionCheck(True, 'swept_map_clear')

@@ -40,6 +40,8 @@ PHYSICAL_RADIUS = BODY_RADIUS
 # Nav2's requested planning radius; final motion checks retain measured geometry.
 NAVIGATION_RADIUS = 0.10 if GEOMETRY_PROFILE == 'measured' else BODY_RADIUS
 FOOTPRINT_RADIUS = round(BODY_RADIUS+FOOTPRINT_PADDING, 6)
+MIN_COLLISION_RADIUS = round(BODY_RADIUS + .60 * FOOTPRINT_PADDING, 6)
+MIN_CONFIGURED_COLLISION_RADIUS = .07 if ROBOT_LENGTH is not None else MIN_COLLISION_RADIUS
 # Routing budget for SLAM pose error and controller tracking at wall tips.
 # Separate from measured body geometry and the final motion collision envelope.
 ROUTE_TRACKING_RESERVE = .03

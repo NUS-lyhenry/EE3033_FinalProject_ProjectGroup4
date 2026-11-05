@@ -6,6 +6,8 @@ const duration=s=>{s=Math.max(0,Math.floor(s||0));return `${String(Math.floor(s/
 let snapshot=null,online=false,busy=0,mapData=null,mapImage=null,mapRevision=-1,drag=null,driveTimer=null,driveRunning=false;
 let recoveryBusy=false;
 let maps=[],gap=null,trial=null,paramTime=0,trialDirty=false,parametersBusy=false,loadedGeneration=null,settingsGeneration=null;
+let clearanceDraft={};
+let gridDraft={},gridSettingsBusy=false;
 let modelLabels=null,labelKey='',labelsBusy=false;
 let scanFilter=null,scanFilterDirty=false,scanFilterBusy=false,scanFilterError=null,scanFilterRequest=0;
 let slamSettings=null,slamSettingsDirty=false,slamSettingsBusy=false,slamSettingsError=null,slamSettingsRequest=0;
@@ -13,7 +15,7 @@ let waypointDraft=null;
 let lastSavedMapId=null;
 let measuring=false,measurement=null;
 let simulationDraft=null,simulationRevision=null;
-const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Select an audacity level and configure navigation while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
+const PAGES={overview:['Robot overview','Live map, camera and robot status.'],mapping:['Map the environment','Explore automatically, drive manually, or choose a mapping waypoint.'],mission:['Set up the mission','Choose a supported target, establish the start pose, then search and return.'],navigation:['Navigation settings','Configure speed, clearance and grid settings while stopped.'],results:['Trial results','Inspect reported coordinates, return verification and saved trial evidence.']};
 PAGES.workflow=['Map, find & return','Build the map, confirm it, set the start, then run the autonomous mission.'];
 let currentPage='workflow',workflowSerial=0,visionDirty=false;
 const visionFields={camera_height:['visionHeight',1],camera_pitch:['visionPitch',180/Math.PI],camera_yaw:['visionYaw',180/Math.PI],camera_x:['visionX',1],camera_y:['visionY',1],horizontal_fov:['visionFov',180/Math.PI],camera_min_range:['visionMin',1],camera_max_range:['visionMax',1]};
@@ -137,9 +139,8 @@ function renderSimulationMount(s){
 }
 function arrangeWorkflow(){
   document.querySelector('.sidebar').hidden=true;
-  document.querySelector('.page-tabs').hidden=true;
   const tools=$('advancedTools'),body=$('toolsBody');
-  ['waypointControls','mappingControls','audacityPanel','advanced'].forEach(id=>body.append($(id)));
+  ['waypointControls','mappingControls','advanced'].forEach(id=>body.append($(id)));
   body.append($('localizationMethod').closest('.field'));
   body.append(document.querySelector('.event-panel'));
   const grid=document.querySelector('.workspace-grid'),stages=document.querySelector('.stage-grid');
@@ -151,11 +152,34 @@ function arrangeWorkflow(){
   tools.addEventListener('toggle',()=>{if(!tools.open)releaseDrive();});
 }
 arrangeWorkflow();
+const settingsPanels=[
+  ['trialPanel','settingsSpeed'],['clearancePanel','settingsClearance'],
+  ['gridSettingsPanel','settingsGrids'],['slamSettingsPanel','settingsMapping'],
+  ['scanFilterPanel','settingsScan'],['navigationRecoveryPanel','settingsRecovery']
+].map(([id,slot])=>{
+  const panel=$(id),home=document.createComment(id);
+  panel.before(home);
+  return {panel,home,slot:$(slot)};
+});
 
 function renderPages(){
   const route=location.hash.replace(/^#\/?/,''),previous=currentPage;currentPage=Object.hasOwn(PAGES,route)?route:'workflow';
-  if(previous!==currentPage){$('advancedTools').open=currentPage!=='workflow';if(currentPage==='calibration')$('legacyCalibration').open=true;}
+  const settingsPage=currentPage==='navigation';
+  document.body.dataset.consolePage=currentPage;
+  if(previous!==currentPage){
+    $('advancedTools').open=currentPage!=='workflow';
+    if(currentPage==='calibration')$('legacyCalibration').open=true;
+    for(const {panel,home,slot} of settingsPanels){
+      if(settingsPage)slot.append(panel);
+      else home.after(panel);
+    }
+    if(settingsPage){
+      $('clearancePanel').querySelector('details').open=true;
+      $('gridSettingsPanel').querySelector('details').open=true;
+    }
+  }
   document.querySelectorAll('[data-pages]').forEach(e=>e.hidden=currentPage==='workflow'?false:!e.dataset.pages.split(' ').includes(currentPage));
+  $('settingsLayout').hidden=!settingsPage;
   if(currentPage==='workflow'){$('mappingPanel').hidden=snapshot?.phase==='mission';$('legacyCalibration').hidden=true;}
   else $('legacyCalibration').hidden=true;
   $('backWorkflow').hidden=currentPage==='workflow';
@@ -167,7 +191,9 @@ function renderPages(){
 }
 function showPage(page){location.hash='/'+page;render();}
 window.addEventListener('hashchange',()=>{releaseDrive();render();window.scrollTo(0,0);});
-const trialFields=[['max_linear','trialLinear','m/s'],['max_angular','trialAngular','rad/s'],['lookahead_dist','trialLookahead','m'],['alignment_angle','trialAlignment','rad'],['goal_timeout','trialTimeout','s']];
+const trialFields=[['max_linear','trialLinear','m/s'],['max_angular','trialAngular','rad/s'],['lookahead_dist','trialLookahead','m'],['corner_lookahead_dist','trialCornerLookahead','m'],['alignment_angle','trialAlignment','rad'],['goal_timeout','trialTimeout','s']];
+const clearanceFields=[...document.querySelectorAll('[data-clearance]')];
+const gridFields=[...document.querySelectorAll('[data-grid-setting]')];
 function trialValue(key,value,unit){return fmt(value,key==='goal_timeout'?0:2)+' '+unit+(key==='alignment_angle'?` (${fmt(value*180/Math.PI,1)}°)`:'');}
 function feedback(message,error=false){$('feedback').textContent=message;$('feedback').classList.toggle('error',error);}
 async function get(path){const r=await fetch('/api/'+path);const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
@@ -463,22 +489,9 @@ function render(){
 function renderParameters(){
   renderScanFilter();
   renderSlamSettings();
+  renderGridSettings();
   const idle=setupIdle(),fresh=Date.now()-paramTime<8000,mapping=snapshot?.phase==='mapping';
-  const policyReady=idle&&fresh&&!!gap&&!parametersBusy&&(mapping||snapshot?.mission?.state==='WAITING');
-  document.querySelectorAll('[data-audacity]').forEach(button=>{
-    const level=button.dataset.audacity,option=gap?.audacity_options?.find(p=>p.id===level);
-    button.disabled=!policyReady||!option;
-    button.setAttribute('aria-pressed',String(fresh&&gap?.audacity===level&&gap?.synchronized===true));
-    button.querySelector('small').textContent=option?`${fmt(option.clearance*100,1).replace(/\.0$/,'')} cm clearance · ~${fmt(option.nominal_min_opening*100,1).replace(/\.0$/,'')} cm opening`:'Waiting for live settings';
-    button.querySelector('em').textContent=option?`Turn stop ${fmt(option.turn_stop_distance*100,0)} cm · ${level==='cautious'?'original turning':level==='balanced'?'gentle turning':'firm turning'}`:'';
-  });
-  const label=gap?.audacity_options?.find(p=>p.id===gap?.audacity)?.label;
-  setPill('audacityLive',fresh&&label?label:'Unverified',fresh&&gap?.synchronized?'good':'warn');
-  $('audacityStatus').textContent=parametersBusy?'Applying and verifying navigation settings…':!fresh?'Load a stage and wait for live settings.':gap?.fault||`Live: ${label||'unsynchronized'}. Applies to automatic mapping and mission navigation. Configure while stopped${mapping?'.':', before mission Start.'}`;
-  $('gapToggle').disabled=!idle||!fresh||!gap||parametersBusy||(!mapping&&snapshot?.mission?.state!=='WAITING');
-  $('gapToggle').setAttribute('aria-pressed',String(gap?.enabled===true));
-  $('gapToggle').textContent=gap?.enabled===true?'Narrow-gap blocking: ON · Disable':gap?.enabled===false?'Narrow-gap blocking: OFF · Enable':'Synchronize gap policy: Enable';
-  if(gap&&fresh){const n=gap.nodes,g=n?.['global_costmap/global_costmap'],l=n?.['local_costmap/local_costmap'],stage=n?.[mapping?'project_mapper':'project_mission'];$('gapStatus').textContent=gap.fault||`Verified radius: global ${fmt(g?.robot_radius)} m / local ${fmt(l?.robot_radius)} m. Mapping/search clearance ${fmt(stage?.clearance)} m.`;}
+  renderClearance(idle&&fresh&&(mapping||snapshot?.mission?.state==='WAITING'));
   $('trialPanel').hidden=snapshot?.phase==='calibration';
   trialFields.forEach(([key,id,unit])=>{
     const input=$(id),limits=trial?.limits?.[key];
@@ -496,6 +509,46 @@ function renderParameters(){
   $('loadTrialDefaults').disabled=!idle||!fresh||!trial?.defaults||parametersBusy;
   $('trialStatus').textContent=parametersBusy?'Applying and verifying…':trialDirty?'Unapplied changes. Select Apply to save.':trial?.fault||'Applied values are saved for future stages. Adjust while stopped.';
   if(trial?.protection)$('trialProtection').textContent=`Obstacle stop ${fmt(trial.protection.stop_distance)} m · turn clearance ${fmt(trial.protection.rotation_clearance)} m`;
+}
+function renderGridSettings(){
+  const data=snapshot?.grid_settings, editable=setupIdle()&&data?.editable&&!parametersBusy&&!gridSettingsBusy;
+  const dirty=Object.keys(gridDraft).length>0;
+  const effective={
+    mapping_resolution:data?.map_resolution,
+    path_search_spacing:data?.effective_path_resolution,
+    viewpoint_spacing:data?.active_phase==='mission'?data.active.viewpoint_spacing:null,
+    coverage_spacing:data?.active_phase==='mission'?data.active.coverage_spacing:null
+  };
+  const distance=value=>Number.isFinite(value)?`${Number(value.toFixed(5))} m`:'unavailable';
+  for(const input of gridFields){
+    const key=input.dataset.gridSetting, limits=data?.limits[key];
+    input.min=limits?.min??'';input.max=limits?.max??'';
+    if(!Object.hasOwn(gridDraft,key))input.value=data?.selected[key]??'';
+    input.disabled=!editable;
+    $(input.id+'Live').textContent=`Active: ${distance(effective[key])} · Default: ${distance(data?.defaults[key])}`+
+      (limits?` · Range: ${limits.min}–${limits.max} m`:'');
+  }
+  $('applyGridSettings').disabled=!editable||!dirty||gridFields.some(input=>!input.checkValidity());
+  $('gridSettingsStatus').textContent=gridSettingsBusy?'Saving…':dirty?'Unapplied changes. Save to use them on the next stage load.':
+    data?'Saved values apply on the next stage load. Rebuild the map to change its SLAM cell size.':'Load settings from the console.';
+}
+function renderClearance(idle){
+  const tuning=gap?.tuning, editable=idle&&!!tuning&&!parametersBusy;
+  const dirty=Object.keys(clearanceDraft).length>0;
+  const distance=value=>Number.isFinite(value)?`${Number(value.toFixed(6))} m`:'unavailable';
+  $('clearancePanel').hidden=snapshot?.phase==='calibration';
+  for(const input of clearanceFields){
+    const key=input.dataset.clearance, limits=tuning?.limits[key];
+    input.min=limits?.min??'';input.max=limits?.max??'';
+    if(!Object.hasOwn(clearanceDraft,key))input.value=tuning?.overrides[key]??tuning?.defaults[key]??'';
+    input.disabled=!editable;
+    $(input.id+'Live').textContent=`Live: ${distance(tuning?.live[key])} · Default: ${distance(tuning?.defaults[key])}`+
+      (limits?` · Range: ${limits.min}–${limits.max} m`:'');
+  }
+  $('applyClearance').disabled=!editable||!dirty||clearanceFields.some(input=>!input.checkValidity());
+  $('resetClearance').disabled=!editable||(!dirty&&!Object.keys(tuning?.overrides??{}).length);
+  $('clearanceStatus').textContent=parametersBusy?'Applying and verifying…':dirty?'Unapplied changes. Clear a field to use its default.':
+    tuning?(gap.fault||'Applied values are saved for future stages.'):'Load a stage to read the live values.';
 }
 function renderSlamSettings(){
   const data=slamSettings||snapshot?.slam_settings;
@@ -647,20 +700,47 @@ $('loadTrialDefaults').onclick=()=>{
 };
 $('applyTrial').onclick=async()=>{parametersBusy=true;try{trial=await action('trial',Object.fromEntries(trialFields.map(([k,id])=>[k,Number($(id).value)])));trialDirty=false;paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
 for(const [id,profile] of [['profileOriginal','original'],['profileFast','fast']])$(id).onclick=async()=>{parametersBusy=true;try{trial=await action('navigation',{profile});trialDirty=false;paramTime=Date.now();trialFields.forEach(([name,field])=>$(field).value=trial.values[name]);$('navigationProfileStatus').textContent=`Applied and verified: ${profile} · ${fmt(trial.values.max_linear)} m/s · ${fmt(trial.values.max_angular)} rad/s`;}catch(_){}finally{parametersBusy=false;render();}};
-$('gapToggle').onclick=async()=>{parametersBusy=true;try{gap=await action('gap',{enabled:gap.enabled!==true});paramTime=Date.now();}catch(_){}finally{parametersBusy=false;render();}};
-document.querySelectorAll('[data-audacity]').forEach(button=>button.onclick=async()=>{
+for(const input of clearanceFields)input.oninput=()=>{
+  clearanceDraft[input.dataset.clearance]=input.value;
+  renderParameters();
+};
+for(const input of gridFields)input.oninput=()=>{
+  gridDraft[input.dataset.gridSetting]=input.value;
+  renderGridSettings();
+};
+$('applyGridSettings').onclick=async()=>{
+  gridSettingsBusy=true;
+  try{
+    const tuning=Object.fromEntries(Object.entries(gridDraft).map(([key,value])=>[key,Number(value)]));
+    snapshot.grid_settings=await action('grid_settings',tuning);
+    gridDraft={};
+  }catch(_){}finally{gridSettingsBusy=false;render();}
+};
+async function applyClearance(tuning){
   parametersBusy=true;
-  try{gap=await action('gap',{audacity:button.dataset.audacity,enabled:gap.enabled===true});paramTime=Date.now();}
-  catch(_){paramTime=0;}
-  finally{parametersBusy=false;render();}
-});
+  try{
+    gap=await action('gap',{tuning});
+    clearanceDraft={};
+    paramTime=Date.now();
+    trial=await get('trial');
+  }catch(_){}finally{parametersBusy=false;render();}
+}
+$('applyClearance').onclick=()=>{
+  const tuning={...gap.tuning.overrides};
+  for(const [key,value] of Object.entries(clearanceDraft)){
+    if(value==='')delete tuning[key];
+    else tuning[key]=Number(value);
+  }
+  applyClearance(tuning);
+};
+$('resetClearance').onclick=()=>applyClearance({});
 async function pollParameters(){
-  if(online&&snapshot?.health?.Mission?.ok&&running()&&!busy&&!parametersBusy&&!snapshot.stage?.transitioning&&snapshot.phase!=='calibration'){const generation=snapshot.control_generation;try{const g=await get('gap'),t=await get('trial');if(generation===snapshot.control_generation){gap=g;trial=t;paramTime=Date.now();if(t)trialFields.forEach(([k,id])=>{if(!trialDirty)$(id).value=t.values[k];});$('navigationProfileStatus').textContent=`Live limits: ${fmt(t.values.max_linear)} m/s · ${fmt(t.values.max_angular)} rad/s. Fast is a trial profile pending physical validation.`;}}catch(e){paramTime=0;$('gapStatus').textContent=e.message;}renderParameters();}
+  if(online&&snapshot?.health?.Mission?.ok&&running()&&!busy&&!parametersBusy&&!snapshot.stage?.transitioning&&snapshot.phase!=='calibration'){const generation=snapshot.control_generation;try{const g=await get('gap'),t=await get('trial');if(generation===snapshot.control_generation){gap=g;trial=t;paramTime=Date.now();if(t)trialFields.forEach(([k,id])=>{if(!trialDirty)$(id).value=t.values[k];});$('navigationProfileStatus').textContent=`Live limits: ${fmt(t.values.max_linear)} m/s · ${fmt(t.values.max_angular)} rad/s. Fast is a trial profile pending physical validation.`;}}catch(_){paramTime=0;}renderParameters();}
   setTimeout(pollParameters,4000);
 }
 async function poll(){
   try{const s=await get('state');snapshot=s;online=true;
-    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;scanFilter=null;scanFilterDirty=false;scanFilterError=null;scanFilterRequest++;slamSettings=null;slamSettingsDirty=false;slamSettingsError=null;slamSettingsRequest++;paramTime=0;trialDirty=false;waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
+    if(loadedGeneration!==s.control_generation){loadedGeneration=s.control_generation;gap=trial=null;scanFilter=null;scanFilterDirty=false;scanFilterError=null;scanFilterRequest++;slamSettings=null;slamSettingsDirty=false;slamSettingsError=null;slamSettingsRequest++;paramTime=0;trialDirty=false;clearanceDraft={};gridDraft={};waypointDraft=null;['waypointX','waypointY','waypointYaw'].forEach(id=>$(id).value='');releaseDrive();}
     if(settingsGeneration!==s.stage?.phase){settingsGeneration=s.stage?.phase;if(s.mission_options){$('targetClass').value=s.mission_options.target_class;$('localizationMethod').value=s.mission_options.localization_method;$('returnTolerance').value=s.mission_options.return_tolerance;$('preferredSigma').value=s.mission_options.preferred_target_sigma??.1;$('enableAbManeuver').checked=s.mission_options.enable_ab_maneuver===true;$('acquisitionSeconds').value=String(s.mission_options.acquisition_seconds??90);$('bottleRangeMin').value=String(100*(s.mission_options.bottle_min_range??.35));$('bottleRangeMax').value=String(100*(s.mission_options.bottle_max_range??.95));}}
     if(s.map_revision!==mapRevision){mapRevision=s.map_revision;renderMap(await get('map'));}
     render();

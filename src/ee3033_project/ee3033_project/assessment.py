@@ -16,6 +16,7 @@ import time
 
 import yaml
 from .mapping_settings import DEFAULT_SLAM_SETTINGS, validate_slam_settings
+from .grid_settings import GRID_DEFAULTS, STAGE_GRID_ENV
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
                     'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING'))
@@ -293,6 +294,8 @@ class StageProcess:
         self.scan_self_mask_radius = .14
         self.allow_reverse_recovery = True
         self.mapping_resolution = .05
+        self.grid_settings = dict(GRID_DEFAULTS)
+        self.active_grid_settings = None
         self.slam_settings = dict(DEFAULT_SLAM_SETTINGS)
         self.vision_config = ''
         self.attitude_config = ''
@@ -311,7 +314,8 @@ class StageProcess:
         exited = self.process is not None and self.process.poll() is not None
         return dict(managed=True,phase=self.phase,running=self.process is not None and not exited,
                     transitioning=self.loading,fault=self.fault or ('Stage exited; inspect logs before manual intervention' if exited else None),
-                    log_path=str(self.log) if self.log else None)
+                    log_path=str(self.log) if self.log else None,
+                    grid_settings=self.active_grid_settings if self.process and not exited else None)
 
     def stop(self, timeout=12):
         if self.process is None: return
@@ -343,6 +347,10 @@ class StageProcess:
         args=['ros2','launch','ee3033_project',phase+'.launch.py',
               'allow_motion:='+str(bool(self.allow_motion)).lower(),
               'self_mask_radius:='+str(self.scan_self_mask_radius)]
+        grids = dict(self.grid_settings, mapping_resolution=self.mapping_resolution)
+        env = dict(os.environ)
+        if phase != 'calibration':
+            env[STAGE_GRID_ENV] = json.dumps(grids)
         if phase=='mapping':
             args.append('mapping_resolution:='+str(self.mapping_resolution))
             args.extend(key+':='+str(value) for key,value in validate_slam_settings(self.slam_settings).items())
@@ -373,7 +381,8 @@ class StageProcess:
             if self.vision_config: args.append('vision_config:='+self.vision_config)
             if self.attitude_config: args.append('attitude_config:='+str(self.attitude_config))
         with self.log.open('w') as stream:
-            self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
+            self.process=self.popen(args,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True,env=env)
+        self.active_grid_settings = grids if phase != 'calibration' else None
         self.phase,self.fault=phase,None
         if self.cancel.is_set():
             self.stop()

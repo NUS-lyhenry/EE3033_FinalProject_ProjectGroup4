@@ -21,12 +21,14 @@ class CoveragePlanner:
     def __init__(self, data, resolution, origin, clearance=0.20, spacing=0.65,
                  view_range=2.0, fov=1.35, headings=4, max_candidates=250,
                  max_goals=120, coverage_fraction=0.98, candidate_limit=1000,
-                 camera_model=None):
+                 camera_model=None, coverage_spacing=.15):
         self.grid = np.asarray(data, dtype=int)
         self.resolution = float(resolution)
         self.origin = origin
         if (self.grid.ndim != 2 or resolution <= 0 or clearance <= 0
-                or spacing <= 0 or view_range <= 0 or not 0 < fov < 2*math.pi
+                or not math.isfinite(spacing) or spacing <= 0
+                or not math.isfinite(coverage_spacing) or coverage_spacing <= 0
+                or view_range <= 0 or not 0 < fov < 2*math.pi
                 or headings < 2 or max_candidates < 1 or max_goals < 1
                 or candidate_limit < 1 or not 0 < coverage_fraction <= 1):
             raise ValueError('Invalid coverage parameters')
@@ -43,7 +45,7 @@ class CoveragePlanner:
         self.candidate_limit = candidate_limit
         self.max_goals = max_goals
         self.fraction = coverage_fraction
-        self.target_stride = max(1, round(.15/self.resolution))
+        self.target_stride = max(1, round(coverage_spacing/self.resolution))
         self.target_cells = set()
         self.coverable = set()
         self.truncated = False
@@ -221,11 +223,10 @@ class CoveragePlanner:
         # Include near-wall free space connected to the start as observation targets.
         raw, _ = label(self.free, structure=[[0,1,0],[1,1,1],[0,1,0]])
         raw_reachable = raw == raw[row, col]
-        target_stride = max(1, round(0.15/self.resolution))
+        target_stride = self.target_stride
         self.target_cells = {(r, c) for r in range(0, self.grid.shape[0], target_stride)
                              for c in range(0, self.grid.shape[1], target_stride)
                              if raw_reachable[r, c]}
-        self.target_stride = target_stride
         self.blocked_cells = {p for p in self.target_cells if not reachable[p] and self.safe[p]}
         self.map_partial = bool(self.declared_partial or np.any(raw_reachable & binary_dilation(self.grid < 0)))
         stride = max(1, round(self.spacing/self.resolution))

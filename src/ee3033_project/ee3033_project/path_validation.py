@@ -8,11 +8,13 @@ import numpy as np
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
 from .motion_safety import FOOTPRINT_RADIUS, OCCUPIED_THRESHOLD, polyline_map_clearance
+from .grid_settings import GRID_DEFAULTS, stage_grid_settings, subdivision_factor
 
-PATH_SEARCH_SPACING = 0.02
+PATH_VALIDATION_SPACING = GRID_DEFAULTS['path_search_spacing']
+PATH_SEARCH_SPACING = stage_grid_settings().get('path_search_spacing', PATH_VALIDATION_SPACING)
 
 
-def path_samples(points, spacing=PATH_SEARCH_SPACING/2):
+def path_samples(points, spacing=PATH_VALIDATION_SPACING/2):
     """Add collinear samples without changing any segment, corner or endpoint.
 
     The swept-disc validator pads by half its actual sample gap. Supply the
@@ -33,7 +35,7 @@ def path_samples(points, spacing=PATH_SEARCH_SPACING/2):
 
 
 def path_search_grid(grid, resolution, mask=None):
-    """Subdivide cells for <=2.5 cm path search; never infer new free space.
+    """Subdivide cells for the selected path search spacing.
 
     Every child retains the parent's occupancy and optional navigation mask.
     The origin and complete occupied/unknown cell-square geometry are unchanged.
@@ -48,8 +50,7 @@ def path_search_grid(grid, resolution, mask=None):
         mask = np.asarray(mask, dtype=bool)
         if mask.shape != grid.shape:
             raise ValueError('Invalid navigation mask')
-    # ROS resolutions are float32, e.g. 0.050000000745 rather than exact .05.
-    factor = max(1, math.ceil(resolution/PATH_SEARCH_SPACING-1e-6))
+    factor = subdivision_factor(resolution, PATH_SEARCH_SPACING)
     if grid.size*factor*factor > 4_000_000:
         raise ValueError('Path search grid exceeds cell limit')
     if factor > 1:
@@ -162,7 +163,7 @@ def guarded_plan(grid,resolution,origin,start,goal,candidate=(),*,mask=None,
     if points:
         # The endpoint connector belongs to the route and must be checked too.
         try:
-            points=path_samples((start,)+points+(goal,),min(resolution,PATH_SEARCH_SPACING)/2)
+            points=path_samples((start,)+points+(goal,),min(resolution,PATH_VALIDATION_SPACING)/2)
         except (ValueError,OverflowError):
             points=()
         if points and validate_path(grid,resolution,origin,points,mask=mask,radius=radius).allowed:
@@ -221,7 +222,7 @@ def guarded_plan(grid,resolution,origin,start,goal,candidate=(),*,mask=None,
     route=[]
     while best is not None:
         route.append(cell_world(best,resolution,origin));best=parents[best]
-    points=path_samples((start,)+tuple(reversed(route))+(goal,),resolution/2)
+    points=path_samples((start,)+tuple(reversed(route))+(goal,),min(resolution,PATH_VALIDATION_SPACING)/2)
     if stopped():return PlanCheck((),'Planning canceled or time limit exceeded')
     if not validate_path(original_grid,original_resolution,origin,points,
                          mask=original_mask,radius=radius).allowed:

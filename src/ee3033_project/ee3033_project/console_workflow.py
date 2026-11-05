@@ -12,6 +12,7 @@ from std_msgs.msg import String
 from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, atomic_json, mission_options, require_current_mapping_map, calibration_pose_source, require_preserved_unknown
 from . import gap
 from .trial import validate_trial
+from .grid_settings import GRID_DEFAULTS, GRID_LIMITS, validate_grid_settings
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
@@ -31,14 +32,19 @@ class Workflow(CameraSetup):
         self.mission_options = mission_options(saved_mission)
         self.navigation_settings_path = session/'navigation_settings.json'
         self.navigation_settings = {}
+        self.grid_defaults = dict(GRID_DEFAULTS, mapping_resolution=self.p['mapping_resolution'])
         if self.navigation_settings_path.is_file():
             saved_navigation = json.loads(self.navigation_settings_path.read_text())
             if 'trial' in saved_navigation:
                 self.navigation_settings['trial'] = validate_trial(saved_navigation['trial'])
             if 'gap' in saved_navigation:
                 saved_gap = saved_navigation['gap']
-                gap.parameter_plan(saved_gap['enabled'], 'mapping', saved_gap['audacity'])
-                self.navigation_settings['gap'] = saved_gap
+                policy = gap.manual_policy(saved_gap)
+                self.navigation_settings['gap'] = policy
+                if policy != saved_gap:
+                    atomic_json(self.navigation_settings_path, dict(saved_navigation, gap=policy))
+            if 'grids' in saved_navigation:
+                self.navigation_settings['grids'] = validate_grid_settings(saved_navigation['grids'])
         self.initial_pose_sent = False
         self.perception_data = None
         self.result_data = None
@@ -62,7 +68,8 @@ class Workflow(CameraSetup):
             self.p['vision_config'] = str(saved.resolve())
         if self.stage:
             self.stage.navigation_profile = self.p['navigation_profile']
-            self.stage.mapping_resolution = self.p['mapping_resolution']
+            self.stage.grid_settings = dict(self.grid_defaults, **self.navigation_settings.get('grids', {}))
+            self.stage.mapping_resolution = self.stage.grid_settings['mapping_resolution']
             self.stage.vision_config = self.p['vision_config']
         self.init_camera_setup()
         self.create_subscription(Twist,'/cmd_vel',self.on_final_command,10)
@@ -169,7 +176,8 @@ class Workflow(CameraSetup):
                     selected_map=self.selected_map,mission_options=self.mission_options,
                     initial_pose_sent=self.initial_pose_sent,perception=self.perception_data,
                     vision_settings=self.vision_settings, navigation_profile=self.p['navigation_profile'],
-                    mapping_resolution=self.p['mapping_resolution'],
+                    mapping_resolution=self.stage.mapping_resolution if self.stage else self.p['mapping_resolution'],
+                    grid_settings=self.grid_settings_snapshot(),
                     mission_result=self.result_data,workflow_fault=self.workflow_fault)
 
     def workflow_get(self,path):
@@ -179,6 +187,18 @@ class Workflow(CameraSetup):
                         selected_map=self.selected_map,settings=self.mission_options,
                         phase=self.p['phase'],software_version=self.p['software_version'])
         return None
+
+    def grid_settings_snapshot(self):
+        selected = dict(self.grid_defaults, **self.navigation_settings.get('grids', {}))
+        stage = self.stage.snapshot() if self.stage else {}
+        active = stage.get('grid_settings')
+        resolution = self.map_data['resolution'] if active and self.map_data is not None else None
+        return dict(selected=selected, defaults=self.grid_defaults, active=active,
+                    map_resolution=resolution,
+                    effective_path_resolution=self.navigation_grid_resolution if active else None,
+                    active_phase=stage.get('phase') if active else None,
+                    limits={key: dict(min=low,max=high) for key,(low,high) in GRID_LIMITS.items()},
+                    editable=bool(self.stage) and not stage.get('transitioning') and self.state['state'] not in ACTIVE)
 
     def require_idle(self):
         with self.lock:
@@ -194,6 +214,15 @@ class Workflow(CameraSetup):
                 raise ValueError('Wait for fresh zero velocity output before changing stages')
 
     def workflow_command(self,path,body):
+        if path=='/api/grid_settings':
+            self.require_idle()
+            if self.stage is None:
+                raise ValueError('Grid settings require the managed workflow')
+            tuning = dict(self.navigation_settings.get('grids', {}), **validate_grid_settings(body))
+            self.save_navigation_settings('grids', tuning)
+            self.stage.grid_settings = dict(self.grid_defaults, **tuning)
+            self.stage.mapping_resolution = self.stage.grid_settings['mapping_resolution']
+            return dict(self.grid_settings_snapshot(), success=True, message='Grid settings saved for the next stage')
         if path=='/api/retry_search':
             self.require_idle()
             if self.p['phase']!='mission' or not self.selected_map:
@@ -341,7 +370,7 @@ class Workflow(CameraSetup):
                     self.status_after=self.get_clock().now().nanoseconds*1e-9
                     self.p['phase']=phase
                     self.state=dict(state='WAITING',reason='Starting '+phase+' services; waiting for fresh status',home=None,target=None)
-                    self.map_data=None;self.map_revision+=1;self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
+                    self.map_data=None;self.navigation_grid_resolution=None;self.map_revision+=1;self.route=[];self.path=[];self.local_path=[];getattr(self,'travelled',[]).clear();self.navigation_status={}
                     self.saved_map=None
                     self.amcl_covariance=None;self.initial_pose_sent=bool(phase=='calibration' and self.stage.calibration_initial_pose is not None)
                     self.perception_data=None;self.result_data=None

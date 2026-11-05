@@ -5,24 +5,19 @@ map-frame position reporting and verified return to the recorded start.
 
 ## Deployed release
 
-`merged_single_frame_wall_tip_20261101_513edd1751` combines the single-frame
-bottle workflow with wall-tip navigation and narrow-opening fixes. The 93
-production source files match the robot deployment recorded in
-[release-manifest.json](release-manifest.json).
+`manual_clearance_20261105_89a6af1ef1` adds manual navigation clearance,
+a separate near-wall corner lookahead and saved map, search and path grid settings.
+The [release manifest](release-manifest.json) fingerprints the 100 production
+files verified on the robot.
 
-- Accept one valid timestamped bottle exposure with its actual uncertainty;
-  allow useful exposures during motion and at most one bounded centering attempt.
-- Record detection, coordinate reporting and return outcomes separately.
-- Prefer a 3 cm route-tracking reserve, retaining full-footprint narrow connectors.
-- Use 12 cm lookahead and the validated terminal path tangent for automatic mapping.
-- Bound scan matching around odometry in repeated-wall environments; retain loop closure.
-- Use a bounded whole-route return budget and a 6 cm inner home target while
-  retaining independent arrival and stationary verification.
-- Keep every operator-facing UI message in English.
-
-The measured chassis remains 11.5 × 18 cm, with a conservative physical radius
-of 0.106801 m and padded verification radius of 0.116801 m. SLAM uses 5 cm cells;
-local costmaps and refined global navigation grids are separate resolutions.
+- Adjust Nav2 planning radius, padding and inflation independently of collision protection.
+- Configure the measured-profile collision protection radius from 0.07 to 0.30 m.
+  Small settings also check the swept, padded wheel-inclusive body.
+- Retain the effective clearances when migrating saved presets to manual settings.
+- Complete automatic mapping goals by position. Explicit waypoint and observation
+  headings and verified stationary return retain their checks.
+- Accept a valid timestamped bottle exposure with its actual uncertainty, and
+  record target reporting and return outcomes separately.
 
 ## Build and operate
 
@@ -39,16 +34,8 @@ pose, and then start autonomous search. Stop cancels owned work and closes motio
 
 ## Verification
 
-987 Python regressions and 37 focused native ROS cases passed. The unchanged
-simulation field completed mapping, search/report and verified return. A
-non-bypassable 34 cm doorway passed bidirectional simulated motion; six free
-5 cm cells (30 cm) passed native planning with the unchanged footprint.
-
-These are software/simulation results. The physical robot deployment and runtime
-parameters were read back, but no completed physical end-to-end acceptance is
-claimed here. Single-frame coordinates retain approximate quality and uncertainty.
-See [TESTING.md](TESTING.md) and [validation summary](validation/release-validation.json).
-
-No new live maps, telemetry, credentials, private deployment backups or generated
-runtime logs are included in this release. Existing versioned historical evidence
-and fixed regression fixtures remain available.
+The release passed the Python regression suite, focused browser settings checks,
+and isolated ROS Humble console and workflow checks. Both packages built on the
+robot. The deployed assets and effective settings were read back in the stationary
+`WAITING` state. See [deployment](DEPLOYMENT.md) for the current verification and
+[testing](TESTING.md) for historical checks and reproduction instructions.

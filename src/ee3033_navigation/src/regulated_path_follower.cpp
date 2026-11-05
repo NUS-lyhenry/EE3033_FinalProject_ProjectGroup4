@@ -36,6 +36,8 @@ void RegulatedPathFollower::configure(
   nav2_util::declare_parameter_if_not_declared(
     node, name + ".max_angular_vel", rclcpp::ParameterValue(0.40));
   nav2_util::declare_parameter_if_not_declared(
+    node, name + ".corner_lookahead_dist", rclcpp::ParameterValue(0.08));
+  nav2_util::declare_parameter_if_not_declared(
     node, name + ".rotation_command_delay", rclcpp::ParameterValue(0.15));
   nav2_util::declare_parameter_if_not_declared(
     node, name + ".rotation_braking_accel", rclcpp::ParameterValue(0.8));
@@ -47,6 +49,7 @@ void RegulatedPathFollower::configure(
     node->get_parameter(name + ".max_linear_vel"),
     node->get_parameter(name + ".max_angular_vel"),
     node->get_parameter(name + ".lookahead_dist"),
+    node->get_parameter(name + ".corner_lookahead_dist"),
     node->get_parameter(name + ".min_lookahead_dist"),
     node->get_parameter(name + ".max_lookahead_dist"),
     node->get_parameter(name + ".rotate_to_heading_min_angle"),
@@ -81,6 +84,7 @@ rcl_interfaces::msg::SetParametersResult RegulatedPathFollower::validate_caps(
     const bool cap = name == plugin_name_ + ".max_linear_vel" ||
       name == plugin_name_ + ".max_angular_vel";
     const bool tracking_distance = name == plugin_name_ + ".lookahead_dist" ||
+      name == plugin_name_ + ".corner_lookahead_dist" ||
       name == plugin_name_ + ".min_lookahead_dist" ||
       name == plugin_name_ + ".max_lookahead_dist";
     const bool tracking_angle = name == plugin_name_ + ".rotate_to_heading_min_angle";
@@ -215,6 +219,8 @@ void RegulatedPathFollower::select_path_tracking(const geometry_msgs::msg::PoseS
   // Read configured straight settings before acquiring native RPP's mutex.
   // No parameter-server writes or altered pose/velocity/path inputs are used.
   const double configured_lookahead = node->get_parameter(plugin_name_ + ".lookahead_dist").as_double();
+  const double corner_lookahead = node->get_parameter(
+    plugin_name_ + ".corner_lookahead_dist").as_double();
   const double configured_min = node->get_parameter(plugin_name_ + ".min_lookahead_dist").as_double();
   const double configured_max = node->get_parameter(plugin_name_ + ".max_lookahead_dist").as_double();
   const double configured_alignment = node->get_parameter(plugin_name_ + ".rotate_to_heading_min_angle").as_double();
@@ -222,15 +228,13 @@ void RegulatedPathFollower::select_path_tracking(const geometry_msgs::msg::PoseS
   const double configured_turn = node->get_parameter(plugin_name_ + ".rotate_to_heading_angular_vel").as_double();
   const double configured_linear_cap = node->get_parameter(plugin_name_ + ".max_linear_vel").as_double();
   const double configured_angular_cap = node->get_parameter(plugin_name_ + ".max_angular_vel").as_double();
-  // Tracking geometry is operator-controlled in BOTH modes. No hidden
-  // 8 cm / 0.10 rad override; retain the separate narrow-corner speed caps.
-  const double lookahead = configured_lookahead;
+  const double lookahead = corner ? corner_lookahead : configured_lookahead;
   const double alignment = configured_alignment;
   {
     std::lock_guard<std::mutex> native_lock(mutex_);
     lookahead_dist_ = lookahead;
-    min_lookahead_dist_ = configured_min;
-    max_lookahead_dist_ = configured_max;
+    min_lookahead_dist_ = corner ? corner_lookahead : configured_min;
+    max_lookahead_dist_ = corner ? corner_lookahead : configured_max;
     rotate_to_heading_min_angle_ = alignment;
     desired_linear_vel_ = corner ? std::min(configured_speed, 0.08) : configured_speed;
     rotate_to_heading_angular_vel_ = corner ? std::min(configured_turn, 0.40) : configured_turn;
