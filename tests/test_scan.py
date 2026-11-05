@@ -57,7 +57,7 @@ def test_explicit_eight_centimetre_exclusion_preserves_boundary_and_all_farther_
     assert math.isinf(ranges[2])
 
 
-@pytest.mark.parametrize("cutoff", [.08, .14])
+@pytest.mark.parametrize("cutoff", [.08, .14, .20])
 def test_node_mask_uses_committed_parameter_and_float32_equality_boundary(cutoff):
     import ast,struct
     from pathlib import Path

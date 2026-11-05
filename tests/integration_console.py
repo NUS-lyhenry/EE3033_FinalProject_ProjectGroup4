@@ -105,7 +105,7 @@ class ConsoleTests(unittest.TestCase):
              Parameter('max_linear',value=.12),Parameter('max_angular',value=.4)])
         mapper=Mapper()
         controller=Node('controller_server')
-        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.)
+        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.,lookahead_dist=.18,alignment_angle=.35)
         for key,value in parameter_plan(initial)['controller_server'].items():
             controller.declare_parameter(key,value)
         supervisor=Node('project_navigation_supervisor')
@@ -135,7 +135,7 @@ class ConsoleTests(unittest.TestCase):
                 time.sleep(.05)
             state=json.load(urlopen(base+'/api/trial',timeout=12))
             self.assertEqual(state['values'],initial)
-            changed=dict(max_linear=.30,max_angular=1.0,goal_timeout=300.)
+            changed=dict(max_linear=.30,max_angular=1.0,goal_timeout=300.,lookahead_dist=.08,alignment_angle=.10)
             response=post(changed)
             self.assertTrue(response['synchronized'])
             self.assertEqual(response['values'],changed)
@@ -151,6 +151,15 @@ class ConsoleTests(unittest.TestCase):
                 post(initial)
             self.assertEqual(json.load(urlopen(base+'/api/trial',timeout=12))['values'],changed)
             self.assertIsNone(console.trial_fault)
+            # Speed-only clients preserve tracking; profiles must not silently reset it.
+            legacy=post(dict(max_linear=.16,max_angular=.6,goal_timeout=60.))
+            self.assertEqual(legacy['values']['lookahead_dist'],.08)
+            self.assertEqual(legacy['values']['alignment_angle'],.10)
+            live=console.read_trial_nodes()['controller_server']
+            self.assertEqual(live['FollowPath.min_lookahead_dist'],.08)
+            self.assertEqual(live['FollowPath.max_lookahead_dist'],.08)
+            with self.assertRaises(HTTPError):
+                post(dict(changed,alignment_angle=.01))
             for timer in mapper.timers:
                 timer.cancel()
             mapper.state='MAPPING'

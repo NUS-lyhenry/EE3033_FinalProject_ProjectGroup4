@@ -104,9 +104,11 @@ async function fixture(page,{phase='mapping',active=false}={}){
     stage:{managed:true,running:true,phase,transitioning:false},assessment:{elapsed_seconds:65,started:10,finished:null,running:true,timing_valid:true,includes_mapping:true,maps:[]},
     mission_options:{target_class:'cup',localization_method:'lidar',return_tolerance:.2,preferred_target_sigma:.1,enable_ab_maneuver:false,acquisition_seconds:90},
     recovery:{success:true,value:true,live_value:true,available:true,synchronized:true,editable:true,fault:null},
+    scan_filter:{success:true,value:.20,live_value:.20,available:true,synchronized:true,editable:true},
+    slam_settings:{success:true,selected:{occupancy_threshold:.1,minimum_pass_through:2},live:{occupancy_threshold:.1,minimum_pass_through:2},available:true,synchronized:true,editable:true,requires_new_map:false,message:'Active mapper readback matches the saved settings.'},
     map_revision:1,pose:[1,1,0],route:[],path:[],health:Object.fromEntries(['Map','Lidar','Odometry','AMCL','YOLO','Mission'].map(k=>[k,{ok:true,age:.1}])),
     events:[],camera_source:null,battery:{voltage:11.87,fresh:true,age:.1},control_fault:null,initial_pose_sent:false};
-  let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60};const calls=[];
+  let maps=[],gap=false,audacity='bold',trial={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,alignment_angle:.35};const calls=[];
   let attitude={success:true,mode:'fixed',topic:'/project/body_attitude',pivot:[0,0,.033],reference:null,sample:{age:.1,frame:'base_link'},ready:true,editable:true,reason:'',requires_reload:false};
   const cells=Array.from({length:2400},(_,i)=>i<60||i>=2340||i%60===0||i%60===59?100:0);
   const map={width:60,height:40,resolution:.1,origin:[0,0,0],cells};
@@ -156,6 +158,9 @@ async function fixture(page,{phase='mapping',active=false}={}){
       const p={robot_radius:gap?.18:.14,footprint_padding:.01,resolution:.05};
       const options=[['cautious','Cautious',.22,.16],['balanced','Balanced',.18,.15],['bold','Bold',.14,.14]].map(([id,label,c,t])=>({id,label,clearance:c+(gap?.04:0),turn_stop_distance:t,nominal_min_opening:2*Math.max(c+(gap?.04:0),p.robot_radius+.01)}));
       json={success:true,enabled:gap,audacity,audacity_options:options,synchronized:true,nodes:{'global_costmap/global_costmap':p,'local_costmap/local_costmap':p,[state.phase==='mapping'?'project_mapper':'project_mission']:{clearance:options.find(o=>o.id===audacity).clearance}}};
+    }else if(path==='/api/slam_settings'){
+      if(method==='POST')state.slam_settings={...state.slam_settings,selected:body,synchronized:false,requires_new_map:true,message:'Saved settings differ from the active mapper. Rebuild the map to apply them.'};
+      json=state.slam_settings;
     }else if(path==='/api/recovery'){
       if(method==='POST')state.recovery={...state.recovery,value:body.enabled,live_value:body.enabled};
       json=state.recovery;
@@ -163,8 +168,11 @@ async function fixture(page,{phase='mapping',active=false}={}){
       if(method==='POST')trial=body;
       json={success:true,values:trial,synchronized:true,protection:{stop_distance:.22,rotation_clearance:{cautious:.16,balanced:.15,bold:.14}[audacity]}};
     }else if(path==='/api/navigation'){
-      trial={max_linear:body.profile==='fast'?.16:.12,max_angular:body.profile==='fast'?.6:.4,goal_timeout:60};
+      trial={...trial,max_linear:body.profile==='fast'?.16:.12,max_angular:body.profile==='fast'?.6:.4,goal_timeout:60};
       json={success:true,values:trial,synchronized:true,profile:body.profile};
+    }else if(path==='/api/scan_filter'){
+      if(method==='POST')state.scan_filter={...state.scan_filter,value:body.radius,live_value:body.radius};
+      json=state.scan_filter;
     }else if(path==='/api/vision'){
       state.vision_settings=body;json={success:true,message:'Camera geometry saved'};
     }else if(path==='/api/attitude'){
@@ -307,7 +315,7 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await page.locator('[data-audacity="cautious"]').click();
   await expect(page.locator('[data-audacity="cautious"]')).toHaveAttribute('aria-pressed','true');
   await view(page,'mapping');
-  await expect(page.locator('#totalElapsed')).toHaveText('01:05');
+  await expect(page.locator('#totalElapsed')).toHaveText('00:00');
   await page.locator('#saveMap').click();await expect(page.locator('#savedMaps')).toContainText('onsite_simulated');
   await expect(page.locator('#loadMission')).toBeDisabled();
   await page.locator('#reviewMap').click();await expect(page.locator('#mapQuality')).toContainText('Reviewed');
@@ -330,10 +338,10 @@ test('complete basic workflow: map save review, stage transition, assigned pose,
   await expect(page.locator('#target')).toHaveText('2.10, 1.80 m');await expect(page.locator('#confidence')).toContainText('88%');
   await expect(page.locator('#resultStop')).toHaveText('Pending');await expect(page.locator('#coverage')).toHaveText('67%');
   f.state.mission.state='VERIFYING';await expect(page.locator('#resultStop')).toContainText('Checking');
-  f.state.mission={...f.state.mission,state:'COMPLETE',return_verified:true,return_distance:.08,reason:'SIMULATED home distance and stationary hold verified'};
+  f.state.mission={...f.state.mission,state:'COMPLETE',elapsed_seconds:130,return_verified:true,return_distance:.08,reason:'SIMULATED home distance and stationary hold verified'};
   f.state.assessment={...f.state.assessment,elapsed_seconds:195,finished:205,running:false};
   await expect(page.locator('#resultOutcome')).toHaveText('Complete');await expect(page.locator('#resultReturn')).toHaveText('Verified · 0.08 m');
-  await expect(page.locator('#resultStop')).toHaveText('Verified position hold');await expect(page.locator('#totalElapsed')).toHaveText('03:15');
+  await expect(page.locator('#resultStop')).toHaveText('Verified position hold');await expect(page.locator('#totalElapsed')).toHaveText('02:10');
   await view(page,'results');
   const download=page.waitForEvent('download');await page.locator('#exportResult').click();expect((await download).suggestedFilename()).toBe('assessment.json');
   expect(f.errors).toEqual([]);await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'test-results/simulated-basic-workflow.png',fullPage:true});
@@ -435,7 +443,7 @@ test('v2 low planning clearance keeps the physical passage floor',async({page})=
 });
 
 test('higher speed and timeout ranges come from verified backend limits',async({page})=>{
-  const f=await fixture(page);let values={max_linear:.12,max_angular:.4,goal_timeout:60};const posted=[];
+  const f=await fixture(page);let values={max_linear:.12,max_angular:.4,goal_timeout:60,lookahead_dist:.18,alignment_angle:.35};const posted=[];
   const limits={max_linear:{min:.04,max:.30,step:.01},max_angular:{min:.15,max:1.,step:.05},goal_timeout:{min:20,max:300,step:5}};
   await page.route('**/api/trial',async route=>{
     if(route.request().method()==='POST'){values=route.request().postDataJSON();posted.push(values);}
@@ -451,7 +459,7 @@ test('higher speed and timeout ranges come from verified backend limits',async({
   await expect(page.locator('#trialTimeoutValue')).toHaveText('300 s');
   await page.locator('#applyTrial').click();
   await expect(page.locator('#trialLinearLive')).toHaveText('Live: 0.30 m/s');
-  expect(posted).toEqual([{max_linear:.30,max_angular:1.,goal_timeout:300}]);
+  expect(posted).toEqual([{max_linear:.30,max_angular:1.,goal_timeout:300,lookahead_dist:.18,alignment_angle:.35}]);
   expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);expect(f.errors).toEqual([]);
 });
 
@@ -1085,4 +1093,94 @@ for(const [label,width,height] of [['desktop',1440,1100],['mobile',390,844]])tes
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath(`single-frame-results-${label}.png`),fullPage:true});
   expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+test('SLAM settings save for next map without replacing active readback and lock while mapping',async({page})=>{
+  const f=await fixture(page);await view(page,'mapping');
+  await page.locator('#slamSettingsPanel summary').click();
+  await expect(page.locator('#slamOccupancyThreshold')).toBeEnabled();
+  await page.locator('#slamOccupancyThreshold').fill('0.20');
+  await page.locator('#slamMinimumPassThrough').fill('4');
+  await page.locator('#saveSlamSettings').click();
+  await expect(page.locator('#slamSettingsSelected')).toContainText('threshold 0.20');
+  await expect(page.locator('#slamSettingsLive')).toContainText('threshold 0.10');
+  await expect(page.locator('#slamSettingsStatus')).toContainText('Rebuild the map');
+  expect(f.calls).toEqual([{path:'/api/slam_settings',body:{occupancy_threshold:.2,minimum_pass_through:4}}]);
+  f.state.mission.state='MAPPING';
+  await expect(page.locator('#slamOccupancyThreshold')).toBeDisabled();
+  await expect(page.locator('#slamMinimumPassThrough')).toBeDisabled();
+  await expect(page.locator('#saveSlamSettings')).toBeDisabled();
+  f.state.mission.state='WAITING';f.state.control_generation++;
+  f.state.slam_settings={...f.state.slam_settings,live:{occupancy_threshold:.2,minimum_pass_through:4},synchronized:true,requires_new_map:false,message:'Active mapper readback matches the saved settings.'};
+  await expect(page.locator('#slamSettingsLive')).toContainText('threshold 0.20');
+  await expect(page.locator('#slamSettingsStatus')).toContainText('matches the saved settings');
+  await page.screenshot({path:'validation/20261104/slam-settings-ui.png',fullPage:true});
+  expect(f.errors).toEqual([]);
+});
+
+
+test('original shared filter uses baseline cutoff API without diagnostic fields',async({page})=>{
+  const f=await fixture(page);await view(page,'navigation');
+  await expect(page.locator('#scanFilterPanel h3')).toHaveText('Near-return filter');
+  await expect(page.locator('#scanFilterLive')).toContainText('Live: 20.0 cm');
+  await expect(page.locator('#scanFilterHelp')).toContainText('mapping, localization, navigation and obstacle protection');
+  await expect(page.locator('#navigationScanFilterLive')).toHaveCount(0);
+  await page.locator('#scanFilterRadius').fill('18');await page.locator('#saveScanFilter').click();
+  await expect(page.locator('#scanFilterLive')).toContainText('Live: 18.0 cm');
+  expect(f.calls.filter(c=>c.path==='/api/scan_filter').map(c=>c.body)).toEqual([{radius:.18}]);expect(f.errors).toEqual([]);
+});
+
+test('original shared filter missing live readback is displayed honestly',async({page})=>{
+  const f=await fixture(page);await view(page,'navigation');
+  f.state.scan_filter={...f.state.scan_filter,live_value:null,available:false};
+  await expect(page.locator('#scanFilterLive')).toHaveText('Live: unavailable');
+  expect(f.calls).toEqual([]);expect(f.errors).toEqual([]);
+});
+
+
+for(const phase of ['mapping','mission'])test(`turning controls apply live settings and lock during ${phase}`,async({page})=>{
+  const f=await fixture(page,{phase});await view(page,'navigation');
+  await expect(page.locator('#trialLookahead')).toHaveValue('0.18');
+  await expect(page.locator('#trialAlignmentValue')).toHaveText('0.35 rad (20.1°)');
+  await expect(page.locator('#trialAlignment')).toBeEnabled();
+  await page.locator('#trialAlignment').focus();await page.keyboard.press('Home');
+  for(let i=0;i<15;i++)await page.keyboard.press('ArrowRight');
+  await page.locator('#trialLookahead').focus();await page.keyboard.press('Home');
+  for(let i=0;i<4;i++)await page.keyboard.press('ArrowRight');
+  await page.locator('#applyTrial').click();
+  await expect(page.locator('#trialAlignmentLive')).toHaveText('Live: 0.20 rad (11.5°)');
+  await expect(page.locator('#trialLookaheadLive')).toHaveText('Live: 0.10 m');
+  const request=f.calls.find(c=>c.path==='/api/trial');
+  expect(request.body.alignment_angle).toBe(.20);
+  expect(request.body.lookahead_dist).toBe(.10);
+  await page.locator('#profileFast').click();
+  await expect(page.locator('#trialAlignment')).toHaveValue('0.2');
+  await expect(page.locator('#trialLookahead')).toHaveValue('0.1');
+  f.state.mission.state=phase==='mapping'?'MAPPING':'SEARCHING';await page.evaluate(()=>poll());
+  await expect(page.locator('#trialAlignment')).toBeDisabled();
+  await expect(page.locator('#trialLookahead')).toBeDisabled();
+  expect(f.calls.some(c=>c.path==='/api/start')).toBe(false);
+  expect(f.errors).toEqual([]);
+});
+
+
+test('load defaults is a draft until navigation settings are applied',async({page})=>{
+  await fixture(page);
+  let values={max_linear:.20,max_angular:.65,goal_timeout:80,lookahead_dist:.11,alignment_angle:.28};
+  const defaults={max_linear:.16,max_angular:.60,goal_timeout:60,lookahead_dist:.18,alignment_angle:.35};
+  const posted=[];
+  await page.route('**/api/trial',async route=>{
+    if(route.request().method()==='POST'){values=route.request().postDataJSON();posted.push(values);}
+    await route.fulfill({json:{success:true,values,defaults,synchronized:true}});
+  });
+  await view(page,'navigation');
+  await expect(page.locator('#trialLookaheadLive')).toHaveText('Live: 0.11 m · Default: 0.18 m');
+  await page.getByRole('button',{name:'Load defaults'}).click();
+  await expect(page.locator('#trialLookahead')).toHaveValue('0.18');
+  await expect(page.locator('#trialAlignment')).toHaveValue('0.35');
+  await expect(page.locator('#trialLookaheadLive')).toContainText('Live: 0.11 m');
+  expect(posted).toEqual([]);
+  await page.locator('#applyTrial').click();
+  await expect(page.locator('#trialLookaheadLive')).toContainText('Live: 0.18 m');
+  expect(posted).toEqual([defaults]);
 });

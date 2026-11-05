@@ -1,50 +1,9 @@
-# Robot deployment — 2026-11-01
+# Automatic mapping position-only arrival
 
-Release: `merged_single_frame_wall_tip_20261101_513edd1751`.
+The physical release `mapping_position_only_20261105_719b66866f` was activated on 2026-11-05. The console is http://127.0.0.1:8765/#/workflow. The predecessor is `persistent_settings_20261105_dfc48c197f`.
 
-The existing deployed baseline was checked before staging the integrated source.
-All 93 production-file hashes, installed Python module paths, served web assets
-and the active custom controller library were verified after a separate robot
-build. The shared non-UI core matches the wall-tip simulation acceptance version.
+The automatic mapping behavior tree selects a dedicated 0.12 m position-only checker. The supervisor still verifies the fresh matching route and the actual XY endpoint. It observes path heading while traveling and skips the final heading watchdog at position-only arrival. The RPP wrapper returns zero on the arrival tick for position-only checkers, including the existing home checker. Manual waypoints and target observation retain their assigned headings. Home verification continues to require its original position and stationary hold.
 
-The robot reached WAITING/Ready with healthy sensor/navigation status and fresh
-zero final velocity. Deployment setup did not send Start, navigation goals, return
-or an invented initial pose. The operator subsequently started physical mapping;
-a complete physical mapping/search/return acceptance was not established by deployment.
+1130 local tests passed and one skipped. Both ROS packages built in 38.7 seconds. Seven isolated supervisor tests passed. The installed Nav2 controller accepted a mapping goal at 8 cm with 2 rad yaw error and published zero raw commands. The assigned-heading goal at the same position requested a turn.
 
-## Installation layout
-
-The versioned installation uses these conventional robot workspace locations:
-
-- Source: `/home/ros2_ws/group4_releases/<release>`
-- Overlay: `/home/ros2_ws/group4_workspaces/<release>/install`
-- Session: `/home/ros2_ws/group4_results/assessment_<release>`
-- Maps: `/home/ros2_ws/group4_maps`
-
-`start_console.sh` records the launcher for this versioned deployment layout.
-For another layout, adapt its source/overlay/session paths and verify the installed
-source fingerprint. `scripts/build_robot.sh` accepts `GROUP4_WORKSPACE` for builds.
-Do not overwrite live calibration or saved settings with repository defaults.
-
-## Connection
-
-Use the operator-approved robot SSH account and current address. Establish a
-localhost-only forward from Mac port 8765 to robot port 8765, then open
-`http://127.0.0.1:8765/#/workflow`. Port 8792 is reserved for the isolated local
-simulation; an available web server alone does not prove a robot connection.
-
-## Settings and recovery
-
-Calibration, attitude, scan filter and reverse-recovery settings were preserved
-byte for byte. The initial operator settings were bottle, 35–95 cm usable range,
-preferred sigma 0.3 m, return tolerance 0.2 m, 0.12 m/s and 0.4 rad/s limits,
-75 s ordinary goals, Bold clearance, gap blocking off and reverse recovery on.
-Later UI profile changes are operator choices and require field validation.
-
-The user authorized clearing old maps and legacy project programs. A verified
-private backup was retained, along with driver dependencies and one rollback
-release. Those backups, maps, network addresses and live session records are not
-published in this repository.
-
-Current configuration readback is summarized in
-[validation/release-validation.json](validation/release-validation.json).
+Before switching, physical odometry passed the existing stationary check. The deployment preserved all 48 saved map files and seven saved settings files. The new stage restored the saved values and initially reported WAITING with zero output. The installed behavior tree, controller library, and five effective checker configurations were verified. The operator then began mapping and the console showed two goals reached. The agent sent no Start or physical goal. Logs and receipts are in `validation/20261105/`.

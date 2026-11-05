@@ -1,0 +1,98 @@
+{
+  "case_id": "motion_opening30",
+  "scenario": {
+    "version": 1,
+    "name": "motion_opening30",
+    "seed": null,
+    "bounds": [
+      -1.0,
+      -1.0,
+      2.0,
+      2.0
+    ],
+    "walls": [
+      [
+        [
+          -1.0,
+          -1.0
+        ],
+        [
+          2.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          -1.0
+        ],
+        [
+          2.0,
+          2.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          2.0
+        ],
+        [
+          -1.0,
+          2.0
+        ]
+      ],
+      [
+        [
+          -1.0,
+          2.0
+        ],
+        [
+          -1.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          0.7,
+          -1.0
+        ],
+        [
+          0.7,
+          -0.15
+        ]
+      ],
+      [
+        [
+          0.7,
+          0.15
+        ],
+        [
+          0.7,
+          2.0
+        ]
+      ]
+    ],
+    "start": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "target": [
+      0.0,
+      0.5,
+      0.0
+    ]
+  },
+  "start_pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "goal": [
+    1.5,
+    0.0,
+    0.0
+  ],
+  "provenance": "30 cm analytic wall-tip opening; known map normally rasterized, never supplied as SLAM output",
+  "door_width": 0.3
+}

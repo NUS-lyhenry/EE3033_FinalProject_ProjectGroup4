@@ -47,11 +47,12 @@ from .console_workflow import Workflow
 from .model_labels import ModelLabels
 from .waypoint import validate_waypoint
 from .console_scan import ScanFilterSettings
+from .console_slam_settings import SlamSettings
 from .console_recovery import RecoverySettings
 from .console_attitude import AttitudeSettings
 
 
-class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, Node):
+class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettings, Workflow, Node):
     def __init__(self, **kwargs):
         super().__init__('project_console', **kwargs)
         self.p = parameters(self, {'port': 8765, 'phase': 'mission', 'allow_motion': False,
@@ -65,6 +66,7 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
                                    'mapping_resolution':.05})
         if self.p['phase'] not in ('mapping','mission','calibration'):
             raise ValueError('phase must be mapping or mission')
+        self.default_navigation_profile = self.p['navigation_profile']
         self.lock = threading.Lock()
         self.control_lock = threading.Lock()
         self.trial_fault = None
@@ -111,8 +113,10 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
             (name,operation):self.create_client(kind,f'/{name}/{operation}')
             for name in node_names for operation,kind in [
                 ('get_parameters',GetParameters),('set_parameters_atomically',SetParametersAtomically)]}
+        self.parameter_clients[('slam_toolbox','get_parameters')]=self.create_client(GetParameters,'/slam_toolbox/get_parameters')
         self.init_workflow()
         self.init_scan_filter()
+        self.init_slam_settings()
         self.init_recovery()
         self.init_attitude()
         self.gate_status = None
@@ -171,10 +175,11 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
                     return self.reply(200,node.snapshot())
                 if path=='/api/labels':
                     return self.reply(200,node.model_labels.read())
-                if path in ('/api/trial','/api/gap','/api/scan_filter','/api/attitude','/api/recovery'):
+                if path in ('/api/trial','/api/gap','/api/scan_filter','/api/slam_settings','/api/attitude','/api/recovery'):
                     try:
                         with node.control_lock:
                             data = (node.recovery_settings() if path=='/api/recovery' else
+                                    node.slam_settings() if path=='/api/slam_settings' else
                                     node.attitude_settings() if path=='/api/attitude' else
                                     node.scan_filter_settings() if path=='/api/scan_filter' else
                                     node.trial_settings() if path=='/api/trial' else node.gap_settings())
@@ -453,6 +458,7 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
                     'footprint_radius':FOOTPRINT_RADIUS,'robot_geometry':geometry_metadata(),
                     'navigation':self.navigation_status,
                     'scan_filter':self.scan_filter_snapshot(),
+                    'slam_settings':self.slam_settings_snapshot(),
                     'recovery':self.recovery_snapshot(),
                     'return_home_supported':self.p['phase'] in ('mapping','mission'),
                     'attitude':self.attitude_snapshot(),
@@ -510,7 +516,8 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
         return all(math.isclose(actual[name][key],value,abs_tol=1e-8)
                    for name,entries in expected.items() for key,value in entries.items())
 
-    def trial_settings(self, values=None):
+    def trial_settings(self, values=None, *, save=True):
+        supplied = values
         if self.p['phase'] not in ('mapping', 'mission'):
             raise ValueError('Navigation profiles require mapping or mission mode')
         if values is not None:
@@ -525,6 +532,10 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
             self.manual_pub.publish(Twist())
         original = self.read_trial_nodes()
         if values is not None:
+            if 'lookahead_dist' not in supplied:
+                values['lookahead_dist'] = original['controller_server']['FollowPath.lookahead_dist']
+            if 'alignment_angle' not in supplied:
+                values['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
             expected = parameter_plan(values, self.p['phase'])
             attempted = []
             try:
@@ -534,6 +545,8 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
                 actual = self.read_trial_nodes()
                 if not self.trial_matches(actual,expected):
                     raise RuntimeError('Requested settings did not match live readback')
+                if save:
+                    self.save_navigation_settings('trial', values)
             except Exception as exc:
                 restored = True
                 for name in reversed(attempted):
@@ -551,13 +564,17 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
             self.trial_fault = None
         gate = original['project_velocity_gate']
         current = {key:gate[key] for key in ('max_linear','max_angular')}
+        current['lookahead_dist'] = original['controller_server']['FollowPath.lookahead_dist']
+        current['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
         current['goal_timeout'] = original['project_mapper' if self.p['phase']=='mapping' else 'project_mission']['goal_timeout']
-        return {'success':True,'values':current,
+        defaults = validate_trial(dict(PROFILES[self.default_navigation_profile],
+                                       goal_timeout=75. if self.p['phase']=='mission' else 60.))
+        return {'success':True,'values':current,'defaults':defaults,
                 'limits':{key:dict(min=v[0],max=v[1],step=v[2],unit=v[3]) for key,v in LIMITS.items()},
                 'protection':{key:gate[key] for key in ('stop_distance','rotation_clearance')},
                 'synchronized':self.trial_matches(original,parameter_plan(current, self.p['phase'])),
-                'fault':self.trial_fault,'temporary':True,
-                'message':'Trial settings applied and verified; temporary until restart' if values is not None else ''}
+                'fault':self.trial_fault,'temporary':False,
+                'message':'Navigation settings applied and saved' if values is not None and save else ''}
 
     def read_gap_nodes(self):
         result = {}
@@ -579,7 +596,7 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
                     raise RuntimeError(f'{name}: invalid {key} readback')
         return result
 
-    def gap_settings(self, enabled=None, audacity=None):
+    def gap_settings(self, enabled=None, audacity=None, *, save=True):
         phase = self.p['phase']
         changing = enabled is not None or audacity is not None
         if audacity is not None:
@@ -613,7 +630,9 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
                 actual = self.read_gap_nodes()
                 if not self.trial_matches(actual,expected):
                     raise RuntimeError('Gap settings differ from live readback')
-                gap.describe(actual,phase)
+                verified = gap.describe(actual,phase)
+                if save:
+                    self.save_navigation_settings('gap', dict(enabled=verified['enabled'], audacity=verified['audacity']))
             except Exception as exc:
                 restored = True
                 for name in reversed(attempted):
@@ -638,8 +657,8 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
             self.gap_reapply_required = True
         elif not self.gap_reapply_required:
             self.gap_fault = None
-        data.update(success=True,fault=self.gap_fault,
-                    message='Navigation policy applied and verified; temporary until restart' if changing else '')
+        data.update(success=True,fault=self.gap_fault,temporary=False,
+                    message='Navigation policy applied and saved' if changing and save else '')
         return data
 
     def command(self,path,body,expected_generation=None):
@@ -652,6 +671,8 @@ class Console(AttitudeSettings, ScanFilterSettings, RecoverySettings, Workflow, 
             return self.recovery_settings(body,request_generation)
         if path=='/api/scan_filter':
             return self.scan_filter_settings(body,request_generation)
+        if path=='/api/slam_settings':
+            return self.slam_settings(body,request_generation)
         if path == '/api/calibration_target':
             return self.set_calibration_target(body)
         workflow=self.workflow_command(path,body)

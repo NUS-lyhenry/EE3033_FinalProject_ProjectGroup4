@@ -12,6 +12,7 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, LaserScan
 from std_msgs.msg import String
@@ -20,7 +21,7 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from ee3033_project.ros_utils import LATCHED, set_yaw
 from simulation_geometry import clearance, raycast, render_camera
 from simulation_scenarios import default_scenario,validate_scenario
-from simulation_camera import default_camera_settings,validate_camera_settings,camera_intrinsics
+from simulation_camera import default_camera_settings,validate_camera_settings,camera_intrinsics,camera_distortion
 from simulation_motion import motion_profile, advance_motion
 from ee3033_project.motion_safety import PHYSICAL_RADIUS
 
@@ -40,6 +41,7 @@ class SimulatedRobot(Node):
         self.motion_started=self.last_tick
         self.phase = 'mapping'
         self.world_lock=threading.RLock()
+        self.render_generation=0
         self.accept_commands=True
         self.camera=default_camera_settings()
         self.camera_k=camera_intrinsics(self.camera)
@@ -62,11 +64,17 @@ class SimulatedRobot(Node):
         self.image = self.create_publisher(Image, '/image_raw', qos_profile_sensor_data)
         self.info = self.create_publisher(CameraInfo, '/camera_info', qos_profile_sensor_data)
         self.motion_pub = self.create_publisher(String, '/project/simulation_motion', 10)
-        self.create_subscription(Twist, '/cmd_vel', self.on_command, 10)
-        self.create_subscription(String, '/project/mission_status', self.on_status, LATCHED)
-        self.create_timer(.02, self.tick)
-        self.create_timer(.1, self.scan_tick)
-        self.create_timer(.2, self.camera_tick)
+        # ROS defaults all callbacks to one mutually exclusive group. Camera
+        # rendering must not delay command receipt, odometry/TF or laser scans.
+        self.motion_callbacks=MutuallyExclusiveCallbackGroup()
+        self.camera_callbacks=MutuallyExclusiveCallbackGroup()
+        self.create_subscription(Twist, '/cmd_vel', self.on_command, 10,
+                                 callback_group=self.motion_callbacks)
+        self.create_subscription(String, '/project/mission_status', self.on_status, LATCHED,
+                                 callback_group=self.motion_callbacks)
+        self.create_timer(.02, self.tick, callback_group=self.motion_callbacks)
+        self.create_timer(.1, self.scan_tick, callback_group=self.motion_callbacks)
+        self.create_timer(.2, self.camera_tick, callback_group=self.camera_callbacks)
 
     def camera_settings(self):
         with self.world_lock:return dict(self.camera)
@@ -96,6 +104,7 @@ class SimulatedRobot(Node):
                 raise RuntimeError('Pause simulated motion before replacing the camera')
             self.publish_camera_transforms(camera)
             self.camera,self.camera_k=dict(camera),k
+            self.render_generation=getattr(self,'render_generation',0)+1
             return dict(camera)
 
     def on_command(self, msg):
@@ -127,6 +136,7 @@ class SimulatedRobot(Node):
         with self.world_lock:
             if self.accept_commands:raise RuntimeError('Pause simulated motion before replacing the scene')
             self.scene=scene
+            self.render_generation=getattr(self,'render_generation',0)+1
             self.walls=np.asarray(scene['walls'],dtype=float)
             self.target=np.asarray(scene['target'],dtype=float)
             if reset_pose:
@@ -146,7 +156,10 @@ class SimulatedRobot(Node):
             data=json.loads(msg.data)
             with self.world_lock:
                 if float(data.get('stamp',-math.inf))<self.scene_status_after:return
-                self.phase = data.get('phase', self.phase)
+                phase=data.get('phase',self.phase)
+                if phase!=self.phase:
+                    self.render_generation=getattr(self,'render_generation',0)+1
+                self.phase=phase
         except (ValueError, TypeError):
             pass
 
@@ -228,19 +241,33 @@ class SimulatedRobot(Node):
         self.scan.publish(msg)
 
     def camera_tick(self):
-        # Keep rendered pixels and their CameraInfo in one camera generation,
-        # including publication, while a concurrent form save changes the mount.
-        with self.world_lock:self.publish_camera()
+        return self.publish_camera()
 
     def publish_camera(self):
-        frame = render_camera(self.pose, self.texture, self.phase == 'mission',self.walls,self.target,self.camera)
+        # Capture one coherent exposure, then release the world while rendering.
+        # Its timestamp describes the captured pose, not renderer completion.
+        with self.world_lock:
+            pose=list(self.pose)
+            walls,target=self.walls.copy(),self.target.copy()
+            camera,k=dict(self.camera),self.camera_k.copy()
+            distortion=camera_distortion(camera)
+            present=self.phase=='mission'
+            texture=self.texture
+            generation=getattr(self,'render_generation',0)
+            stamp=self.get_clock().now().to_msg()
+        frame = render_camera(pose, texture, present,walls,target,camera)
         image = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
-        image.header.stamp = self.get_clock().now().to_msg()
+        image.header.stamp = stamp
         image.header.frame_id = 'project_camera_optical'
         info = CameraInfo()
         info.header = image.header
         info.width, info.height = 640, 480
         info.distortion_model = 'plumb_bob'
-        info.k, info.d = self.camera_k.ravel().tolist(), [0.]*5
-        self.info.publish(info)
-        self.image.publish(image)
+        info.k, info.d = k.ravel().tolist(), distortion.tolist()
+        with self.world_lock:
+            # A changed mount, scene or mission phase invalidates the in-flight
+            # image. Publication stays atomic with camera/scene replacement.
+            if generation!=getattr(self,'render_generation',0):return False
+            self.info.publish(info)
+            self.image.publish(image)
+        return True

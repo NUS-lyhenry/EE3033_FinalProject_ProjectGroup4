@@ -25,6 +25,7 @@ ROS_DOMAIN_ID=106 python3 tests/integration_calibration.py
 ROS_DOMAIN_ID=108 python3 tests/integration_automatic_calibration.py
 ROS_DOMAIN_ID=96 python3 tests/integration_mapping_retry.py
 ROS_DOMAIN_ID=114 ROS_LOCALHOST_ONLY=1 python3 tests/integration_slam_pose_refresh.py src/ee3033_project/config/slam.yaml
+ROS_DOMAIN_ID=119 ROS_LOCALHOST_ONLY=1 python3 tests/integration_slam_settings.py src/ee3033_project/config/slam.yaml
 ROS_DOMAIN_ID=93 python3 tests/integration_workflow.py
 ROS_DOMAIN_ID=98 python3 tests/integration_waypoint.py
 ROS_DOMAIN_ID=97 python3 tests/integration_turning_nav2.py

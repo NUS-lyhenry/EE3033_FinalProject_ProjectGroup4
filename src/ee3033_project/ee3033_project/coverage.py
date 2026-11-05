@@ -668,9 +668,11 @@ class CoveragePlanner:
 
     def rank_viewpoints(self, x, y, observed, excluded=(), yaw=None,
                         linear_speed=.12, angular_speed=.4, observation_seconds=3.,
-                        path_lengths=None, deadline=None, cancel=None):
+                        path_lengths=None, deadline=None, cancel=None,
+                        previous_stations=()):
         observed = set(observed)
         excluded = set(excluded)
+        previous_stations = {tuple(key) for key in previous_stations}
         distances, _ = self.travel_field(x, y, deadline, cancel)
         ranked = []
         for index, v in enumerate(self.options):
@@ -692,13 +694,15 @@ class CoveragePlanner:
             if not math.isfinite(distance):
                 continue
             # Travel and final orientation matter; avoid rewarding extra stops.
-            travel = distance / max(0.01, linear_speed)
-            heading = math.atan2(dy, dx) if distance > 0.05 else (yaw if yaw is not None else v.yaw)
+            local = math.hypot(dx, dy) < .15
+            travel = 0. if local else distance / max(0.01, linear_speed)
+            heading = (yaw if yaw is not None else v.yaw) if local else math.atan2(dy, dx)
             rotation = abs(angle_difference(v.yaw, heading))
             if yaw is not None:
                 rotation += abs(angle_difference(heading, yaw))
             turn = rotation / max(0.05, angular_speed)
-            cost = max(0.0, observation_seconds) + travel + turn + 1.0
+            revisit = 5. if not local and self.station_key(v.x, v.y) in previous_stations else 0.
+            cost = max(0.0, observation_seconds) + travel + turn + 1.0 + revisit
             score = gain / cost
             ranked.append((score, index))
         return sorted(ranked, key=lambda entry: (-entry[0], entry[1]))

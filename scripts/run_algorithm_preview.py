@@ -115,7 +115,11 @@ def main():
     parser.add_argument('--texture', required=True)
     parser.add_argument('--public-port', type=int, default=8792)
     parser.add_argument('--output-directory', default='/tmp/ee3033_sim')
+    parser.add_argument('--mapping-resolution', type=float, default=.05,
+        help='SLAM map cell size in metres; default matches the physical robot')
     args = parser.parse_args()
+    if not math.isfinite(args.mapping_resolution) or not .005 <= args.mapping_resolution <= .10:
+        parser.error('--mapping-resolution must be between 0.005 and 0.10 metres')
     if os.environ.get('ROS_DOMAIN_ID') in (None, '0', '6') or os.environ.get('ROS_LOCALHOST_ONLY') != '1':
         raise SystemExit('Requires isolated ROS_DOMAIN_ID and ROS_LOCALHOST_ONLY=1')
     if not Path('/.dockerenv').exists():
@@ -133,7 +137,7 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupt)
     console = SimulationConsole(parameter_overrides=[Parameter(k, value=v) for k, v in dict(
-        port=8765, phase='mapping', allow_motion=True, manage_stages=True, mapping_resolution=.0125,
+        port=8765, phase='mapping', allow_motion=True, manage_stages=True, mapping_resolution=args.mapping_resolution,
         stage_base=False, stage_lidar=False, stage_camera=False, model=args.model,
         map_directory=root+'/maps', session_directory=root+'/results',
         software_version=os.environ.get('PREVIEW_MAIN_COMMIT', 'main'),

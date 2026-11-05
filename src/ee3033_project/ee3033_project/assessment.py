@@ -15,6 +15,7 @@ import threading
 import time
 
 import yaml
+from .mapping_settings import DEFAULT_SLAM_SETTINGS, validate_slam_settings
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
                     'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING'))
@@ -292,6 +293,7 @@ class StageProcess:
         self.scan_self_mask_radius = .14
         self.allow_reverse_recovery = True
         self.mapping_resolution = .05
+        self.slam_settings = dict(DEFAULT_SLAM_SETTINGS)
         self.vision_config = ''
         self.attitude_config = ''
         self.calibration_directory = '~/ee3033_calibrations'
@@ -343,6 +345,7 @@ class StageProcess:
               'self_mask_radius:='+str(self.scan_self_mask_radius)]
         if phase=='mapping':
             args.append('mapping_resolution:='+str(self.mapping_resolution))
+            args.extend(key+':='+str(value) for key,value in validate_slam_settings(self.slam_settings).items())
         if phase=='calibration':
             args += ['port:='+str(self.calibration_port), 'parent_port:='+str(self.console_port),
                      'output_directory:='+str(self.calibration_directory)]

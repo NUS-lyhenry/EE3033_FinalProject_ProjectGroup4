@@ -35,6 +35,12 @@ class WorkflowIntegration(unittest.TestCase):
         rclpy.init()
         self.root=tempfile.TemporaryDirectory(prefix='group4_workflow_')
         self.map_root=Path(self.root.name)/'maps'
+        self.launched=[]
+        self.executor=MultiThreadedExecutor(num_threads=4)
+        self.make_console()
+        self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
+
+    def make_console(self):
         self.console=Console(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
             port=0,phase='mapping',allow_motion=True,manage_stages=True,
             map_directory=str(self.map_root),session_directory=self.root.name+'/records').items()])
@@ -45,10 +51,8 @@ class WorkflowIntegration(unittest.TestCase):
         self.console.model_labels=ModelLabels(weights)
         self.console.model_labels.signature=self.console.model_labels.identity()
         self.console.model_labels.cache=self.console.model_labels.response(labels=['bottle','cup'])
-        self.executor=MultiThreadedExecutor(num_threads=4);self.executor.add_node(self.console)
-        self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
+        self.executor.add_node(self.console)
         self.base=f'http://127.0.0.1:{self.console.p["port"]}'
-        self.launched=[]
         def fixture(args,**kwargs):
             self.launched.append(args)
             phase='mapping' if 'mapping.launch.py' in args else 'mission'
@@ -149,6 +153,34 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(state['selected_map']['quality'],'snapshot')
         self.assertEqual(state['selected_map']['id'],second['id'])
         self.assertEqual(len(self.get('maps')['maps']),2)
+
+    def test_operator_settings_survive_stage_switch_and_restart(self):
+        self.post('stage',{'phase':'mapping'})
+        self.assertTrue(wait(lambda:self.get()['mission'].get('ready')))
+        self.assertTrue(wait(lambda:self.get()['velocity_gate'] is not None))
+        chosen=dict(max_linear=.19,max_angular=.55,goal_timeout=85.,lookahead_dist=.11,alignment_angle=.28)
+        policy=dict(enabled=True,audacity='cautious')
+        self.assertEqual(self.post('trial',chosen)['values'],chosen)
+        self.assertTrue(self.post('gap',policy)['synchronized'])
+        entry=self.post('save_map')['map']
+        self.post('review_map',{'map_id':entry['id']})
+        options=dict(target_class='bottle',localization_method='lidar',return_tolerance=.25)
+        self.post('stage',dict(phase='mission',map_id=entry['id'],**options))
+        self.assertEqual(self.get('trial')['values'],chosen)
+        self.assertTrue(self.get('trial')['synchronized'])
+        for key,value in policy.items():self.assertEqual(self.get('gap')[key],value)
+        self.assertEqual(self.get()['mission']['state'],'WAITING')
+        self.console.stage.stop()
+        self.executor.remove_node(self.console)
+        self.console.destroy_node()
+        self.make_console()
+        self.assertEqual({k:self.get()['mission_options'][k] for k in options},options)
+        self.post('new_trial')
+        self.assertEqual(self.get('trial')['values'],chosen)
+        for key,value in policy.items():self.assertEqual(self.get('gap')[key],value)
+        self.assertEqual({k:self.get()['mission_options'][k] for k in options},options)
+        self.assertEqual(self.get()['mission']['state'],'WAITING')
+        print('PASS: all five controls, gap policy and mission choices survive stage change and console restart')
 
     def test_stop_during_loading_prevents_late_stage(self):
         entered=threading.Event();release=threading.Event();factory=self.console.stage.popen

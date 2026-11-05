@@ -1,11 +1,11 @@
-<!-- Automatic mapping uses the validated path's terminal tangent, not frontier bearing. -->
+<!-- Follow the validated mapping path and complete at the frontier position. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <PipelineSequence name="NavigateWithReplanning">
       <RateController hz="1.0">
         <ComputePathToPose goal="{goal}" path="{path}" planner_id="MappingTangent"/>
       </RateController>
-      <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="goal_checker"/>
+      <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="mapping_goal_checker"/>
     </PipelineSequence>
   </BehaviorTree>
 </root>

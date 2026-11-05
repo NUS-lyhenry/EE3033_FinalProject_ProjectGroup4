@@ -6,12 +6,20 @@ LIMITS = {
     'max_linear': (0.04, 0.30, 0.01, 'm/s'),
     'max_angular': (0.15, 1.00, 0.05, 'rad/s'),
     'goal_timeout': (20.0, 300.0, 5.0, 's'),
+    'lookahead_dist': (0.06, 0.30, 0.01, 'm'),
+    'alignment_angle': (0.05, 1.57, 0.01, 'rad'),
 }
 
 
+TRACKING_DEFAULTS = dict(lookahead_dist=.18, alignment_angle=.35)
+
+
 def validate_trial(values):
-    if not isinstance(values, dict) or set(values) != set(LIMITS):
-        raise ValueError('Provide forward speed, turning speed, and goal timeout')
+    # Older speed-only clients retain their API; normalize missing new fields.
+    required = set(LIMITS) - set(TRACKING_DEFAULTS)
+    if not isinstance(values, dict) or not required <= set(values) <= set(LIMITS):
+        raise ValueError('Provide speed caps and goal timeout; unknown trial settings are not allowed')
+    values = dict(TRACKING_DEFAULTS, **values)
     result = {}
     for name, (low, high, _, _) in LIMITS.items():
         value = values[name]
@@ -38,6 +46,10 @@ def parameter_plan(values, phase='mapping'):
         'controller_server': {
             'FollowPath.desired_linear_vel': linear, 'FollowPath.max_linear_vel': linear,
             'FollowPath.rotate_to_heading_angular_vel': angular, 'FollowPath.max_angular_vel': angular,
+            'FollowPath.lookahead_dist': values['lookahead_dist'],
+            'FollowPath.min_lookahead_dist': values['lookahead_dist'],
+            'FollowPath.max_lookahead_dist': values['lookahead_dist'],
+            'FollowPath.rotate_to_heading_min_angle': values['alignment_angle'],
         },
         'project_navigation_supervisor': {'goal_timeout': values['goal_timeout']},
         'project_mapper' if phase == 'mapping' else 'project_mission':

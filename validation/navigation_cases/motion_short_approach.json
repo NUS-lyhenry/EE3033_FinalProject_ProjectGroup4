@@ -1,0 +1,77 @@
+{
+  "case_id": "motion_short_approach",
+  "scenario": {
+    "version": 1,
+    "name": "motion_short_approach",
+    "seed": null,
+    "bounds": [
+      -1.0,
+      -1.0,
+      2.0,
+      1.0
+    ],
+    "start": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "target": [
+      1.5,
+      0.6,
+      0.0
+    ],
+    "walls": [
+      [
+        [
+          -1.0,
+          -1.0
+        ],
+        [
+          2.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          -1.0
+        ],
+        [
+          2.0,
+          1.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          1.0
+        ],
+        [
+          -1.0,
+          1.0
+        ]
+      ],
+      [
+        [
+          -1.0,
+          1.0
+        ],
+        [
+          -1.0,
+          -1.0
+        ]
+      ]
+    ]
+  },
+  "start_pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "goal": [
+    0.22,
+    0.0,
+    0.0
+  ],
+  "provenance": "Deterministic motion diagnostic; analytic walls supplied only to sensors and independent evaluator"
+}

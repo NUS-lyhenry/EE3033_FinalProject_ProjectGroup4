@@ -3,6 +3,7 @@ import math
 from types import SimpleNamespace as NS
 import numpy as np
 from ee3033_project.coverage import CoveragePlanner,Viewpoint
+from ee3033_project.core import angle_difference
 from test_mission_policy import mission,namespace
 
 
@@ -13,6 +14,7 @@ class Done:
 
 
 def owner(options,statuses=()):
+    namespace['angle_difference']=angle_difference
     namespace['ComputePathToPose']=NS(Goal=lambda:NS())
     namespace['GoalStatus']=NS(STATUS_SUCCEEDED=4)
     m=mission();m.initialize_search_recovery();m.seen=set();m.attempted=set();m.failed_options=set()

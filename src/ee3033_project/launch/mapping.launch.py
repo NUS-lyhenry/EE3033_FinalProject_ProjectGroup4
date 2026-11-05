@@ -22,6 +22,8 @@ def generate_launch_description():
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('self_mask_radius', default_value='.14'),
         DeclareLaunchArgument('mapping_resolution', default_value='.05'),
+        DeclareLaunchArgument('occupancy_threshold', default_value='.10'),
+        DeclareLaunchArgument('minimum_pass_through', default_value='2'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
         DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
@@ -35,7 +37,9 @@ def generate_launch_description():
                 'camera': 'false','self_mask_radius':LaunchConfiguration('self_mask_radius')}.items()),
         Node(package='slam_toolbox', executable='async_slam_toolbox_node',
              name='slam_toolbox', parameters=[os.path.join(share, 'config', 'slam.yaml'),
-                 {'resolution':ParameterValue(LaunchConfiguration('mapping_resolution'),value_type=float)}],
+                 {'resolution':ParameterValue(LaunchConfiguration('mapping_resolution'),value_type=float),
+                  'occupancy_threshold':ParameterValue(LaunchConfiguration('occupancy_threshold'),value_type=float),
+                  'min_pass_through':ParameterValue(LaunchConfiguration('minimum_pass_through'),value_type=int)}],
              output='screen'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(share,'launch','navigation.launch.py')),launch_arguments={

@@ -8,9 +8,10 @@ slam_toolbox:
     scan_topic: /scan_fixed
     resolution: 0.0125
     max_laser_range: 8.0
-    # Require repeat occupancy evidence; single-view edge scatter must not
-    # permanently add a cell across a measured narrow opening.
-    occupancy_threshold: 0.25
+    # Karto uses endpoint hits / ray passes, not a repeat-count threshold.
+    # Keep thin walls supported when opposite-side rays share a raster cell.
+    occupancy_threshold: 0.10
+    min_pass_through: 2
     # Refresh scan-matched pose/covariance even while stopped. Recovery may
     # start after a long hold; TF alone must not revive stale /pose evidence.
     minimum_time_interval: 0.5

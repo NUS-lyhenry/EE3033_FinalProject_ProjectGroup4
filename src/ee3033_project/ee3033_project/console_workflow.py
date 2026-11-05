@@ -9,7 +9,9 @@ from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
-from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, mission_options, require_current_mapping_map, calibration_pose_source, require_preserved_unknown
+from .assessment import ACTIVE, MapCatalog, StageProcess, TrialRecord, atomic_json, mission_options, require_current_mapping_map, calibration_pose_source, require_preserved_unknown
+from . import gap
+from .trial import validate_trial
 from .core import stamp_seconds, quaternion_yaw
 from .ros_utils import LATCHED
 from .console_calibration import CameraSetup
@@ -23,7 +25,20 @@ class Workflow(CameraSetup):
         self.record = TrialRecord(self.p['session_directory'])
         self.status_after=-math.inf
         self.selected_map = None
-        self.mission_options = mission_options({})
+        session = Path(self.p['session_directory']).expanduser()
+        self.mission_options_path = session/'mission_settings.json'
+        saved_mission = json.loads(self.mission_options_path.read_text()) if self.mission_options_path.is_file() else {}
+        self.mission_options = mission_options(saved_mission)
+        self.navigation_settings_path = session/'navigation_settings.json'
+        self.navigation_settings = {}
+        if self.navigation_settings_path.is_file():
+            saved_navigation = json.loads(self.navigation_settings_path.read_text())
+            if 'trial' in saved_navigation:
+                self.navigation_settings['trial'] = validate_trial(saved_navigation['trial'])
+            if 'gap' in saved_navigation:
+                saved_gap = saved_navigation['gap']
+                gap.parameter_plan(saved_gap['enabled'], 'mapping', saved_gap['audacity'])
+                self.navigation_settings['gap'] = saved_gap
         self.initial_pose_sent = False
         self.perception_data = None
         self.result_data = None
@@ -54,6 +69,47 @@ class Workflow(CameraSetup):
         self.create_subscription(Odometry,'/odom',self.on_workflow_odom,qos_profile_sensor_data)
         self.create_subscription(String,'/project/mission_result',self.on_result,LATCHED)
         self.create_timer(.5,self.workflow_tick)
+
+    def save_navigation_settings(self, section, values):
+        updated = dict(self.navigation_settings, **{section: values})
+        atomic_json(self.navigation_settings_path, updated)
+        self.navigation_settings = updated
+
+    def restore_navigation_settings(self):
+        """Restore verified settings before releasing the stage transition lock."""
+        trial = self.navigation_settings.get('trial')
+        policy = self.navigation_settings.get('gap')
+        if not (trial or policy):
+            return True
+        deadline = time.monotonic() + 25.
+        problem = 'Waiting for stage status'
+        while time.monotonic() < deadline:
+            if self.stage.cancel.is_set():
+                return False
+            if self.stage.process.poll() is not None:
+                raise RuntimeError('Stage exited while restoring saved navigation settings')
+            with self.lock:
+                ready = (self.state['state'] == 'WAITING' and
+                         time.monotonic() - self.freshness.get('Mission', -math.inf) < 2.)
+            if ready:
+                try:
+                    self.require_zero_command()
+                    if trial:
+                        self.read_trial_nodes()
+                    if policy:
+                        gap.describe(self.read_gap_nodes(), self.p['phase'])
+                except (RuntimeError, ValueError) as exc:
+                    problem = str(exc)
+                else:
+                    break
+            self.stage.cancel.wait(.15)
+        else:
+            raise RuntimeError('Saved navigation settings could not be restored: ' + problem)
+        if trial and not self.stage.cancel.is_set():
+            self.trial_settings(trial, save=False)
+        if policy and not self.stage.cancel.is_set():
+            self.gap_settings(**policy, save=False)
+        return not self.stage.cancel.is_set()
 
     def on_final_command(self,msg):
         with self.lock:
@@ -207,7 +263,8 @@ class Workflow(CameraSetup):
             phase=body.get('phase')
             if phase not in ('mapping','mission','calibration'): raise ValueError('Select camera setup, mapping or mission')
             self.require_camera_idle()
-            map_path=None;selected=None;options=mission_options(body);reuse_saved_map=False
+            map_path=None;selected=None;reuse_saved_map=False
+            options = mission_options({**self.mission_options, **body}) if phase == 'mission' else self.mission_options
             self.stage.calibration_initial_pose = None
             if phase=='calibration':
                 if not body.get('map_id'):
@@ -292,7 +349,7 @@ class Workflow(CameraSetup):
                     if hasattr(self,'visual'):self.visual.reset(self.get_clock().now().nanoseconds*1e-9)
                     self.gate_status=None
                     for key in ('Mission','Map','AMCL','YOLO','Lidar','Odometry'): self.freshness.pop(key,None)
-                    self.selected_map=selected;self.mission_options=options
+                    self.selected_map=selected
                     self.trial_fault=self.gap_fault=self.workflow_fault=None
                     self.gap_reapply_required=False
                 self.refresh_camera_profile()
@@ -302,7 +359,13 @@ class Workflow(CameraSetup):
                 self.stage.map_partial=bool(selected and selected.get('quality')!='mapped')
                 if not self.stage.launch(phase,map_path,options,self.p['map_directory']):
                     return dict(success=True,message='Stage transition stopped; no stage remains active')
-                if phase=='mapping':
+                if phase != 'calibration' and not self.restore_navigation_settings():
+                    self.stage.stop()
+                    return dict(success=True,message='Stage transition stopped; no stage remains active')
+                if phase == 'mission':
+                    atomic_json(self.mission_options_path, options)
+                    self.mission_options = options
+                elif phase == 'mapping':
                     self.record.start('mapping')
             except Exception as exc:
                 self.workflow_fault='Stage load failed; no automatic restart: '+str(exc)

@@ -1,0 +1,98 @@
+{
+  "case_id": "motion_opening34",
+  "scenario": {
+    "version": 1,
+    "name": "motion_opening34",
+    "seed": null,
+    "bounds": [
+      -1.0,
+      -1.0,
+      2.0,
+      2.0
+    ],
+    "walls": [
+      [
+        [
+          -1.0,
+          -1.0
+        ],
+        [
+          2.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          -1.0
+        ],
+        [
+          2.0,
+          2.0
+        ]
+      ],
+      [
+        [
+          2.0,
+          2.0
+        ],
+        [
+          -1.0,
+          2.0
+        ]
+      ],
+      [
+        [
+          -1.0,
+          2.0
+        ],
+        [
+          -1.0,
+          -1.0
+        ]
+      ],
+      [
+        [
+          0.7,
+          -1.0
+        ],
+        [
+          0.7,
+          -0.17
+        ]
+      ],
+      [
+        [
+          0.7,
+          0.17
+        ],
+        [
+          0.7,
+          2.0
+        ]
+      ]
+    ],
+    "start": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "target": [
+      0.0,
+      0.5,
+      0.0
+    ]
+  },
+  "start_pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "goal": [
+    1.5,
+    0.0,
+    0.0
+  ],
+  "provenance": "34 cm analytic opening; unused camera target stays on the start side for scene validation. The navigation goal is across the opening; measured chassis and runtime reachability oracle are unchanged.",
+  "door_width": 0.34
+}

@@ -120,7 +120,10 @@ class Fixture(Node):
                 self.pose=[h.request.pose.pose.position.x,h.request.pose.pose.position.y,
                            math.pi/2 if self.mode=='mapping_wrong_heading' else 0.]
                 if self.mode!='mapping_missing_path':self.publish_mapping_path()
-                time.sleep(.15);h.succeed();return NavigateToPose.Result()
+                time.sleep(.45 if self.mode=='mapping_wrong_heading' else .15)
+                if h.is_cancel_requested:h.canceled()
+                else:h.succeed()
+                return NavigateToPose.Result()
             if self.mode=='no_path':
                 h.abort();return NavigateToPose.Result()
             if self.mode=='success' or (self.mode=='recover' and number==3):
@@ -177,14 +180,16 @@ class SupervisorTests(unittest.TestCase):
         h=result(self.client.send_goal_async(g));self.assertTrue(h.accepted)
         return h
 
-    def test_mapping_accepts_path_tangent_instead_of_original_frontier_yaw(self):
+    def test_mapping_accepts_position_independent_of_original_frontier_yaw(self):
         h=self.begin('mapping_success',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)
         r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED,self.supervisor.status)
-        self.assertEqual(self.supervisor.status['goal_heading_policy'],'path_tangent')
+        self.assertEqual(self.supervisor.status['goal_heading_policy'],'position_only')
 
-    def test_mapping_cannot_pass_by_facing_only_the_original_frontier(self):
+    def test_mapping_arrival_with_wrong_heading_does_not_trigger_recovery(self):
         h=self.begin('mapping_wrong_heading',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)
-        r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_ABORTED,self.supervisor.status)
+        r=result(h.get_result_async());self.assertEqual(r.status,GoalStatus.STATUS_SUCCEEDED,self.supervisor.status)
+        self.assertEqual(self.fixture.nav_count,1)
+        self.assertEqual(self.fixture.clear_count+self.fixture.back_count,0)
 
     def test_mapping_does_not_accept_another_goal_path(self):
         h=self.begin('mapping_wrong_endpoint',behavior_tree='navigate_mapping.xml',yaw=math.pi/2)

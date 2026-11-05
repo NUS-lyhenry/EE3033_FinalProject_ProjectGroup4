@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import sys
 import subprocess
 import tempfile
 import threading
@@ -150,6 +151,34 @@ def main():
                     assert time.monotonic()<deadline;time.sleep(.1)
                 assert client.wait_for_server(timeout_sec=10)
                 assert chassis.count_publishers('/cmd_vel')==0
+                if '--mapping-arrival-only' in sys.argv:
+                    raw=[]
+                    chassis.create_subscription(Twist,'/project/nav_cmd_vel',
+                        lambda msg:raw.append((msg.linear.x,msg.angular.z)),10)
+                    chassis.running=True;chassis.frozen=True;time.sleep(.3)
+                    goal=FollowPath.Goal();goal.controller_id='FollowPath'
+                    goal.goal_checker_id='mapping_goal_checker'
+                    goal.path.header.frame_id='map';goal.path.header.stamp=chassis.get_clock().now().to_msg()
+                    for x in (0.,.08):
+                        p=PoseStamped();p.header=goal.path.header;p.pose.position.x=x;p.pose.orientation.w=1.
+                        goal.path.poses.append(p)
+                    handle=wait(client.send_goal_async(goal));assert handle.accepted
+                    reached=wait(handle.get_result_async(),3)
+                    assert reached.status==4,reached.status
+                    time.sleep(.15)
+                    assert raw and all(abs(v)<1e-6 and abs(w)<1e-6 for v,w in raw),raw
+                    assert chassis.xyz==[0.,0.,2.]
+                    print('PASS mapping XY arrival at 8 cm with 2 rad yaw error and zero raw commands',flush=True)
+                    raw.clear()
+                    goal.goal_checker_id='goal_checker'
+                    handle=wait(client.send_goal_async(goal));assert handle.accepted
+                    deadline=time.monotonic()+3
+                    while not any(abs(w)>.02 for _,w in raw) and time.monotonic()<deadline:time.sleep(.02)
+                    assert any(abs(w)>.02 for _,w in raw),raw
+                    wait(handle.cancel_goal_async());wait(handle.get_result_async(),5)
+                    handle=None
+                    print('PASS assigned-heading goal still requests a turn at the same XY position',flush=True)
+                    return
                 for level,frozen,close,deadband,succeeds in [
                         ('cautious',False,False,0.,True),('balanced',False,False,.08,True),
                         ('bold',False,False,.08,True),('bold',True,False,.08,False),

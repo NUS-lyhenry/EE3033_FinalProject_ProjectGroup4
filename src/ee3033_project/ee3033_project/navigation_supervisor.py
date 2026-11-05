@@ -193,8 +193,8 @@ class NavigationSupervisor(Node):
             self.status = dict(stage='ACCEPTED', reason='Waiting for owner motion enable',
                 recovery_count=0, goal_id=str(uuid.uuid4()), failure_reason=None,
                 armed=False, sequence=self.sequence, locked=False,
-                goal_heading_policy='path_tangent' if mapping_tangent_tree(request.behavior_tree) else
-                    'position_only' if 'navigate_home' in request.behavior_tree else 'assigned',
+                goal_heading_policy='position_only' if (mapping_tangent_tree(request.behavior_tree)
+                    or 'navigate_home' in request.behavior_tree) else 'assigned',
                 requested_yaw=quaternion_yaw(request.pose.pose.orientation))
         return GoalResponse.ACCEPT
 
@@ -423,13 +423,16 @@ class NavigationSupervisor(Node):
         approach = 'navigate_approach' in request.behavior_tree
         home = 'navigate_home' in request.behavior_tree
         xy = .025 if approach else .10 if observation else self.p['xy_tolerance']
+        if pose is None or not math.hypot(
+                pose[0]-goal_pose.position.x,pose[1]-goal_pose.position.y)<=xy:
+            return False
+        if mapping_tangent_tree(request.behavior_tree):
+            # Keep the fresh matching route check independently of arrival yaw.
+            return self.mapping_target_heading(request) is not None
+        if home:
+            return True
         yaw = .10 if approach else .03 if observation else .20
-        reference=(self.mapping_target_heading(request) if mapping_tangent_tree(request.behavior_tree)
-                   else quaternion_yaw(goal_pose.orientation))
-        if reference is None:return False
-        return (pose is not None and math.hypot(
-            pose[0]-goal_pose.position.x,pose[1]-goal_pose.position.y)<=xy
-            and (home or abs(wrap(reference-pose[2]))<=yaw))
+        return abs(wrap(quaternion_yaw(goal_pose.orientation)-pose[2]))<=yaw
 
     def navigation_health(self, now, accepted_at):
         """A fresh diagnostic heartbeat cannot make failed sensors healthy.
@@ -480,16 +483,19 @@ class NavigationSupervisor(Node):
         approach = 'navigate_approach' in request.behavior_tree
         xy_tolerance = .025 if approach else .10 if observation else self.p['xy_tolerance']
         arrived = distance<=xy_tolerance
-        # Explicit trees use the same tolerances as their controller checker.
-        home = 'navigate_home' in request.behavior_tree
+        # Mapping exploration and return goals have position-only acceptance.
+        # Still check sensor health and path alignment on the way to the goal.
+        mapping = mapping_tangent_tree(request.behavior_tree)
+        position_only = mapping or 'navigate_home' in request.behavior_tree
+        if arrived and position_only:
+            with self.guard:
+                self.status.update(stage='ARRIVED', distance=distance, heading_error=0.,
+                    terminal_heading=None, velocity_gate_reason=self.gate.get('reason'),
+                    odom_age=now-self.odom_time, gate_age=now-self.gate_time)
+            return None
         yaw_tolerance = .10 if approach else .03 if observation else .20
-        if arrived and home:
-            heading = 0.
-            reference = pose[2]
-        elif arrived:
-            reference=(self.mapping_target_heading(request,now) if mapping_tangent_tree(request.behavior_tree)
-                       else quaternion_yaw(goal.orientation))
-            if reference is None:return 'Fresh mapping terminal path heading is unavailable' 
+        if arrived:
+            reference = quaternion_yaw(goal.orientation)
             heading = wrap(reference-pose[2])
             if abs(heading)<=yaw_tolerance:
                 heading = 0.
@@ -505,7 +511,7 @@ class NavigationSupervisor(Node):
         phase = 'FINAL_ALIGN' if arrived else 'ALIGNING' if aligning else 'TRACKING'
         with self.guard:
             self.status.update(stage=phase, distance=distance, heading_error=heading,
-                terminal_heading=self.mapping_target_heading(request,now) if mapping_tangent_tree(request.behavior_tree) else None,
+                terminal_heading=self.mapping_target_heading(request,now) if mapping else None,
                 velocity_gate_reason=self.gate.get('reason'), odom_age=now-self.odom_time,
                 gate_age=now-self.gate_time)
         return watch.update(now, odom, heading, aligning=aligning, arrived=arrived,

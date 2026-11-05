@@ -46,8 +46,14 @@ class SearchRobot(FakeRobot):
 
     async def execute(self, handle):
         pose = handle.request.pose.pose.position
-        home = abs(pose.x) < 1e-6 and abs(pose.y) < 1e-6
+        origin_goal = abs(pose.x) < 1e-6 and abs(pose.y) < 1e-6
+        home = self.mission.goal_kind == 'home'
         result = await super().execute(handle)
+        # A search_scan can rotate at the origin. Coordinates alone do not
+        # identify a return; correct the generic historical fixture counters.
+        if origin_goal and not home:
+            self.home_goals -= 1
+            self.search_goals += 1
         if self.mode == 'misaligned' and not home:
             self.xy_yaw[2] += 1.
         return result
@@ -60,6 +66,7 @@ class AdaptiveSearch(unittest.TestCase):
             robot = SearchRobot(mode)
             mission = Mission(cli_args=['--ros-args','-r','/cmd_vel:=/test/motor_output'],
                 parameter_overrides=overrides(allow_motion=True, target_class='bottle',
+                    search_strategy='adaptive',
                     viewpoint_spacing=1., max_goals=3, max_candidates=1,
                     observe_seconds=.25, min_observation_frames=3,
                     max_observation_retries=1, verify_seconds=.25, verify_timeout=2.,
@@ -105,11 +112,20 @@ class AdaptiveSearch(unittest.TestCase):
                     goals = robot.search_goals
                     time.sleep(.4)
                     self.assertEqual(robot.search_goals,goals)
-                else:
-                    self.assertFalse(mission.seen)
+                elif mode in ('duplicate_frames', 'prearrival_frames'):
+                    # Valid in-motion exposures retain their real footprint.
+                    # These deliberately corrupt only the post-arrival frame
+                    # stamp, so the stationary observation must exhaust retries.
+                    self.assertTrue(mission.seen)
                     self.assertEqual(len(mission.failures),len(mission.route))
-                    if mode == 'misaligned':
-                        self.assertGreater(robot.search_goals,len(mission.route))
+                    self.assertTrue(all(e.get('reason') ==
+                        'No fresh frame with a valid exposure pose and camera model'
+                        for e in mission.observation_events if e['event']=='observation_failed'))
+                else:
+                    # A target candidate and a different actual heading cannot
+                    # erase otherwise valid exposure-pose coverage.
+                    self.assertTrue(mission.seen)
+                    self.assertFalse(mission.failures)
                 payload = json.loads((mission.run_dir/'result.json').read_text())
                 self.assertEqual(payload['state'],expected)
                 self.assertTrue(payload['candidate_threshold_exceeded'])
@@ -124,10 +140,10 @@ class AdaptiveSearch(unittest.TestCase):
                 rclpy.shutdown()
 
     def test_valid_frames_credit_coverage_and_replan(self): self.run_case('valid')
-    def test_duplicate_frames_do_not_credit_coverage(self): self.run_case('duplicate_frames')
-    def test_prearrival_frames_do_not_credit_coverage(self): self.run_case('prearrival_frames')
-    def test_detected_but_unlocalized_target_does_not_credit_empty_coverage(self): self.run_case('unlocalized_candidate')
-    def test_false_navigation_heading_retries_without_coverage(self): self.run_case('misaligned')
+    def test_duplicate_arrival_frames_retry_without_erasing_moving_coverage(self): self.run_case('duplicate_frames')
+    def test_prearrival_frames_retry_without_erasing_moving_coverage(self): self.run_case('prearrival_frames')
+    def test_unlocalized_candidate_retains_actual_exposure_coverage(self): self.run_case('unlocalized_candidate')
+    def test_actual_exposure_heading_is_credited_after_navigation(self): self.run_case('misaligned')
     def test_stop_during_observation_prevents_successor(self): self.run_case('stop')
 
 

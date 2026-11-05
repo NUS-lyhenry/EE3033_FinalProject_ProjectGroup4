@@ -56,7 +56,7 @@ class Mission(Node):
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
             'max_candidates': 250, 'max_goals': 120, 'coverage_fraction': 0.98,
             'candidate_limit': 1000, 'map_partial': False,
-            'search_strategy': 'adaptive', 'adaptive_margin': 0.08,
+            'search_strategy': 'greedy', 'adaptive_margin': 0.08,
             'observe_seconds': 3.0, 'min_observation_frames': 3,
             'search_linear_speed': 0.12, 'search_angular_speed': 0.4,
             'max_observation_retries': 2, 'goal_timeout': 75.0, 'mission_timeout': 900.0,
@@ -1082,17 +1082,30 @@ class Mission(Node):
         """Select first, then verify only that remote position; scans skip probes."""
         deadline=time.monotonic()+1.5
         excluded=set(self.attempted | self.failed_options)
+        excluded.update(i for i in range(len(self.planner.options))
+                        if not self.search_option_allowed(i,current))
         lengths={}
         self.search_cost_source='safe grid paths'
         grid_ranked=self.planner.rank_viewpoints(*current[:2],self.seen,excluded,yaw=current[2],
             linear_speed=self.get_parameter('search_linear_speed').value,
             angular_speed=self.get_parameter('search_angular_speed').value,
             observation_seconds=min(self.p['observe_seconds'],self.p['min_observe_seconds']),
-            deadline=deadline,cancel=self.plan_cancel)
+            deadline=deadline,cancel=self.plan_cancel,
+            previous_stations=getattr(self,'previous_stations',()))
         def choose():
             if time.monotonic()>=deadline:
                 return next((i for _,i in grid_ranked if i not in excluded and self.search_option_allowed(i,current)),None)
-            if hasattr(self.planner,'select_station_view'):
+            if self.p['search_strategy']=='greedy':
+                # One immediate observation competes with every other heading;
+                # station batches and local-station preference are not greedy.
+                ranked=self.planner.rank_viewpoints(*current[:2],self.seen,excluded,yaw=current[2],
+                    linear_speed=self.get_parameter('search_linear_speed').value,
+                    angular_speed=self.get_parameter('search_angular_speed').value,
+                    observation_seconds=min(self.p['observe_seconds'],self.p['min_observe_seconds']),
+                    path_lengths=lengths,deadline=deadline,cancel=self.plan_cancel,
+                    previous_stations=getattr(self,'previous_stations',()))
+                result=next((i for _,i in ranked if self.search_option_allowed(i,current)),None)
+            elif hasattr(self.planner,'select_station_view'):
                 result=self.planner.select_station_view(*current[:2],self.seen,excluded,yaw=current[2],
                     linear_speed=self.get_parameter('search_linear_speed').value,
                     angular_speed=self.get_parameter('search_angular_speed').value,
@@ -1103,13 +1116,6 @@ class Mission(Node):
                     previous_stations=getattr(self,'previous_stations',()),
                     failed_positions=getattr(self,'failed_localization_positions',()),now=time.monotonic(),
                     strategy=self.p['search_strategy'],adaptive_margin=self.p['adaptive_margin'])
-            elif self.p['search_strategy']=='greedy':
-                ranked=self.planner.rank_viewpoints(*current[:2],self.seen,excluded,yaw=current[2],
-                    linear_speed=self.get_parameter('search_linear_speed').value,
-                    angular_speed=self.get_parameter('search_angular_speed').value,
-                    observation_seconds=min(self.p['observe_seconds'],self.p['min_observe_seconds']),
-                    path_lengths=lengths,deadline=deadline,cancel=self.plan_cancel)
-                result=next((i for _,i in ranked if self.search_option_allowed(i,current)),None)
             else:
                 result=self.planner.lookahead(*current[:2],self.seen,excluded,yaw=current[2],
                     linear_speed=self.get_parameter('search_linear_speed').value,

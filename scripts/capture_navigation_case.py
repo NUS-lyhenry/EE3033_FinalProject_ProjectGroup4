@@ -49,9 +49,11 @@ class NavigationRecorder:
             ('/transformed_global_plan',NavPath,10),('/lookahead_arc',NavPath,10),
             ('/map',OccupancyGrid,LATCHED),('/local_costmap/costmap_raw',Costmap,10),
             ('/global_costmap/costmap_raw',Costmap,10),('/odom',Odometry,qos_profile_sensor_data),
-            ('/scan_fixed',LaserScan,qos_profile_sensor_data),('/tf',TFMessage,10),('/tf_static',TFMessage,LATCHED),
+            ('/scan',LaserScan,qos_profile_sensor_data),('/scan_fixed',LaserScan,qos_profile_sensor_data),
+            ('/scan_navigation',LaserScan,qos_profile_sensor_data),('/tf',TFMessage,10),('/tf_static',TFMessage,LATCHED),
             ('/project/nav_cmd_vel',Twist,10),('/cmd_vel',Twist,10),
             ('/project/velocity_gate_status',String,10),('/project/navigation_status',String,10),('/project/planning_status',String,10),
+            ('/project/navigation_scan_status',String,10),
             ('/project/simulation_motion',String,10),('/project/mission_status',String,LATCHED)]
         try:
             from dwb_msgs.msg import LocalPlanEvaluation
@@ -64,7 +66,7 @@ class NavigationRecorder:
     def record(self,topic,msg):
         from rosidl_runtime_py.convert import message_to_ordereddict
         d=message_to_ordereddict(msg)
-        if topic in ('/project/velocity_gate_status','/project/navigation_status','/project/planning_status','/project/simulation_motion','/project/mission_status'):
+        if topic in ('/project/velocity_gate_status','/project/navigation_status','/project/planning_status','/project/simulation_motion','/project/mission_status','/project/navigation_scan_status'):
             try:d=json.loads(d['data'])
             except (ValueError,KeyError):pass
         with self.lock:

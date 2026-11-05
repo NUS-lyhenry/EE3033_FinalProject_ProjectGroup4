@@ -310,17 +310,27 @@ def test_a_fresh_validated_route_can_still_be_published():
 
 @pytest.mark.parametrize('tree,robot_yaw,received_offset,endpoint,expected',[
     ('navigate_mapping.xml',0.,0.,(.5,0.),True),
-    ('navigate_mapping.xml',math.pi/2,0.,(.5,0.),False),
+    ('navigate_mapping.xml',math.pi/2,0.,(.5,0.),True),
     ('navigate_mapping.xml',0.,-4.,(.5,0.),False),
     ('navigate_mapping.xml',0.,0.,(.6,0.),False),
     ('navigate_observation.xml',0.,0.,(.5,0.),False),
     ('navigate_observation.xml',math.pi/2,0.,(.5,0.),True),
 ])
-def test_mapping_arrival_uses_only_the_fresh_matching_path_heading(tree,robot_yaw,received_offset,endpoint,expected):
+def test_mapping_arrival_requires_fresh_matching_route_but_accepts_any_yaw(tree,robot_yaw,received_offset,endpoint,expected):
     cls=load_supervisor();node=cls.__new__(cls);now=time.monotonic()
     node.guard=threading.RLock();node.pose=lambda:(.5,0.,robot_yaw);node.p={'xy_tolerance':.12}
     node.path=[(0.,0.),endpoint];node.path_goal_yaw=0.
     node.path_received=now+received_offset;node.goal_accepted_at=now-.1
     q=NS(x=0.,y=0.,z=math.sin(math.pi/4),w=math.cos(math.pi/4))
     request=NS(behavior_tree=tree,pose=NS(pose=NS(position=NS(x=.5,y=0.),orientation=q)))
+    assert node.reached_goal(request) is expected
+
+
+@pytest.mark.parametrize('distance,expected',[(.12,True),(.121,False)])
+def test_mapping_position_tolerance_still_requires_translation(distance,expected):
+    cls=load_supervisor();node=cls.__new__(cls)
+    node.p={'xy_tolerance':.12};node.pose=lambda:(0.,0.,math.pi)
+    node.mapping_target_heading=lambda request:0.
+    request=NS(behavior_tree='navigate_mapping.xml',pose=NS(pose=NS(
+        position=NS(x=distance,y=0.),orientation=NS(x=0.,y=0.,z=0.,w=1.))))
     assert node.reached_goal(request) is expected

@@ -9,7 +9,7 @@ import time
 from types import SimpleNamespace as NS
 
 import pytest
-from ee3033_project.assessment import ACTIVE, TrialRecord, mission_options, require_preserved_unknown
+from ee3033_project.assessment import ACTIVE, TrialRecord, atomic_json, mission_options, require_preserved_unknown
 
 ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 
@@ -18,7 +18,7 @@ def callback(file,name):
     tree=ast.parse((ROOT/file).read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef))
     method=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name==name)
-    namespace=dict(json=json,math=math,time=time,ACTIVE=ACTIVE,mission_options=mission_options,
+    namespace=dict(json=json,math=math,time=time,ACTIVE=ACTIVE,mission_options=mission_options,atomic_json=atomic_json,
                    Twist=NS,Trigger=NS(Request=NS),stamp_seconds=lambda s:s.sec+s.nanosec*1e-9,
                    require_preserved_unknown=require_preserved_unknown)
     exec(compile(ast.Module(body=[method],type_ignores=[]),str(ROOT/file),'exec'),namespace)
@@ -46,6 +46,9 @@ def console(tmp_path):
         get_clock=lambda:NS(now=lambda:NS(nanoseconds=20_000_000_000)))
     c.require_idle=lambda: (_ for _ in ()).throw(ValueError('Active')) if c.state['state'] in ACTIVE or c.stage.loading else None
     c.require_zero_command=lambda:None
+    c.mission_options=mission_options({})
+    c.mission_options_path=tmp_path/'mission_settings.json'
+    c.restore_navigation_settings=lambda:True
     c.workflow_status=lambda status:c.record.status('mission',status)
     def start(path,body,**kwargs):
         assert path=='/api/start' and body=={}
