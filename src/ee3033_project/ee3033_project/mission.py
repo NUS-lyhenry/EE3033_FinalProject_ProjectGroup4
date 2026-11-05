@@ -747,7 +747,7 @@ class Mission(Node):
             self.planner = CoveragePlanner(
                 data, msg.info.resolution,
                 (origin.position.x, origin.position.y, quaternion_yaw(origin.orientation)),
-                max(.15,self.p['clearance']), self.p['viewpoint_spacing'], self.p['camera_range'],
+                self.p['clearance'], self.p['viewpoint_spacing'], self.p['camera_range'],
                 self.p['camera_fov'], self.p['viewpoint_headings'],
                 self.p['max_candidates'], self.p['max_goals'], self.p['coverage_fraction'],
                 candidate_limit=self.p['candidate_limit'], camera_model=self.camera_model,

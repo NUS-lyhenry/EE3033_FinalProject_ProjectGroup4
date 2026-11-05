@@ -1,6 +1,6 @@
 {
-  "release": "manual_clearance_20261105_89a6af1ef1",
-  "baseline_release": "collision_radius_minimum_20261105_bf7acb9a40",
+  "release": "search_clearance_20261105_e8e63de19a",
+  "baseline_release": "manual_clearance_20261105_89a6af1ef1",
   "source_files": {
     "src/ee3033_navigation/CMakeLists.txt": "b9a530d1d6ec6778ac2485dfbfdf995321159a32754eecf7c1ee4de3b607e6de",
     "src/ee3033_navigation/README.md": "f791afa807cb871b8e65f680778759e6986ace68d8dcc8f9a963443387dbed18",
@@ -54,7 +54,7 @@
     "src/ee3033_project/ee3033_project/mapping_escape.py": "ab1d8ad1d1b6412e3c22404780a83bf381a81a7afa89a729cb294e1b1c193e30",
     "src/ee3033_project/ee3033_project/mapping_heading.py": "42c7566b9399589329ee076be24d746ba170d8f78efb79f6a6064b6880d4df0d",
     "src/ee3033_project/ee3033_project/mapping_settings.py": "c2135cefa0edb1dc72cc71199794a303150de3679e0081d9b9eacaa6f5007696",
-    "src/ee3033_project/ee3033_project/mission.py": "2a6bf1db183ee70b3b4602ce221e1ecfe7cd1174889fa2bb1e12258862a34759",
+    "src/ee3033_project/ee3033_project/mission.py": "1fe1808eb5eba12ea05491cf6e8bca5adc842b0f1a07ea5a979bbfa7233acb58",
     "src/ee3033_project/ee3033_project/model_labels.py": "46a44e7400d422612ce50818b568e1bb3b221f2355c1013f61d7ae9313943d5a",
     "src/ee3033_project/ee3033_project/motion_safety.py": "143eef1571f85dc44b98c0c835f22cabc2549746b7588b592cd0a29d14b554cf",
     "src/ee3033_project/ee3033_project/navigation_costmap.py": "3688e7faf91f49e12478e4f320ce823ce284661cb99f53e2effedcafcd06668f",
@@ -103,9 +103,9 @@
     "src/ee3033_project/web/index.html": "960e46cf5068a8de7e2831067733c8aa63a8980c5f544db37b49c4bb2388b837",
     "src/ee3033_project/web/style.css": "233ff3a642837dbf19e8c664a698776e7cf029dceb64c01a956ce0df6c41e791"
   },
-  "source_sha256": "89a6af1ef1156ab10bf792359ec848c7a80fbeeb4165d76d2b77803ed8212fd3",
-  "source_archive": "manual_clearance_20261105_89a6af1ef1.tar.gz",
-  "robot_source": "/home/ros2_ws/group4_releases/manual_clearance_20261105_89a6af1ef1",
-  "robot_workspace": "/home/ros2_ws/group4_workspaces/manual_clearance_20261105_89a6af1ef1",
-  "robot_session": "/home/ros2_ws/group4_results/assessment_manual_clearance_20261105_89a6af1ef1"
+  "source_sha256": "e8e63de19a0c6d182f24143338e06ffb07de4723d8e9e9b7e201cbb247ceb70b",
+  "source_archive": "search_clearance_20261105_e8e63de19a.tar.gz",
+  "robot_source": "/home/ros2_ws/group4_releases/search_clearance_20261105_e8e63de19a",
+  "robot_workspace": "/home/ros2_ws/group4_workspaces/search_clearance_20261105_e8e63de19a",
+  "robot_session": "/home/ros2_ws/group4_results/assessment_search_clearance_20261105_e8e63de19a"
 }

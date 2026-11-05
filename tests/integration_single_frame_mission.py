@@ -131,7 +131,7 @@ class SingleFrameMission(unittest.TestCase):
             robot = ExposureRobot(mode)
             mission = Mission(parameter_overrides=overrides(
                 allow_motion=True, target_class='bottle', results_directory=directory,
-                viewpoint_spacing=1., max_goals=4, max_candidates=12,
+                clearance=.11, viewpoint_spacing=1., max_goals=4, max_candidates=12,
                 verify_seconds=.5, verify_timeout=3., cancel_timeout=3.,
                 max_target_variance=.01, acquisition_seconds=20.))
             robot.mission = mission
@@ -159,6 +159,7 @@ class SingleFrameMission(unittest.TestCase):
                 self.assertTrue(wait(lambda: mission.readiness_error() is None
                     and mission.nav.server_is_ready()))
                 call('start')
+                self.assertAlmostEqual(mission.planner.clearance, .11)
                 if mode == 'planning':
                     self.assertTrue(wait(lambda: mission.state == 'PLANNING'
                         and mission.selection_future is not None
