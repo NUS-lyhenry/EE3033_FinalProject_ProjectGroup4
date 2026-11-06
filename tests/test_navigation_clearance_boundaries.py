@@ -64,6 +64,7 @@ result['unknown28']=probe('too_narrow',.0125,.001,unknown=True)
 print(json.dumps(result))
 '''
     env=dict(os.environ,EE3033_ROBOT_GEOMETRY='measured',
+             EE3033_STAGE_GRID_SETTINGS=json.dumps({'path_search_spacing': .02}),
              PYTHONPATH=os.pathsep.join((str(ROOT/'src/ee3033_project'),str(ROOT/'scripts'))))
     result=subprocess.run([sys.executable,'-c',code],cwd=ROOT,env=env,
                           capture_output=True,text=True,timeout=25)

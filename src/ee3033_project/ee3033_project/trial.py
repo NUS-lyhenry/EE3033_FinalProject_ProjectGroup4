@@ -12,7 +12,11 @@ LIMITS = {
 }
 
 
+# Older saved profiles may omit tracking parameters. Retain their legacy values.
 TRACKING_DEFAULTS = dict(lookahead_dist=.18, corner_lookahead_dist=.08, alignment_angle=.35)
+DEFAULT_PROFILE = 'standard'
+TRIAL_DEFAULTS = dict(max_linear=.16, max_angular=.30, goal_timeout=90.,
+                      lookahead_dist=.20, corner_lookahead_dist=.08, alignment_angle=.62)
 
 
 def validate_trial(values):
@@ -34,6 +38,7 @@ def validate_trial(values):
 
 
 PROFILES = {
+    DEFAULT_PROFILE: TRIAL_DEFAULTS,
     'original': dict(max_linear=.12, max_angular=.40, goal_timeout=60.),
     'fast': dict(max_linear=.16, max_angular=.60, goal_timeout=60.),
 }

@@ -82,7 +82,7 @@ class Fixture(Node):
         self.gate.publish(String(data='{"reason":"passing","output":[0,0]}'))
         if self.mode in ('mapping_success','mapping_wrong_heading','mapping_wrong_endpoint') and hasattr(self,'mapping_request'):
             self.publish_mapping_path()
-        if self.mode in ('recover','frozen'):
+        if self.mode in ('recover','frozen','tracking_abort'):
             p=Path();p.header.frame_id='map';p.header.stamp=stamp
             for x in (0.,.2,.4):
                 v=PoseStamped();v.header=p.header;v.pose.position.x=x;v.pose.orientation.w=1.
@@ -126,6 +126,10 @@ class Fixture(Node):
                 return NavigateToPose.Result()
             if self.mode=='no_path':
                 h.abort();return NavigateToPose.Result()
+            if self.mode=='tracking_abort':
+                time.sleep(.15)
+                h.abort()
+                return NavigateToPose.Result()
             if self.mode=='success' or (self.mode=='recover' and number==3):
                 self.pose=[h.request.pose.pose.position.x,h.request.pose.pose.position.y,0.]
                 time.sleep(.15);h.succeed();return NavigateToPose.Result()
@@ -158,7 +162,7 @@ class SupervisorTests(unittest.TestCase):
         self.supervisor=NavigationSupervisor(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
             goal_timeout=6.,translation_window=.35,translation_distance=.08,
             heading_window=.2,stationary_seconds=.06,stationary_timeout=.8,
-            sensor_timeout=.2,enable_grace=.5).items()])
+            sensor_timeout=.2,enable_grace=.5,allow_reverse_recovery=True).items()])
         self.executor=MultiThreadedExecutor(num_threads=8)
         for node in (self.fixture,self.supervisor):self.executor.add_node(node)
         self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()
@@ -235,6 +239,24 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(self.fixture.back_count,1)
         self.assertEqual(self.fixture.max_active,1)
         self.assertEqual(self.supervisor.status['recovery_count'],2)
+
+    def test_exhausted_home_tracking_failure_has_confirmed_retryable_terminal(self):
+        self.fixture.enabled = False
+        until(lambda: not self.supervisor.drive)
+        answer = self.supervisor.set_parameters_atomically([Parameter('allow_reverse_recovery', value=False)])
+        self.assertTrue(answer.successful, answer.reason)
+        self.fixture.enabled = True
+        h = self.begin('tracking_abort', behavior_tree='navigate_home.xml')
+        r = result(h.get_result_async())
+        status = self.supervisor.status
+        self.assertEqual(r.status, GoalStatus.STATUS_ABORTED, status)
+        self.assertEqual(status['goal_id'], bytes(h.goal_id.uuid).hex())
+        self.assertEqual(status['recovery_count'], 2)
+        self.assertTrue(status['return_retryable'], status)
+        self.assertTrue(status['stop_confirmation']['raw_terminal_confirmed'])
+        self.assertTrue(status['stop_confirmation']['bounded_stop_confirmed'])
+        self.assertEqual(self.fixture.max_active, 1)
+        self.assertEqual(self.fixture.back_count, 0)
 
     def test_disabled_reverse_retries_successfully_without_backup_action(self):
         self.fixture.enabled=False

@@ -9,7 +9,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from ee3033_project.robot_geometry import GEOMETRY_PROFILE, FOOTPRINT_RADIUS, DEFAULT_STOP_DISTANCE
+from ee3033_project.robot_geometry import FOOTPRINT_RADIUS, DEFAULT_STOP_DISTANCE
 
 
 def start(context):
@@ -72,9 +72,9 @@ def start(context):
         Node(package='ee3033_project', executable='velocity_gate', output='screen', parameters=[
             os.path.join(share, 'config', 'project.yaml'), dict(allow_motion=motion,
                 reverse_policy='calibration',
-                max_linear=.04, max_angular=.15, rotation_clearance=.16),
-            ({'footprint_radius':FOOTPRINT_RADIUS,'reverse_radius':FOOTPRINT_RADIUS,
-              'stop_distance':DEFAULT_STOP_DISTANCE} if GEOMETRY_PROFILE=='legacy' else {})]),
+                max_linear=.04, max_angular=.15, rotation_clearance=.16,
+                footprint_radius=FOOTPRINT_RADIUS, reverse_radius=FOOTPRINT_RADIUS,
+                stop_distance=DEFAULT_STOP_DISTANCE)]),
         Node(package='ee3033_project', executable='camera_calibration', output='screen', parameters=[{
             'map_file': map_path, 'allow_motion': motion, 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
             'parent_port': ParameterValue(LaunchConfiguration('parent_port'), value_type=int),

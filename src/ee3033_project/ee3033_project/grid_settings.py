@@ -3,8 +3,8 @@ import json
 import math
 import os
 
-GRID_DEFAULTS = dict(mapping_resolution=.05, path_search_spacing=.02,
-                     viewpoint_spacing=.65, coverage_spacing=.15)
+GRID_DEFAULTS = dict(mapping_resolution=.03, path_search_spacing=.01,
+                     viewpoint_spacing=.55, coverage_spacing=.10)
 GRID_LIMITS = {
     'mapping_resolution': (.01, .10),
     'path_search_spacing': (.01, .10),

@@ -12,11 +12,11 @@ from std_msgs.msg import Bool, String
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from .ros_utils import LATCHED, parameters, run
-from .trial import guarded_parameters
-from .gap import DEFAULT_AUDACITY, GATE_FIELDS, TURNING, guard_gate_tuning
+from .trial import DEFAULT_PROFILE, PROFILES, TRIAL_DEFAULTS, guarded_parameters
+from .gap import GATE_FIELDS, MANUAL_DEFAULTS, guard_gate_tuning
 from .core import quaternion_yaw, stamp_seconds
 from .reverse_safety import reverse_clearance
-from .robot_geometry import DEFAULT_STOP_DISTANCE, MIN_COLLISION_RADIUS, MIN_CONFIGURED_COLLISION_RADIUS, geometry_metadata
+from .robot_geometry import MIN_COLLISION_RADIUS, MIN_CONFIGURED_COLLISION_RADIUS, geometry_metadata
 from .motion_safety import (FOOTPRINT_RADIUS, limit_twist, swept_arc,
                             swept_map_clearance, swept_scan_clearance)
 
@@ -27,15 +27,15 @@ class VelocityGate(Node):
         self.p = parameters(self, {
             'allow_motion': False, 'mapping_mode': False, 'output_topic': '/cmd_vel',
             'command_timeout': 0.5, 'heartbeat_timeout': 0.7, 'scan_timeout': 0.7,
-            'max_linear': 0.12, 'max_angular': 0.40,
-            'stop_distance': DEFAULT_STOP_DISTANCE, 'rotation_clearance': TURNING[DEFAULT_AUDACITY]['stop'],
-            'navigation_profile': 'original',
+            'max_linear': TRIAL_DEFAULTS['max_linear'], 'max_angular': TRIAL_DEFAULTS['max_angular'],
+            **{key: MANUAL_DEFAULTS[key] for key in GATE_FIELDS},
+            'navigation_profile': DEFAULT_PROFILE,
             'reverse_speed': .04, 'reverse_distance': .20,
             'reverse_reserve': .04, 'reverse_radius': FOOTPRINT_RADIUS,
             'odom_frame': 'odom_combined', 'base_frame': 'base_footprint',
             'reverse_policy': 'recovery',
             'enforce_swept_map': True, 'swept_horizon': 1.0,
-            'braking_deceleration': 0.30, 'footprint_radius': FOOTPRINT_RADIUS,
+            'braking_deceleration': 0.30,
         })
         if (not math.isfinite(self.p['swept_horizon']) or self.p['swept_horizon']<=0
                 or not math.isfinite(self.p['braking_deceleration']) or self.p['braking_deceleration']<=0
@@ -44,11 +44,13 @@ class VelocityGate(Node):
             raise ValueError('Swept motion requires a positive horizon, braking limit and full footprint')
         if self.p['reverse_policy'] not in ('recovery','calibration'):
             raise ValueError('reverse_policy must be recovery or calibration')
-        if self.p['navigation_profile'] not in ('original', 'fast'):
-            raise ValueError('navigation_profile must be original or fast')
-        if self.p['navigation_profile'] == 'fast':
+        profile = self.p['navigation_profile']
+        if profile not in PROFILES:
+            raise ValueError('Unknown navigation profile')
+        if profile != DEFAULT_PROFILE:
             from rclpy.parameter import Parameter
-            self.set_parameters([Parameter('max_linear', value=.16), Parameter('max_angular', value=.60)])
+            self.set_parameters([Parameter(key, value=PROFILES[profile][key])
+                                 for key in ('max_linear', 'max_angular')])
         self.enabled = False
         self.automatic = False
         guarded_parameters(self, ('max_linear','max_angular'),

@@ -10,8 +10,9 @@ from scipy.ndimage import binary_dilation, distance_transform_edt
 from .motion_safety import FOOTPRINT_RADIUS, OCCUPIED_THRESHOLD, polyline_map_clearance
 from .grid_settings import GRID_DEFAULTS, stage_grid_settings, subdivision_factor
 
-PATH_VALIDATION_SPACING = GRID_DEFAULTS['path_search_spacing']
-PATH_SEARCH_SPACING = stage_grid_settings().get('path_search_spacing', PATH_VALIDATION_SPACING)
+# Keep geometric validation sampling independent of the route search grid.
+PATH_VALIDATION_SPACING = .02
+PATH_SEARCH_SPACING = stage_grid_settings().get('path_search_spacing', GRID_DEFAULTS['path_search_spacing'])
 
 
 def path_samples(points, spacing=PATH_VALIDATION_SPACING/2):

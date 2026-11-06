@@ -306,6 +306,7 @@ class GateIntegration(unittest.TestCase):
         gate = VelocityGate(parameter_overrides=overrides(
             allow_motion=True, output_topic='/test/gated_velocity',
             command_timeout=0.25, heartbeat_timeout=0.25, scan_timeout=0.25,
+            max_linear=.12, max_angular=.4, stop_distance=.12,
             enforce_swept_map=False))
         command_pub = io.create_publisher(Twist,'/project/nav_cmd_vel',10)
         enable_pub = io.create_publisher(Bool,'/project/drive_enabled',LATCHED)

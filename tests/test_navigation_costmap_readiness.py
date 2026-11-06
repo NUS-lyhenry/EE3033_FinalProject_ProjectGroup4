@@ -4,6 +4,7 @@ import math
 import time
 from pathlib import Path
 from types import MethodType, SimpleNamespace as NS
+from uuid import uuid4
 
 ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 
@@ -11,7 +12,7 @@ ROOT=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project'
 def methods(filename, classname):
     tree=ast.parse((ROOT/filename).read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==classname)
-    scope=dict(math=math,time=time,NavigateToPose=NS(Goal=lambda:NS(behavior_tree='')))
+    scope=dict(math=math,time=time,uuid4=uuid4,UUID=NS,NavigateToPose=NS(Goal=lambda:NS(behavior_tree='')))
     exec(compile(ast.Module(body=[n for n in cls.body if isinstance(n,ast.FunctionDef)],
                            type_ignores=[]),str(ROOT/filename),'exec'),scope)
     return scope
@@ -27,7 +28,7 @@ def node(fresh=False):
     cost.fresh=MethodType(COST['fresh'],cost)
     cost.allowed=lambda x,y:False
     n=NS(navigation_map=cost,pending_navigation=None,goal_pending=False,goal_handle=None,
-        nav=NS(server_is_ready=lambda:True,send_goal_async=lambda goal:
+        nav=NS(server_is_ready=lambda:True,send_goal_async=lambda goal, **kwargs:
                (sent.append(goal) or NS(add_done_callback=lambda cb:None))),
         heartbeat=lambda *args:None,publish_status=lambda:None,target_detected=False,
         goal_finished=lambda value:fail.append(value),finish=lambda *args:finished.append(args),
@@ -96,6 +97,7 @@ def test_cancel_drops_deferred_work_before_return_or_stop():
 
 def test_freshness_rejects_missing_stale_and_future_stamps():
     n,_,_,_=node(True)
+    n.navigation_map.stamp=100.0
     assert n.navigation_map.fresh(n.navigation_map.stamp+3.)
     assert not n.navigation_map.fresh(n.navigation_map.stamp+3.01)
     assert not n.navigation_map.fresh(n.navigation_map.stamp-.1)

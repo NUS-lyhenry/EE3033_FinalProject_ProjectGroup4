@@ -21,13 +21,13 @@ def recorded_gap():
     return grid,res,origin,mask
 
 
-@pytest.mark.parametrize('resolution,factor',[(.05,3),(float(np.float32(.05)),3),(.025,2),(.0125,1),(.1,5)])
+@pytest.mark.parametrize('resolution,factor',[(.05,5),(float(np.float32(.05)),5),(.025,3),(.0125,2),(.1,10),(.005,1)])
 def test_search_subdivision_preserves_occupancy_mask_and_existing_finer_maps(resolution,factor):
     grid=np.array([[100,-1],[0,24]])
     mask=np.array([[False,False],[True,False]])
     original=grid.copy()
     refined,res,allowed=path_search_grid(grid,resolution,mask)
-    assert res<=.020000001
+    assert res<=.010000001
     assert refined.shape==(2*factor,2*factor)
     assert np.array_equal(grid,original)
     for row,col in np.ndindex(grid.shape):

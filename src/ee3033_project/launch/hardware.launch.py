@@ -7,6 +7,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from ee3033_project.operator_defaults import DEFAULT_SCAN_RADIUS
 
 
 def setup(context):
@@ -44,7 +45,7 @@ def generate_launch_description():
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('camera', default_value='true'),
-        DeclareLaunchArgument('self_mask_radius', default_value='.14'),
+        DeclareLaunchArgument('self_mask_radius', default_value=str(DEFAULT_SCAN_RADIUS)),
         OpaqueFunction(function=setup),
         Node(package='ee3033_project', executable='scan_resampler', output='screen',
              parameters=[{'self_mask_radius':ParameterValue(LaunchConfiguration('self_mask_radius'),value_type=float)}]),

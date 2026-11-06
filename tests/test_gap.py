@@ -47,7 +47,7 @@ def test_twelve_cm_inflation_is_rejected_for_the_larger_reserved_envelope(phase)
         gap.describe(actual,phase)
 
 
-def test_installed_yaml_defaults_form_a_synchronized_bold_policy():
+def test_installed_yaml_defaults_match_ui_clearance_defaults():
     config=Path(__file__).resolve().parents[1]/'src/ee3033_project/config'
     project=yaml.safe_load((config/'project.yaml').read_text())
     nav=yaml.safe_load((config/'navigation.yaml').read_text())
@@ -71,12 +71,16 @@ def test_installed_yaml_defaults_form_a_synchronized_bold_policy():
     # Source YAML defaults are measured; legacy launch explicitly overrides only
     # profile geometry/rotation while preserving the same soft clearances.
     if GEOMETRY_PROFILE=='legacy':
-        for name in gap.COSTMAPS:
-            actual[name].update(gap.parameter_plan(False,'mission')[name])
-        actual['project_velocity_gate']['rotation_clearance']=gap.TURNING[gap.DEFAULT_AUDACITY]['stop']
+        legacy = gap.parameter_plan(False, 'mission')
+        for name in gap.COSTMAPS + ('project_velocity_gate','project_mission'):
+            actual[name].update(legacy[name])
     result=gap.describe(actual,'mission')
     assert result['audacity']=='bold' and result['synchronized']
     assert result['enabled'] is False
+    assert result['tuning']['defaults'] == result['tuning']['requested'] == gap.MANUAL_DEFAULTS
+    assert result['tuning']['live']['inflation_radius'] == pytest.approx(
+        max(gap.MANUAL_DEFAULTS['inflation_radius'],
+            gap.MANUAL_DEFAULTS['robot_radius'] + gap.MANUAL_DEFAULTS['footprint_padding']))
 
 
 def test_partial_updates_are_never_labelled_verified():

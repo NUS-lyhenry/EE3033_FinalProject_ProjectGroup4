@@ -39,7 +39,8 @@ from .motion_safety import FOOTPRINT_RADIUS
 from .robot_geometry import geometry_metadata
 from .map_io import save_new_map
 from .ros_utils import LATCHED, parameters, set_yaw
-from .trial import LIMITS, PROFILES, parameter_plan, validate_trial
+from .trial import DEFAULT_PROFILE, LIMITS, PROFILES, TRIAL_DEFAULTS, parameter_plan, validate_trial
+from .grid_settings import GRID_DEFAULTS
 from .vision_geometry import validate_mount_settings
 from .assessment import atomic_json
 from . import gap
@@ -62,11 +63,10 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
                                    'stage_camera':True,'model':'/home/ros2_ws/weights/yolo26n.pt',
                                    'software_version':'development','calibration_file':'',
                                    'calibration_directory':'~/ee3033_calibrations','calibration_port':8780,
-                                   'navigation_profile':'original','vision_config':'',
-                                   'mapping_resolution':.05})
+                                   'navigation_profile':DEFAULT_PROFILE,'vision_config':'',
+                                   'mapping_resolution':GRID_DEFAULTS['mapping_resolution']})
         if self.p['phase'] not in ('mapping','mission','calibration'):
             raise ValueError('phase must be mapping or mission')
-        self.default_navigation_profile = self.p['navigation_profile']
         self.lock = threading.Lock()
         self.control_lock = threading.Lock()
         self.trial_fault = None
@@ -576,8 +576,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         current['corner_lookahead_dist'] = original['controller_server']['FollowPath.corner_lookahead_dist']
         current['alignment_angle'] = original['controller_server']['FollowPath.rotate_to_heading_min_angle']
         current['goal_timeout'] = original['project_mapper' if self.p['phase']=='mapping' else 'project_mission']['goal_timeout']
-        defaults = validate_trial(dict(PROFILES[self.default_navigation_profile],
-                                       goal_timeout=75. if self.p['phase']=='mission' else 60.))
+        defaults = dict(TRIAL_DEFAULTS)
         return {'success':True,'values':current,'defaults':defaults,
                 'limits':{key:dict(min=v[0],max=v[1],step=v[2],unit=v[3]) for key,v in LIMITS.items()},
                 'protection':{key:gate[key] for key in ('stop_distance','rotation_clearance')},
@@ -780,7 +779,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         if path=='/api/navigation':
             profile = body.get('profile')
             if set(body) != {'profile'} or profile not in PROFILES:
-                raise ValueError('Select original or fast navigation')
+                raise ValueError('Select standard, original or fast navigation')
             consumer = 'project_mapper' if self.p['phase']=='mapping' else 'project_mission'
             timeout = self.read_trial_nodes()[consumer]['goal_timeout']
             result = self.trial_settings(dict(PROFILES[profile], goal_timeout=timeout))
@@ -840,10 +839,11 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
             if result.success:self.record.start('mapping')
             return dict(success=result.success,message=result.message)
         if path=='/api/gap':
+            if set(body) == {'tuning'}:
+                tuning = gap.validate_tuning(body['tuning'])
+                return self.gap_settings(False, gap.DEFAULT_AUDACITY, dict(gap.MANUAL_DEFAULTS, **tuning))
             if self.stage:
-                if set(body) != {'tuning'}:
-                    raise ValueError('Provide manual clearance settings')
-                return self.gap_settings(False,gap.DEFAULT_AUDACITY,gap.validate_tuning(body['tuning']))
+                raise ValueError('Provide manual clearance settings')
             if not body or set(body)-{'enabled','audacity','tuning'}:
                 raise ValueError('Provide narrow-gap blocking, an audacity preset or clearance settings')
             if 'enabled' in body and type(body['enabled']) is not bool:

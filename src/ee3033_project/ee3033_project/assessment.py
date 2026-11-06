@@ -17,6 +17,8 @@ import time
 import yaml
 from .mapping_settings import DEFAULT_SLAM_SETTINGS, validate_slam_settings
 from .grid_settings import GRID_DEFAULTS, STAGE_GRID_ENV
+from .operator_defaults import DEFAULT_REVERSE_RECOVERY, DEFAULT_SCAN_RADIUS, DEFAULT_TARGET_CLASS, DEFAULT_TARGET_SIGMA
+from .trial import DEFAULT_PROFILE
 
 ACTIVE = frozenset(('PLANNING','SEARCHING','OBSERVING','CANCELING','RETURNING','TURNING',
                     'VERIFYING','VERIFYING_HOME','MAPPING','SAVING','CALIBRATING','ACQUIRING','LOCALIZING','RECOVERING','RESETTING'))
@@ -251,10 +253,10 @@ def require_current_mapping_map(phase, running, saved_path, selected_path):
 
 
 def mission_options(values):
-    target = values.get('target_class','cup')
+    target = values.get('target_class',DEFAULT_TARGET_CLASS)
     method = values.get('localization_method','hybrid')
     tolerance = values.get('return_tolerance',.20)
-    sigma = values.get('preferred_target_sigma',.10)
+    sigma = values.get('preferred_target_sigma',DEFAULT_TARGET_SIGMA)
     enable_ab_maneuver = values.get('enable_ab_maneuver',False)
     acquisition_seconds = values.get('acquisition_seconds',90.)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z0-9][a-z0-9 ._-]{0,79}',target):
@@ -290,10 +292,10 @@ class StageProcess:
         self.hardware = hardware or dict(base=True,lidar=True,camera=True)
         self.model = model
         self.calibration_file = calibration_file
-        self.navigation_profile = 'original'
-        self.scan_self_mask_radius = .14
-        self.allow_reverse_recovery = True
-        self.mapping_resolution = .05
+        self.navigation_profile = DEFAULT_PROFILE
+        self.scan_self_mask_radius = DEFAULT_SCAN_RADIUS
+        self.allow_reverse_recovery = DEFAULT_REVERSE_RECOVERY
+        self.mapping_resolution = GRID_DEFAULTS['mapping_resolution']
         self.grid_settings = dict(GRID_DEFAULTS)
         self.active_grid_settings = None
         self.slam_settings = dict(DEFAULT_SLAM_SETTINGS)

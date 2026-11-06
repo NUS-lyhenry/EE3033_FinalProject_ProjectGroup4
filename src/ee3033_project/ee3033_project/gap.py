@@ -1,7 +1,7 @@
 """Temporary narrow-passage policy; never changes sensing or the physical floor."""
 import math
 
-from .robot_geometry import (DEFAULT_STOP_DISTANCE, NAVIGATION_RADIUS, ROBOT_WIDTH,
+from .robot_geometry import (DEFAULT_STOP_DISTANCE, GEOMETRY_PROFILE, NAVIGATION_RADIUS, ROBOT_WIDTH,
                              FOOTPRINT_PADDING, FOOTPRINT_RADIUS, MIN_CONFIGURED_COLLISION_RADIUS, ROTATION_CLEARANCES,
                              geometry_metadata)
 
@@ -15,7 +15,6 @@ AUDACITY = {
     'bold': ('Bold', 0.04),
 }
 DEFAULT_AUDACITY = 'bold'
-DEFAULT_CLEARANCE = AUDACITY[DEFAULT_AUDACITY][1]
 DEFAULT_INFLATION_RADIUS = 0.12
 TURNING = {level:dict(stop=distance) for level,distance in ROTATION_CLEARANCES.items()}
 PROGRESS_PLUGIN = 'nav2_controller::SimpleProgressChecker'
@@ -25,7 +24,7 @@ TUNING_LIMITS = {
     'footprint_radius': (MIN_CONFIGURED_COLLISION_RADIUS, .30),
     'footprint_padding': (FOOTPRINT_PADDING, .10),
     'inflation_radius': (round(BASE_RADIUS * .60 + FOOTPRINT_PADDING, 6), .60),
-    'clearance': (DEFAULT_CLEARANCE, .50),
+    'clearance': (AUDACITY[DEFAULT_AUDACITY][1], .50),
     'stop_distance': (round(DEFAULT_STOP_DISTANCE * .60, 6), .50),
     'rotation_clearance': (round(TURNING[DEFAULT_AUDACITY]['stop'] * .60, 6), .50),
 }
@@ -54,6 +53,13 @@ def tuning_defaults(audacity):
                 footprint_padding=FOOTPRINT_PADDING,
                 inflation_radius=DEFAULT_INFLATION_RADIUS, clearance=AUDACITY[audacity][1],
                 stop_distance=DEFAULT_STOP_DISTANCE, rotation_clearance=TURNING[audacity]['stop'])
+
+
+MANUAL_DEFAULTS = (dict(robot_radius=.14, footprint_radius=.07, footprint_padding=.01,
+                        inflation_radius=.14, clearance=.12, stop_distance=.14,
+                        rotation_clearance=.14) if GEOMETRY_PROFILE == 'measured'
+                   else tuning_defaults(DEFAULT_AUDACITY))
+DEFAULT_CLEARANCE = MANUAL_DEFAULTS['clearance']
 
 
 def parameter_plan(enabled, phase, audacity=DEFAULT_AUDACITY, tuning=None):
@@ -104,7 +110,7 @@ def describe(actual, phase, policy=None):
         if (p['footprint'].replace(' ', '') not in ('', '[]')
                 or p['inflation_layer.enabled'] is not True
                 or p['footprint_padding'] < FOOTPRINT_PADDING
-                or p['inflation_layer.inflation_radius'] < p['robot_radius'] + p['footprint_padding']):
+                or p['inflation_layer.inflation_radius'] + 1e-9 < p['robot_radius'] + p['footprint_padding']):
             raise ValueError(f'{name}: unsupported footprint/inflation configuration')
     if actual['controller_server']['progress_checker.plugin'] != PROGRESS_PLUGIN:
         raise ValueError('Reload navigation with the original translation progress checker before configuring audacity')
@@ -113,7 +119,10 @@ def describe(actual, phase, policy=None):
                    for n, entries in parameter_plan(enabled, phase, audacity, tuning).items()
                    for k, v in entries.items())
     overrides = policy.get('tuning', {}) if policy else {}
-    if overrides:
+    manual_default = policy is None and matches(False, DEFAULT_AUDACITY, MANUAL_DEFAULTS)
+    if manual_default:
+        match = (False, DEFAULT_AUDACITY)
+    elif overrides:
         enabled, level = policy['enabled'], policy['audacity']
         match = (enabled, level) if matches(enabled, level, overrides) else (None, None)
     else:
@@ -124,7 +133,7 @@ def describe(actual, phase, policy=None):
     consumer = 'project_mapper' if phase == 'mapping' else 'project_mission'
     options = []
     for level, (label, _) in AUDACITY.items():
-        plan = parameter_plan(bool(enabled), phase, level, overrides)
+        plan = parameter_plan(bool(enabled), phase, level, MANUAL_DEFAULTS if manual_default else overrides)
         clearance = plan[consumer]['clearance']
         radius = plan[COSTMAPS[0]]['robot_radius']
         gate = plan['project_velocity_gate']
@@ -132,7 +141,8 @@ def describe(actual, phase, policy=None):
                             turn_stop_distance=gate['rotation_clearance'],
                             nominal_min_opening=2*max(clearance, radius+padding, FOOTPRINT_RADIUS,
                                                      gate['footprint_radius'])))
-    defaults = tuning_defaults(audacity or DEFAULT_AUDACITY)
+    requested = (dict(MANUAL_DEFAULTS) if manual_default else
+                 dict(tuning_defaults(audacity or DEFAULT_AUDACITY), **overrides))
     costmap = actual[COSTMAPS[0]]
     live = dict(actual['project_velocity_gate'], clearance=actual[consumer]['clearance'],
                 robot_radius=costmap['robot_radius'], footprint_padding=costmap['footprint_padding'],
@@ -144,7 +154,8 @@ def describe(actual, phase, policy=None):
             'nominal_min_opening': 2 * RESERVED_RADIUS,
             'effective_min_opening': next((p['nominal_min_opening'] for p in options
                                             if p['id']==audacity), None),
-            'tuning': {'defaults': defaults, 'overrides': overrides, 'live': live,
+            'tuning': {'defaults': dict(MANUAL_DEFAULTS), 'overrides': overrides,
+                       'requested': requested, 'live': live,
                        'limits': {key: {'min': low, 'max': high} for key, (low, high) in TUNING_LIMITS.items()}},
             'nodes': actual, 'temporary': True}
 

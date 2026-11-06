@@ -5,10 +5,13 @@ map-frame position reporting and verified return to the recorded start.
 
 ## Deployed release
 
-`manual_clearance_20261105_89a6af1ef1` adds manual navigation clearance,
-a separate near-wall corner lookahead and saved map, search and path grid settings.
-The [release manifest](release-manifest.json) fingerprints the 100 production
-files verified on the robot.
+`mission_return_recovery_20261105_34eb2162cc` adds bounded retry at each distinct
+return blockage. The [release manifest](release-manifest.json) fingerprints the
+deployed source, before this branch updates the defaults for new sessions.
+
+Fresh sessions use the on-site settings. The standard speed caps are
+0.16 m/s and 0.30 rad/s, the SLAM map cell size is 0.03 m, and recovery reverse
+starts disabled. Saved operator settings take precedence over the new defaults.
 
 - Adjust Nav2 planning radius, padding and inflation independently of collision protection.
 - Configure the measured-profile collision protection radius from 0.07 to 0.30 m.

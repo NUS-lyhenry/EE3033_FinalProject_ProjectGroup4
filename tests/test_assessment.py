@@ -99,8 +99,8 @@ def test_mission_setup_validates_real_settings_not_shell_fragments(values):
 
 def test_valid_floor_target_setup_uses_explicit_projection():
     assert mission_options({'localization_method':'ground_plane','return_tolerance':.1})=={
-        'target_class':'cup','localization_method':'ground_plane','return_tolerance':.1,'preferred_target_sigma':.1,
-        'enable_ab_maneuver':False,'acquisition_seconds':90.0}
+        'target_class':'bottle','localization_method':'ground_plane','return_tolerance':.1,'preferred_target_sigma':.23,
+        'enable_ab_maneuver':False,'acquisition_seconds':90.0,'bottle_min_range':.35,'bottle_max_range':.95}
     assert mission_options({'preferred_target_sigma':.25})['preferred_target_sigma']==.25
     assert mission_options({'enable_ab_maneuver':True,'acquisition_seconds':120})['enable_ab_maneuver'] is True
 

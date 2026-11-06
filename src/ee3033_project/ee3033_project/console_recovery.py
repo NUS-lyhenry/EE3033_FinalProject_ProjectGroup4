@@ -8,6 +8,7 @@ from rcl_interfaces.msg import Parameter as ParameterMessage
 from rcl_interfaces.srv import GetParameters
 
 from .assessment import ACTIVE, atomic_json
+from .operator_defaults import DEFAULT_REVERSE_RECOVERY
 
 
 class RecoverySettings:
@@ -21,7 +22,7 @@ class RecoverySettings:
 
     def init_recovery(self):
         self.recovery_path=Path(self.p['session_directory']).expanduser()/'recovery.json'
-        self.recovery_value=True
+        self.recovery_value=DEFAULT_REVERSE_RECOVERY
         self.recovery_live=None
         self.recovery_read_time=-math.inf
         self.recovery_fault=None

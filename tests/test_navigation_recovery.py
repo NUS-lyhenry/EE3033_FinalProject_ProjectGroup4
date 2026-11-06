@@ -216,9 +216,11 @@ def test_reverse_gate_requires_fresh_localization_even_when_map_is_clear():
 def mission_callbacks():
     import json
     import time
+    from uuid import uuid4
     source=Path(__file__).parents[1]/'src/ee3033_project/ee3033_project/mission.py'
     cls=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.ClassDef) and n.name=='Mission')
     env=dict(math=math,time=time,json=json,Path=Path,
+             uuid4=uuid4, UUID=NS,
              NavigateToPose=NS(Goal=lambda:NS(behavior_tree='')),
              quaternion_yaw=quaternion_yaw,angle_difference=lambda a,b:math.atan2(math.sin(a-b),math.cos(a-b)))
     exec(compile(ast.Module(body=[n for n in cls.body if isinstance(n,ast.FunctionDef)],
@@ -314,7 +316,7 @@ def test_mission_home_heading_requirement_selects_the_correct_navigation_tree(mo
     monkeypatch.setitem(sys.modules,'ament_index_python.packages',packages)
     sent=[]
     node=NS(goal_pending=False,goal_handle=None,nav=NS(server_is_ready=lambda:True,
-                send_goal_async=lambda goal:(sent.append(goal) or NS(add_done_callback=lambda cb:None))),
+                send_goal_async=lambda goal, **kwargs:(sent.append(goal) or NS(add_done_callback=lambda cb:None))),
             defer_for_costmap=lambda *a:False,navigation_map=NS(allowed=lambda *a:True),
             goal_serial=0,pose=lambda:(0.,0.,0.),goal_requires_translation=lambda *a:True,
             localization_motion_log=[],acquisition=NS(last_goal_reason='Observation',last_goal_action=None),

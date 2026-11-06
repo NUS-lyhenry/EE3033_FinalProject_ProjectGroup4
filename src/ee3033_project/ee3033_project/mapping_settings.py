@@ -1,7 +1,7 @@
 """Validated settings loaded when a new SLAM mapping process starts."""
 import math
 
-DEFAULT_SLAM_SETTINGS=dict(occupancy_threshold=.10,minimum_pass_through=2)
+DEFAULT_SLAM_SETTINGS=dict(occupancy_threshold=.15,minimum_pass_through=2)
 # The operator/API label is descriptive; Humble's actual ROS parameter is shorter.
 SLAM_NATIVE_NAMES=dict(occupancy_threshold='occupancy_threshold',minimum_pass_through='min_pass_through')
 

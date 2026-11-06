@@ -11,6 +11,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from uuid import uuid4
 
 import numpy as np
 from action_msgs.msg import GoalStatus
@@ -27,6 +28,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 from rcl_interfaces.msg import SetParametersResult
 from tf2_ros import Buffer, TransformListener, TransformException
+from unique_identifier_msgs.msg import UUID
 from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import angle_difference, quaternion_yaw, stamp_seconds
@@ -42,18 +44,21 @@ from .target_estimate import map_signature
 from .navigation_costmap import NavigationCostmap
 from .frame_journal import FrameJournal
 from .frame_coverage import exposure_view
-from .trial import LIMITS
+from .trial import DEFAULT_PROFILE, LIMITS, PROFILES, TRIAL_DEFAULTS
+from .operator_defaults import DEFAULT_TARGET_CLASS, DEFAULT_TARGET_SIGMA
 
 
 class Mission(Node):
     pending_navigation = None
+    return_retry_pending = None
+    return_retry_distance = .20
     ACTIVE = {'PLANNING', 'SEARCHING', 'OBSERVING', 'CANCELING', 'RETURNING', 'VERIFYING', 'ACQUIRING', 'LOCALIZING', 'RESETTING'}
 
     def __init__(self, **kwargs):
         super().__init__('project_mission', **kwargs)
         self.p = parameters(self, {
             'map_frame': 'map', 'base_frame': 'base_footprint', 'allow_motion': False,
-            'target_class': 'cup', 'clearance': DEFAULT_CLEARANCE,
+            'target_class': DEFAULT_TARGET_CLASS, 'clearance': DEFAULT_CLEARANCE,
             'viewpoint_spacing': GRID_DEFAULTS['viewpoint_spacing'],
             'coverage_spacing': GRID_DEFAULTS['coverage_spacing'],
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
@@ -61,8 +66,8 @@ class Mission(Node):
             'candidate_limit': 1000, 'map_partial': False,
             'search_strategy': 'greedy', 'adaptive_margin': 0.08,
             'observe_seconds': 3.0, 'min_observation_frames': 3,
-            'search_linear_speed': 0.12, 'search_angular_speed': 0.4,
-            'max_observation_retries': 2, 'goal_timeout': 75.0, 'mission_timeout': 900.0,
+            'search_linear_speed': TRIAL_DEFAULTS['max_linear'], 'search_angular_speed': TRIAL_DEFAULTS['max_angular'],
+            'max_observation_retries': 2, 'goal_timeout': TRIAL_DEFAULTS['goal_timeout'], 'mission_timeout': 900.0,
             'cancel_timeout': 10.0, 'accept_timeout': 8.0, 'planning_timeout': 45.0,
             'return_tolerance': 0.20, 'return_heading_required': False,
             'verify_seconds': 0.5, 'max_stationary_speed': 0.035,
@@ -73,10 +78,10 @@ class Mission(Node):
             'max_xy_variance': 0.16, 'max_yaw_variance': 0.36,
             'sensor_timeout': 1.0, 'perception_timeout': 3.0, 'tf_timeout': 1.0,
             # Historical name retained: a preferred variance, not a rejection cap.
-            'max_target_variance': 0.01, 'max_target_age': 2.0,
+            'max_target_variance': DEFAULT_TARGET_SIGMA ** 2, 'max_target_age': 2.0,
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
             'min_observe_seconds': .8, 'acquisition_seconds': 90.,
-            'acquisition_steps': 5, 'navigation_profile': 'original',
+            'acquisition_steps': 5, 'navigation_profile': DEFAULT_PROFILE,
             'reacquisition_timeout': 10.0, 'localization_stall_timeout': 10.0,
             'max_search_restarts': 2, 'filter_reset_timeout': 3.0,
             'enable_ab_maneuver': False,
@@ -102,13 +107,15 @@ class Mission(Node):
             raise ValueError('search_strategy must be greedy, lookahead or adaptive')
         if not isinstance(self.p['adaptive_margin'], (int, float)) or not 0. <= self.p['adaptive_margin'] <= 1.:
             raise ValueError('adaptive_margin must be between 0 and 1')
-        if self.p['navigation_profile'] == 'fast':
+        profile = self.p['navigation_profile']
+        if profile not in PROFILES:
+            raise ValueError('Unknown navigation profile')
+        if profile != DEFAULT_PROFILE:
             from rclpy.parameter import Parameter
-            self.set_parameters([Parameter('search_linear_speed', value=.16),
-                                 Parameter('search_angular_speed', value=.60)])
-            self.p.update(search_linear_speed=.16, search_angular_speed=.60)
-        elif self.p['navigation_profile'] != 'original':
-            raise ValueError('navigation_profile must be original or fast')
+            values = dict(search_linear_speed=PROFILES[profile]['max_linear'],
+                          search_angular_speed=PROFILES[profile]['max_angular'])
+            self.set_parameters([Parameter(key, value=value) for key, value in values.items()])
+            self.p.update(values)
         self.state, self.reason = 'WAITING', 'Call /project/start after localization'
         self.home = self.target = self.map = self.planner = None
         self.operator_return_requested=False
@@ -145,6 +152,11 @@ class Mission(Node):
         self.goal_pending_serial = None
         self.goal_serial = 0
         self.odom_pose = None
+        self.odom_frame = None
+        self.return_retry_sites = []
+        self.return_retry_odom = None
+        self.return_failure_status = None
+        self.return_goal_id = None
         self.goal_translation = False
         self.navigation_recoveries = []
         self.navigation_status = {}
@@ -537,15 +549,16 @@ class Mission(Node):
             self.odom_time = time.monotonic()
             op=msg.pose.pose.position
             self.odom_pose=(op.x,op.y,quaternion_yaw(msg.pose.pose.orientation))
+            self.odom_frame = (msg.header.frame_id, msg.child_frame_id)
             self.linear_speed,self.angular_speed = math.hypot(v.x,v.y),abs(w.z)
-            if self.state == 'VERIFYING':
+            if self.state == 'VERIFYING' or self.return_retry_pending is not None:
                 p,q = msg.pose.pose.position,msg.pose.pose.orientation
                 valid = (all(math.isfinite(a) for a in (p.x,p.y,q.x,q.y,q.z,q.w))
                          and abs(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w-1.)<.05
                          and bool(msg.header.frame_id) and bool(msg.child_frame_id))
                 if valid and stamp>=self.verify_after and self.zero_command_fresh():
                     self.stop_window.add(stamp,p.x,p.y,quaternion_yaw(q),self.linear_speed,
-                                         self.angular_speed,(msg.header.frame_id,msg.child_frame_id))
+                                         self.angular_speed,self.odom_frame)
                 else:self.stop_window.reset()
         else:self.stop_window.reset()
 
@@ -556,7 +569,8 @@ class Mission(Node):
         values=(msg.linear.x,msg.linear.y,msg.linear.z,msg.angular.x,msg.angular.y,msg.angular.z)
         self.command_time=time.monotonic()
         self.command_zero=all(math.isfinite(v) and abs(v)<=1e-5 for v in values)
-        if not self.command_zero and self.state=='VERIFYING':self.stop_window.reset()
+        if not self.command_zero and (self.state == 'VERIFYING' or self.return_retry_pending is not None):
+            self.stop_window.reset()
 
     def on_perception(self, msg):
         try:
@@ -720,6 +734,8 @@ class Mission(Node):
         self.navigation_recoveries=[]
         self.navigation_status={}
         self.navigation_recovery_seen=set()
+        self.return_retry_sites = []
+        self.return_retry_odom = None
         self.goal_requested_stamp=0.
         self.localization_motion_log=[]
         self.acquisition_retry_after = 0.
@@ -807,6 +823,8 @@ class Mission(Node):
         if not self.started:
             self.started=time.monotonic();self.started_stamp=self.get_clock().now().nanoseconds*1e-9
         self.operator_return_requested=True
+        self.return_retry_sites = []
+        self.return_retry_odom = None
         self.finished_at=0.;self.return_verified=False
         self.termination_reason=self.internal_error=None
         self.search_stop_reason='Operator requested return to home'
@@ -885,6 +903,7 @@ class Mission(Node):
                 goal=[pose.pose.position.x,pose.pose.position.y,quaternion_yaw(pose.pose.orientation)],
                 translation=self.goal_translation,reason=self.acquisition.last_goal_reason))
         self.navigation_status={}
+        self.return_failure_status = None
         self.goal_requested_stamp=self.get_clock().now().nanoseconds*1e-9
         self.goal_started = time.monotonic()
         goal = NavigateToPose.Goal()
@@ -899,13 +918,19 @@ class Mission(Node):
             name=('navigate_approach.xml' if self.acquisition.last_goal_action=='approach'
                   else 'navigate_observation.xml') if kind=='acquire' else 'navigate_home.xml'
             goal.behavior_tree=str(Path(get_package_share_directory('ee3033_project'))/'behavior_trees'/name)
+        home_reason = 'Retrying return from current position' if retry else 'Returning to recorded start'
         self.set_state('RETURNING' if kind == 'home' else 'ACQUIRING' if kind == 'acquire' else 'SEARCHING',
-                       'Returning to recorded start' if kind == 'home'
+                       home_reason if kind == 'home'
                        else self.acquisition.last_goal_reason or 'Changing target observation' if kind=='acquire'
                        else f'Viewpoint {self.index+1}/{len(self.route)}')
         # Keep drive disabled until Nav2 explicitly accepts this goal.
         self.heartbeat(False, kind in ('search', 'search_scan'))
-        future = self.nav.send_goal_async(goal)
+        if kind == 'home':
+            goal_uuid = uuid4()
+            self.return_goal_id = goal_uuid.hex
+            future = self.nav.send_goal_async(goal, goal_uuid=UUID(uuid=list(goal_uuid.bytes)))
+        else:
+            future = self.nav.send_goal_async(goal)
         future.add_done_callback(lambda f: self.goal_response(f, serial))
 
     def goal_requires_translation(self, pose, kind, retry, current):
@@ -958,7 +983,9 @@ class Mission(Node):
             handle.cancel_goal_async()
 
     def goal_result(self, future, serial):
+        completed_handle = None
         if self.goal_handle_serial == serial:
+            completed_handle = self.goal_handle
             self.goal_handle = None
             self.goal_handle_serial = None
         if self.goal_pending_serial == serial:
@@ -972,10 +999,18 @@ class Mission(Node):
         if self.state not in ('SEARCHING', 'RETURNING', 'ACQUIRING'):
             return
         try:
-            success = future.result().status == GoalStatus.STATUS_SUCCEEDED
+            status = future.result().status
         except Exception:
-            success = False
-        self.goal_finished(success)
+            status = None
+        if self.state == 'RETURNING' and status == GoalStatus.STATUS_ABORTED and completed_handle is not None:
+            goal_id = bytes(completed_handle.goal_id.uuid).hex()
+            self.heartbeat(False, False)
+            self.stop_window.reset()
+            self.verify_after = self.get_clock().now().nanoseconds * 1e-9
+            self.return_retry_pending = (goal_id, time.monotonic())
+            self.set_state('RETURNING', 'Checking navigation failure and stationary stop before return retry')
+        else:
+            self.goal_finished(status == GoalStatus.STATUS_SUCCEEDED)
 
     def goal_finished(self, success):
         if self.goal_kind == 'acquire':
@@ -1480,6 +1515,7 @@ class Mission(Node):
 
     def cancel(self, next_state, reason):
         self.pending_navigation = None
+        self.return_retry_pending = None
         self.heartbeat(False, False)
         self.cancel_next = next_state
         if self.goal_pending or self.goal_handle is not None:
@@ -1566,17 +1602,30 @@ class Mission(Node):
                         if self.state!='CANCELING' or self.cancel_next!='STOPPED':
                             self.cancel('FAILED',self.navigation_lock_reason)
                 return
-            if self.state not in ('SEARCHING','RETURNING','ACQUIRING') or self.goal_handle is None:
+            if self.state not in ('SEARCHING','RETURNING','ACQUIRING'):
                 return
-            expected=bytes(self.goal_handle.goal_id.uuid).hex()
+            pending = self.return_retry_pending if self.state == 'RETURNING' else None
+            if pending is not None:
+                expected = pending[0]
+                if data.get('stage') != 'FAILED':
+                    return
+            elif self.goal_handle is not None and self.goal_handle_serial == self.goal_serial:
+                expected = bytes(self.goal_handle.goal_id.uuid).hex()
+            elif (self.state == 'RETURNING' and self.goal_pending_serial == self.goal_serial
+                    and data.get('stage') == 'FAILED'):
+                expected = self.return_goal_id
+            else:
+                return
             if (not self.started_stamp or not math.isfinite(stamp) or not 0<=now-stamp<=2.
                     or stamp<max(self.started_stamp,self.goal_requested_stamp)
-                    or goal_id!=expected or self.goal_handle_serial!=self.goal_serial):
+                    or goal_id!=expected):
                 return
             count=data.get('recovery_count',0)
             if type(count) is not int or not 0<=count<=2:
                 return
             self.navigation_status=dict(data)
+            if self.state == 'RETURNING' and data.get('stage') == 'FAILED':
+                self.return_failure_status = dict(data, goal_id=goal_id)
             key=(goal_id,count)
             if count and key not in self.navigation_recovery_seen:
                 self.navigation_recovery_seen.add(key)
@@ -1611,7 +1660,51 @@ class Mission(Node):
         if not self.report_best_target():
             self.cancel('RETURN', reason+'; returning after confirmed detection without coordinates')
 
-    def begin_return(self):
+    def advance_return_retry(self, now):
+        goal_id, waiting_since = self.return_retry_pending
+        failure = self.return_failure_status
+        if not failure or failure['goal_id'] != goal_id:
+            if now - waiting_since >= 2.:
+                self.finish('FAILED', 'Return navigation failed: terminal recovery status unavailable')
+            return
+        stop = failure.get('stop_confirmation')
+        if (failure.get('return_retryable') is not True or failure.get('locked') is not False
+                or not isinstance(stop, dict)
+                or stop.get('raw_terminal_confirmed') is not True
+                or stop.get('bounded_stop_confirmed') is not True):
+            reason = failure.get('reason')
+            self.finish('FAILED', 'Return navigation failed: ' + (
+                reason if isinstance(reason, str) and reason else 'Retry not authorized'))
+            return
+        if not self.navigation_map.fresh(now):
+            self.finish('FAILED', 'Return retry stopped: navigation costmap unavailable or stale')
+            return
+        stationary = self.stop_window.evaluate(self.get_clock().now().nanoseconds * 1e-9)
+        if (not stationary['verified'] or stationary['heading_span'] > self.p['stationary_heading_span']
+                or not self.zero_command_fresh()):
+            if now - waiting_since >= self.p['verify_timeout']:
+                self.finish('FAILED', 'Return retry stopped: stationary zero-velocity hold not verified')
+            return
+        current = self.pose()
+        if current is None or self.odom_pose is None or not all(math.isfinite(v) for v in (*current, *self.odom_pose)):
+            self.finish('FAILED', 'Return retry stopped: current position unavailable')
+            return
+        site = current[:2]
+        odom = self.odom_pose[:2]
+        if any(math.dist(site, previous) < self.return_retry_distance for previous in self.return_retry_sites):
+            self.finish('FAILED', 'Return retry stopped: already retried near this position')
+            return
+        if self.return_retry_odom is not None:
+            previous_odom, frame = self.return_retry_odom
+            if self.odom_frame != frame or math.dist(odom, previous_odom) < self.return_retry_distance:
+                self.finish('FAILED', 'Return retry stopped: insufficient translation since the previous retry')
+                return
+        self.return_retry_sites.append(site)
+        self.return_retry_odom = (odom, self.odom_frame)
+        self.return_retry_pending = None
+        self.begin_return(retry=True)
+
+    def begin_return(self, retry=False):
         self.heartbeat(False, False)
         if self.home is None:
             self.finish('FAILED', 'No recorded home pose')
@@ -1621,9 +1714,12 @@ class Mission(Node):
             self.finish('FAILED', error)
             return
         current = self.pose()
+        if current is None or not all(math.isfinite(v) for v in current):
+            self.finish('FAILED', 'Return navigation stopped: current position unavailable')
+            return
         # Orientation is optional in the assessment. Face current direction at home.
         yaw = self.home[2] if self.p['return_heading_required'] else current[2]
-        self.send_goal(self.make_pose(self.home[0], self.home[1], yaw), 'home')
+        self.send_goal(self.make_pose(self.home[0], self.home[1], yaw), 'home', retry=retry)
 
     def finish(self, state, reason):
         if state=='FAILED':
@@ -1634,6 +1730,7 @@ class Mission(Node):
         if getattr(self,'localization_finished_at',None) is None:
             self.localization_finished_at=time.monotonic()
         self.pending_navigation = None
+        self.return_retry_pending = None
         self.plan_cancel.set()
         self.heartbeat(False, False)
         self.finished_at = time.monotonic()
@@ -1789,6 +1886,8 @@ class Mission(Node):
                         self.finish_localization(error)
                     else:
                         self.cancel('FAILED', error)
+                elif self.state == 'RETURNING' and self.return_retry_pending is not None:
+                    self.advance_return_retry(now)
                 elif self.state == 'RESETTING':
                     if getattr(self,'filter_epoch_ack',False):
                         self.next_viewpoint()

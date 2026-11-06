@@ -2,12 +2,12 @@ project_mission:
   ros__parameters:
     map_frame: map
     base_frame: base_footprint
-    target_class: cup  # Overridden by the target_class launch argument.
+    target_class: bottle  # Overridden by the target_class launch argument.
     allow_motion: false
-    clearance: 0.04
+    clearance: 0.12
     search_strategy: greedy  # Immediate unseen coverage per travel/turn/observation second.
     adaptive_margin: 0.08
-    viewpoint_spacing: 0.65
+    viewpoint_spacing: 0.55
     camera_range: 2.0
     camera_fov: 1.35  # Conservative horizontal field of view, radians.
     viewpoint_headings: 6
@@ -18,9 +18,9 @@ project_mission:
     observe_seconds: 3.0
     min_observation_frames: 3
     max_observation_retries: 2
-    search_linear_speed: 0.12  # Estimated travel cost, not a movement command.
-    search_angular_speed: 0.40
-    goal_timeout: 75.0
+    search_linear_speed: 0.16  # Estimated travel cost, not a movement command.
+    search_angular_speed: 0.30
+    goal_timeout: 90.0
     mission_timeout: 900.0
     return_tolerance: 0.20  # Replace with examiner's specified tolerance.
     return_heading_required: false
@@ -33,7 +33,7 @@ project_mission:
     stationary_command_timeout: 0.30  # Fresh zero final commands are required.
     max_xy_variance: 0.16
     max_yaw_variance: 0.36
-    max_target_variance: 0.01  # Soft target precision goal (0.10 m sigma), not a report veto.
+    max_target_variance: 0.0529  # Soft target precision goal (0.23 m sigma), not a report veto.
     sensor_timeout: 1.0
     perception_timeout: 3.0
     localize_wait_seconds: 2.0  # Allow exposure-time motion window + distinct frames.
@@ -52,7 +52,7 @@ project_mission:
 project_perception:
   ros__parameters:
     model: /home/ros2_ws/weights/yolo26n.pt
-    target_class: cup
+    target_class: bottle
     confidence: 0.60
     image_topic: /image_raw
     camera_info_topic: /camera_info
@@ -94,12 +94,12 @@ project_velocity_gate:
     command_timeout: 0.5
     heartbeat_timeout: 0.7
     scan_timeout: 0.7
-    max_linear: 0.12
-    max_angular: 0.40
-    stop_distance: 0.12
-    rotation_clearance: 0.116801
+    max_linear: 0.16
+    max_angular: 0.30
+    stop_distance: 0.14
+    rotation_clearance: 0.14
     enforce_swept_map: true
     swept_horizon: 1.0
     braking_deceleration: 0.30
-    footprint_radius: 0.116801
+    footprint_radius: 0.07
     reverse_radius: 0.116801
