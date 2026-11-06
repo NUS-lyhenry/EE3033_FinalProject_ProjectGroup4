@@ -779,7 +779,7 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
         if path=='/api/navigation':
             profile = body.get('profile')
             if set(body) != {'profile'} or profile not in PROFILES:
-                raise ValueError('Select original or fast navigation')
+                raise ValueError('Select standard, original or fast navigation')
             consumer = 'project_mapper' if self.p['phase']=='mapping' else 'project_mission'
             timeout = self.read_trial_nodes()[consumer]['goal_timeout']
             result = self.trial_settings(dict(PROFILES[profile], goal_timeout=timeout))
@@ -839,11 +839,11 @@ class Console(AttitudeSettings, ScanFilterSettings, SlamSettings, RecoverySettin
             if result.success:self.record.start('mapping')
             return dict(success=result.success,message=result.message)
         if path=='/api/gap':
-            if self.stage:
-                if set(body) != {'tuning'}:
-                    raise ValueError('Provide manual clearance settings')
+            if set(body) == {'tuning'}:
                 tuning = gap.validate_tuning(body['tuning'])
                 return self.gap_settings(False, gap.DEFAULT_AUDACITY, dict(gap.MANUAL_DEFAULTS, **tuning))
+            if self.stage:
+                raise ValueError('Provide manual clearance settings')
             if not body or set(body)-{'enabled','audacity','tuning'}:
                 raise ValueError('Provide narrow-gap blocking, an audacity preset or clearance settings')
             if 'enabled' in body and type(body['enabled']) is not bool:

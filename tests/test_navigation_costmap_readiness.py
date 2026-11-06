@@ -97,6 +97,7 @@ def test_cancel_drops_deferred_work_before_return_or_stop():
 
 def test_freshness_rejects_missing_stale_and_future_stamps():
     n,_,_,_=node(True)
+    n.navigation_map.stamp=100.0
     assert n.navigation_map.fresh(n.navigation_map.stamp+3.)
     assert not n.navigation_map.fresh(n.navigation_map.stamp+3.01)
     assert not n.navigation_map.fresh(n.navigation_map.stamp-.1)

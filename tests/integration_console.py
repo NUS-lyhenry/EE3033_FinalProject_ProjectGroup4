@@ -20,7 +20,7 @@ from ee3033_project.console import Console
 from ee3033_project.ros_utils import LATCHED
 from ee3033_project.mapper import Mapper
 from ee3033_project.velocity_gate import VelocityGate
-from ee3033_project.trial import parameter_plan
+from ee3033_project.trial import TRIAL_DEFAULTS, parameter_plan
 from ee3033_project import gap
 from ee3033_project.mission import Mission
 
@@ -59,11 +59,11 @@ class ConsoleTests(unittest.TestCase):
         mission=Mission()
         gate=VelocityGate(parameter_overrides=[Parameter('output_topic',value='/test/profile_output')])
         controller=Node('controller_server')
-        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=75.)
+        initial=dict(TRIAL_DEFAULTS)
         for key,value in parameter_plan(initial,'mission')['controller_server'].items():
             controller.declare_parameter(key,value)
         supervisor=Node('project_navigation_supervisor')
-        supervisor.declare_parameter('goal_timeout',75.)
+        supervisor.declare_parameter('goal_timeout',initial['goal_timeout'])
         nodes=(console,mission,gate,controller,supervisor)
         executor=MultiThreadedExecutor(num_threads=4)
         for node in nodes:executor.add_node(node)
@@ -77,7 +77,7 @@ class ConsoleTests(unittest.TestCase):
             while 'Mission' not in console.freshness and time.monotonic()<deadline:time.sleep(.05)
             result=post('navigation',{'profile':'fast'})
             self.assertTrue(result['synchronized'])
-            self.assertEqual(result['values']['goal_timeout'],75.)
+            self.assertEqual(result['values']['goal_timeout'],initial['goal_timeout'])
             self.assertEqual(mission.get_parameter('search_linear_speed').value,.16)
             settings=dict(camera_height=.22,camera_pitch=.17,camera_yaw=0.,camera_x=.04,
                           camera_y=0.,horizontal_fov=0.,camera_min_range=.35,camera_max_range=2.)
@@ -101,15 +101,14 @@ class ConsoleTests(unittest.TestCase):
         rclpy.init()
         console=self.make_console(parameter_overrides=[Parameter('port',value=0),
                         Parameter('phase',value='mapping'),Parameter('allow_motion',value=True)])
-        gate=VelocityGate(parameter_overrides=[Parameter('mapping_mode',value=True),
-             Parameter('max_linear',value=.12),Parameter('max_angular',value=.4)])
+        gate=VelocityGate(parameter_overrides=[Parameter('mapping_mode',value=True)])
         mapper=Mapper()
         controller=Node('controller_server')
-        initial=dict(max_linear=.12,max_angular=.4,goal_timeout=60.,lookahead_dist=.18,corner_lookahead_dist=.08,alignment_angle=.35)
+        initial=dict(TRIAL_DEFAULTS)
         for key,value in parameter_plan(initial)['controller_server'].items():
             controller.declare_parameter(key,value)
         supervisor=Node('project_navigation_supervisor')
-        supervisor.declare_parameter('goal_timeout',60.)
+        supervisor.declare_parameter('goal_timeout',initial['goal_timeout'])
         reject=[False]
         def accept(changes):
             if reject[0]:
@@ -135,6 +134,7 @@ class ConsoleTests(unittest.TestCase):
                 time.sleep(.05)
             state=json.load(urlopen(base+'/api/trial',timeout=12))
             self.assertEqual(state['values'],initial)
+            self.assertEqual(state['defaults'],initial)
             changed=dict(max_linear=.30,max_angular=1.0,goal_timeout=300.,lookahead_dist=.18,corner_lookahead_dist=.10,alignment_angle=.10)
             response=post(changed)
             self.assertTrue(response['synchronized'])
@@ -142,7 +142,7 @@ class ConsoleTests(unittest.TestCase):
             time.sleep(.2)
             self.assertEqual(gate.p['max_linear'],.30)
             self.assertEqual(mapper.p['goal_timeout'],300.)
-            self.assertEqual(gate.p['rotation_clearance'],gap.TURNING['bold']['stop'])
+            self.assertEqual(gate.p['rotation_clearance'],gap.MANUAL_DEFAULTS['rotation_clearance'])
             with self.assertRaises(HTTPError):
                 post({**changed,'max_linear':1.})
             # A rejection restores all nodes already updated, not just UI values.
@@ -210,12 +210,12 @@ class ConsoleTests(unittest.TestCase):
                     reject[0]=False
                     return SetParametersResult(successful=False,reason='Simulated gap rejection')
                 return SetParametersResult(successful=True)
+            default_plan=gap.parameter_plan(False,phase,tuning=gap.MANUAL_DEFAULTS)
             for name in gap.COSTMAPS:
                 namespace,node_name=name.split('/')
                 node=Node(node_name,namespace=namespace)
-                for key,value in dict(robot_radius=gap.BASE_RADIUS,footprint='[]',footprint_padding=.01,resolution=.05,
-                        **{'inflation_layer.enabled':True,
-                           'inflation_layer.inflation_radius':gap.parameter_plan(False,phase)[name]['inflation_layer.inflation_radius']}).items():
+                for key,value in dict(default_plan[name], footprint='[]', resolution=.05,
+                        **{'inflation_layer.enabled':True}).items():
                     node.declare_parameter(key,value)
                 costmaps.append(node)
             costmaps[-1].add_on_set_parameters_callback(accept)
@@ -250,6 +250,8 @@ class ConsoleTests(unittest.TestCase):
                 self.assertFalse(defaults['enabled'])
                 self.assertEqual(defaults['audacity'],'bold')
                 self.assertTrue(defaults['synchronized'])
+                self.assertEqual(defaults['tuning']['defaults'],gap.MANUAL_DEFAULTS)
+                self.assertEqual(defaults['tuning']['requested'],gap.MANUAL_DEFAULTS)
                 self.assertAlmostEqual(consumer.get_parameter('clearance').value,gap.DEFAULT_CLEARANCE)
                 with self.assertRaises(HTTPError): post(True,token='')
                 for invalid in (None,1,'true'):
