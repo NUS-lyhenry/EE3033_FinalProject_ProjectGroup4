@@ -9,7 +9,7 @@ import time
 from types import SimpleNamespace
 import pytest
 from ee3033_project.assessment import atomic_json
-from ee3033_project.trial import LIMITS, PROFILES, parameter_plan, validate_trial
+from ee3033_project.trial import LIMITS, TRIAL_DEFAULTS, parameter_plan, validate_trial
 
 
 def console(tmp_path):
@@ -20,9 +20,9 @@ def console(tmp_path):
              and m.name in ('trial_settings','trial_matches')]
     cls=ast.ClassDef(name='Transaction',bases=[],keywords=[],body=methods,decorator_list=[])
     scope=dict(math=math,time=time,validate_trial=validate_trial,
-               parameter_plan=parameter_plan,LIMITS=LIMITS,PROFILES=PROFILES,Twist=lambda:None)
+               parameter_plan=parameter_plan,LIMITS=LIMITS,TRIAL_DEFAULTS=TRIAL_DEFAULTS,Twist=lambda:None)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[cls],type_ignores=[])),str(path),'exec'),scope)
-    c=scope['Transaction']();c.default_navigation_profile='original';c.p={'phase':'mapping','navigation_profile':'original'};c.lock=threading.Lock()
+    c=scope['Transaction']();c.p={'phase':'mapping','navigation_profile':'original'};c.lock=threading.Lock()
     c.state={'state':'WAITING'};c.freshness={'Mission':time.monotonic()}
     c.manual_pub=SimpleNamespace(publish=lambda message:None);c.trial_fault=None
     c.nodes=parameter_plan(dict(max_linear=.12,max_angular=.4,goal_timeout=60.))
@@ -55,8 +55,7 @@ def test_tracking_readback_and_old_speed_clients_preserve_selected_values(tmp_pa
     assert speed['values']['alignment_angle']==.10
     assert speed['values']['max_linear']==.16
     assert json.loads(c.navigation_settings_path.read_text())['trial']==speed['values']
-    assert speed['defaults']['max_linear']==.12
-    assert speed['defaults']['lookahead_dist']==.18
+    assert speed['defaults']==TRIAL_DEFAULTS
     live=c.nodes['controller_server']
     assert all(live['FollowPath.'+key]==.08 for key in ('lookahead_dist','min_lookahead_dist','max_lookahead_dist'))
 

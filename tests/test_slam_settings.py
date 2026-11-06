@@ -24,7 +24,7 @@ def console(tmp_path):
     node.stage=NS(process=NS(pid=123,poll=lambda:None),loading=False)
     node.scan_filter_editable=lambda:node.state['state'] not in ACTIVE and not node.stage.loading
     node.parameter_clients={('slam_toolbox','get_parameters'):NS(wait_for_service=lambda **kw:True)}
-    node.parameter_request=lambda *args:NS(values=[.10,2])
+    node.parameter_request=lambda *args:NS(values=[.15,2])
     node.init_slam_settings();return node
 
 
@@ -39,7 +39,7 @@ def test_pass_count_requires_bounded_integer(passes):
 
 
 def test_defaults_and_boundaries_are_valid():
-    assert validate_slam_settings(DEFAULT_SLAM_SETTINGS)==dict(occupancy_threshold=.10,minimum_pass_through=2)
+    assert validate_slam_settings(DEFAULT_SLAM_SETTINGS)==dict(occupancy_threshold=.15,minimum_pass_through=2)
     for threshold,passes in [(.01,0),(.99,100)]:
         assert validate_slam_settings(dict(occupancy_threshold=threshold,minimum_pass_through=passes))
 

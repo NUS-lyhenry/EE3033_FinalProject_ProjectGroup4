@@ -73,6 +73,6 @@ def test_frozen_fixture_matrix_and_identical_sensor_sequence():
 def test_revised_slam_retains_matching_and_explicit_evidence_defaults():
     import yaml
     config=yaml.safe_load((SCRIPTS.parent/'src/ee3033_project/config/slam.yaml').read_text())['slam_toolbox']['ros__parameters']
-    assert config['occupancy_threshold']==.1 and config['min_pass_through']==2
+    assert config['occupancy_threshold']==.15 and config['min_pass_through']==2
     assert config['use_scan_matching'] and config['do_loop_closing']
     assert config['correlation_search_space_dimension']==.16

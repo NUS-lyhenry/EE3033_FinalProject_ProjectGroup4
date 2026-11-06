@@ -44,7 +44,8 @@ from .target_estimate import map_signature
 from .navigation_costmap import NavigationCostmap
 from .frame_journal import FrameJournal
 from .frame_coverage import exposure_view
-from .trial import LIMITS
+from .trial import DEFAULT_PROFILE, LIMITS, PROFILES, TRIAL_DEFAULTS
+from .operator_defaults import DEFAULT_TARGET_CLASS, DEFAULT_TARGET_SIGMA
 
 
 class Mission(Node):
@@ -57,7 +58,7 @@ class Mission(Node):
         super().__init__('project_mission', **kwargs)
         self.p = parameters(self, {
             'map_frame': 'map', 'base_frame': 'base_footprint', 'allow_motion': False,
-            'target_class': 'cup', 'clearance': DEFAULT_CLEARANCE,
+            'target_class': DEFAULT_TARGET_CLASS, 'clearance': DEFAULT_CLEARANCE,
             'viewpoint_spacing': GRID_DEFAULTS['viewpoint_spacing'],
             'coverage_spacing': GRID_DEFAULTS['coverage_spacing'],
             'camera_range': 2.0, 'camera_fov': 1.35, 'viewpoint_headings': 6,
@@ -65,8 +66,8 @@ class Mission(Node):
             'candidate_limit': 1000, 'map_partial': False,
             'search_strategy': 'greedy', 'adaptive_margin': 0.08,
             'observe_seconds': 3.0, 'min_observation_frames': 3,
-            'search_linear_speed': 0.12, 'search_angular_speed': 0.4,
-            'max_observation_retries': 2, 'goal_timeout': 75.0, 'mission_timeout': 900.0,
+            'search_linear_speed': TRIAL_DEFAULTS['max_linear'], 'search_angular_speed': TRIAL_DEFAULTS['max_angular'],
+            'max_observation_retries': 2, 'goal_timeout': TRIAL_DEFAULTS['goal_timeout'], 'mission_timeout': 900.0,
             'cancel_timeout': 10.0, 'accept_timeout': 8.0, 'planning_timeout': 45.0,
             'return_tolerance': 0.20, 'return_heading_required': False,
             'verify_seconds': 0.5, 'max_stationary_speed': 0.035,
@@ -77,10 +78,10 @@ class Mission(Node):
             'max_xy_variance': 0.16, 'max_yaw_variance': 0.36,
             'sensor_timeout': 1.0, 'perception_timeout': 3.0, 'tf_timeout': 1.0,
             # Historical name retained: a preferred variance, not a rejection cap.
-            'max_target_variance': 0.01, 'max_target_age': 2.0,
+            'max_target_variance': DEFAULT_TARGET_SIGMA ** 2, 'max_target_age': 2.0,
             'max_map_cells': 1000000, 'results_directory': '~/ee3033_results',
             'min_observe_seconds': .8, 'acquisition_seconds': 90.,
-            'acquisition_steps': 5, 'navigation_profile': 'original',
+            'acquisition_steps': 5, 'navigation_profile': DEFAULT_PROFILE,
             'reacquisition_timeout': 10.0, 'localization_stall_timeout': 10.0,
             'max_search_restarts': 2, 'filter_reset_timeout': 3.0,
             'enable_ab_maneuver': False,
@@ -106,13 +107,15 @@ class Mission(Node):
             raise ValueError('search_strategy must be greedy, lookahead or adaptive')
         if not isinstance(self.p['adaptive_margin'], (int, float)) or not 0. <= self.p['adaptive_margin'] <= 1.:
             raise ValueError('adaptive_margin must be between 0 and 1')
-        if self.p['navigation_profile'] == 'fast':
+        profile = self.p['navigation_profile']
+        if profile not in PROFILES:
+            raise ValueError('Unknown navigation profile')
+        if profile != DEFAULT_PROFILE:
             from rclpy.parameter import Parameter
-            self.set_parameters([Parameter('search_linear_speed', value=.16),
-                                 Parameter('search_angular_speed', value=.60)])
-            self.p.update(search_linear_speed=.16, search_angular_speed=.60)
-        elif self.p['navigation_profile'] != 'original':
-            raise ValueError('navigation_profile must be original or fast')
+            values = dict(search_linear_speed=PROFILES[profile]['max_linear'],
+                          search_angular_speed=PROFILES[profile]['max_angular'])
+            self.set_parameters([Parameter(key, value=value) for key, value in values.items()])
+            self.p.update(values)
         self.state, self.reason = 'WAITING', 'Call /project/start after localization'
         self.home = self.target = self.map = self.planner = None
         self.operator_return_requested=False

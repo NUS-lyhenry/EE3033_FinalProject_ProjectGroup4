@@ -41,12 +41,12 @@ def test_bad_effective_inputs_or_missing_readback_cannot_pass(change):
 def test_actual_costmap_metadata_must_match_not_just_declared_resolution():
     check=runpy.run_path(str(Path(__file__).parents[1]/'scripts/actual_yolo_search_comparison.py'))['verify_actual_costmap_resolutions']
     expected=runpy.run_path(str(Path(__file__).parents[1]/'scripts/actual_yolo_search_comparison.py'))['baseline_costmap_resolutions'](.05,.0125)
-    assert expected==pytest.approx(dict(global_costmap=.05/3,local_costmap=.0125))
+    assert expected==pytest.approx(dict(global_costmap=.01,local_costmap=.0125))
     grids={name:dict(resolution=value,size_x=240,size_y=240) for name,value in expected.items()}
     assert check(grids,expected)
     grids['global_costmap']['resolution']=.0125
     with pytest.raises(RuntimeError):check(grids,expected)
-    grids['global_costmap']['resolution']=.05/3;grids['local_costmap']['size_x']=0
+    grids['global_costmap']['resolution']=.01;grids['local_costmap']['size_x']=0
     with pytest.raises(RuntimeError):check(grids,expected)
 
 

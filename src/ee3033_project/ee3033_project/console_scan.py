@@ -8,6 +8,7 @@ from rcl_interfaces.msg import Parameter as ParameterMessage
 from rcl_interfaces.srv import GetParameters
 
 from .assessment import ACTIVE, atomic_json
+from .operator_defaults import DEFAULT_SCAN_RADIUS
 
 
 class ScanFilterSettings:
@@ -24,7 +25,7 @@ class ScanFilterSettings:
 
     def init_scan_filter(self):
         self.scan_filter_path=Path(self.p['session_directory']).expanduser()/'scan_filter.json'
-        self.scan_filter_value=.14
+        self.scan_filter_value=DEFAULT_SCAN_RADIUS
         self.scan_filter_live=None
         self.scan_filter_fault=None
         if self.scan_filter_path.is_file():

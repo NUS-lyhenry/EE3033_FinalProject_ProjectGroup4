@@ -23,7 +23,7 @@ from .core import quaternion_yaw,stamp_seconds
 from .frontiers import frontier_goal, MappingStartUnavailable
 from .map_io import save_new_map
 from .ros_utils import LATCHED,parameters,run,set_yaw
-from .trial import guarded_parameters
+from .trial import TRIAL_DEFAULTS, guarded_parameters
 from .gap import DEFAULT_CLEARANCE, guard_clearance
 from .waypoint import validate_waypoint,waypoint_goal
 from .core import angle_difference
@@ -39,7 +39,7 @@ class Mapper(Node):
     def __init__(self,**kwargs):
         super().__init__('project_mapper',**kwargs)
         self.p=parameters(self,{'allow_motion':False,'clearance':DEFAULT_CLEARANCE,
-                                'max_mapping_seconds':600.0,'goal_timeout':60.0,'cancel_timeout':10.0,
+                                'max_mapping_seconds':600.0,'goal_timeout':TRIAL_DEFAULTS['goal_timeout'],'cancel_timeout':10.0,
                                 'sensor_timeout':1.0,'settle_seconds':2.0,
                                 'frontier_settle_seconds':4.0,
                                 'waypoint_x':0.0,'waypoint_y':0.0,'waypoint_yaw':0.0,

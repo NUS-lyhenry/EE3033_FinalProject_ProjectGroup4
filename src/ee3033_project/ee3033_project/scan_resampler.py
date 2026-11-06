@@ -10,13 +10,14 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
 from .ros_utils import LATCHED, parameters, run
 from .scan_core import resample
+from .operator_defaults import DEFAULT_SCAN_RADIUS
 
 
 class ScanResampler(Node):
     def __init__(self, **kwargs):
         super().__init__('project_scan_resampler', **kwargs)
         self.p = parameters(self, {'input_topic': '/scan', 'output_topic': '/scan_fixed',
-                                   'bins': 450,'self_mask_radius':0.14})
+                                   'bins': 450,'self_mask_radius':DEFAULT_SCAN_RADIUS})
         # This explicitly configured sensor-distance exclusion is independent
         # of the physical chassis footprint and the sensor's true range_min.
         if (type(self.p['self_mask_radius']) is not float

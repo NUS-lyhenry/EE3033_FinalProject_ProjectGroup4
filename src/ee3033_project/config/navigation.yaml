@@ -87,17 +87,18 @@ controller_server:
       stateful: false
     FollowPath:
       plugin: ee3033_navigation::RegulatedPathFollower
-      desired_linear_vel: 0.12
-      max_linear_vel: 0.12
-      max_angular_vel: 0.40
-      lookahead_dist: 0.18
-      min_lookahead_dist: 0.18
-      max_lookahead_dist: 0.18
+      desired_linear_vel: 0.16
+      max_linear_vel: 0.16
+      max_angular_vel: 0.30
+      lookahead_dist: 0.20
+      corner_lookahead_dist: 0.08
+      min_lookahead_dist: 0.20
+      max_lookahead_dist: 0.20
       use_velocity_scaled_lookahead_dist: false
       use_interpolation: true
       use_rotate_to_heading: true
-      rotate_to_heading_min_angle: 0.35
-      rotate_to_heading_angular_vel: 0.40
+      rotate_to_heading_min_angle: 0.62
+      rotate_to_heading_angular_vel: 0.30
       max_angular_accel: 0.8
       allow_reversing: false
       transform_tolerance: 0.3
@@ -124,7 +125,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.0125
-      robot_radius: 0.10
+      robot_radius: 0.14
       footprint: "[]"
       footprint_padding: 0.01
       transform_tolerance: 0.3
@@ -147,7 +148,7 @@ local_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         enabled: true
-        inflation_radius: 0.12
+        inflation_radius: 0.15
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
 global_costmap:
@@ -158,7 +159,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_footprint
       resolution: 0.0125
-      robot_radius: 0.10
+      robot_radius: 0.14
       footprint: "[]"
       footprint_padding: 0.01
       transform_tolerance: 0.3
@@ -185,7 +186,7 @@ global_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         enabled: true
-        inflation_radius: 0.12
+        inflation_radius: 0.15
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
 planner_server:

@@ -534,19 +534,20 @@ function renderGridSettings(){
 }
 function renderClearance(idle){
   const tuning=gap?.tuning, editable=idle&&!!tuning&&!parametersBusy;
+  const requested=tuning?.requested??{...tuning?.defaults,...tuning?.overrides};
   const dirty=Object.keys(clearanceDraft).length>0;
   const distance=value=>Number.isFinite(value)?`${Number(value.toFixed(6))} m`:'unavailable';
   $('clearancePanel').hidden=snapshot?.phase==='calibration';
   for(const input of clearanceFields){
     const key=input.dataset.clearance, limits=tuning?.limits[key];
     input.min=limits?.min??'';input.max=limits?.max??'';
-    if(!Object.hasOwn(clearanceDraft,key))input.value=tuning?.overrides[key]??tuning?.defaults[key]??'';
+    if(!Object.hasOwn(clearanceDraft,key))input.value=requested[key]??'';
     input.disabled=!editable;
     $(input.id+'Live').textContent=`Live: ${distance(tuning?.live[key])} · Default: ${distance(tuning?.defaults[key])}`+
       (limits?` · Range: ${limits.min}–${limits.max} m`:'');
   }
   $('applyClearance').disabled=!editable||!dirty||clearanceFields.some(input=>!input.checkValidity());
-  $('resetClearance').disabled=!editable||(!dirty&&!Object.keys(tuning?.overrides??{}).length);
+  $('resetClearance').disabled=!editable||(!dirty&&!Object.keys(requested).some(key=>requested[key]!==tuning?.defaults[key]));
   $('clearanceStatus').textContent=parametersBusy?'Applying and verifying…':dirty?'Unapplied changes. Clear a field to use its default.':
     tuning?(gap.fault||'Applied values are saved for future stages.'):'Load a stage to read the live values.';
 }
@@ -726,7 +727,7 @@ async function applyClearance(tuning){
   }catch(_){}finally{parametersBusy=false;render();}
 }
 $('applyClearance').onclick=()=>{
-  const tuning={...gap.tuning.overrides};
+  const tuning={...(gap.tuning.requested??gap.tuning.overrides)};
   for(const [key,value] of Object.entries(clearanceDraft)){
     if(value==='')delete tuning[key];
     else tuning[key]=Number(value);
@@ -752,7 +753,7 @@ async function pollLabels(){
   if(online&&!labelsBusy){labelsBusy=true;try{
     const data=await get('labels');modelLabels=data;
     const key=JSON.stringify([data.model,data.labels]);
-    if(key!==labelKey){labelKey=key;const current=$('targetClass').value||snapshot?.mission_options?.target_class||'cup';
+    if(key!==labelKey){labelKey=key;const current=$('targetClass').value||snapshot?.mission_options?.target_class||'bottle';
       const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=data.ready?'Select a target class':'Model labels unavailable';
       const options=(data.labels||[]).map(label=>{const option=document.createElement('option');option.value=label;option.textContent=label;return option;});
       $('targetClass').replaceChildren(placeholder,...options);

@@ -8,7 +8,10 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from ee3033_project.robot_geometry import GEOMETRY_PROFILE, FOOTPRINT_RADIUS, DEFAULT_STOP_DISTANCE
-from ee3033_project.gap import TURNING, DEFAULT_AUDACITY
+from ee3033_project.gap import TURNING, DEFAULT_AUDACITY, DEFAULT_CLEARANCE
+from ee3033_project.operator_defaults import (DEFAULT_REVERSE_RECOVERY, DEFAULT_SCAN_RADIUS,
+                                                DEFAULT_TARGET_CLASS, DEFAULT_TARGET_SIGMA)
+from ee3033_project.trial import DEFAULT_PROFILE, PROFILES
 
 
 def check_map(context):
@@ -32,12 +35,12 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('map', description='On-site map YAML (required)'),
         DeclareLaunchArgument('map_partial', default_value='false'),
-        DeclareLaunchArgument('target_class', default_value='cup'),
+        DeclareLaunchArgument('target_class', default_value=DEFAULT_TARGET_CLASS),
         DeclareLaunchArgument('allow_motion', default_value='false'),
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
         DeclareLaunchArgument('camera', default_value='true'),
-        DeclareLaunchArgument('self_mask_radius', default_value='.14'),
+        DeclareLaunchArgument('self_mask_radius', default_value=str(DEFAULT_SCAN_RADIUS)),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
         DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
@@ -47,11 +50,11 @@ def generate_launch_description():
         DeclareLaunchArgument('model', default_value='/home/ros2_ws/weights/yolo26n.pt'),
         DeclareLaunchArgument('localization_method', default_value='hybrid'),
         DeclareLaunchArgument('vision_config', default_value=os.path.join(share, 'config', 'vision.yaml')),
-        DeclareLaunchArgument('allow_reverse_recovery', default_value='true'),
-        DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
+        DeclareLaunchArgument('allow_reverse_recovery', default_value=str(DEFAULT_REVERSE_RECOVERY).lower()),
+        DeclareLaunchArgument('navigation_profile', default_value=DEFAULT_PROFILE, choices=list(PROFILES)),
         DeclareLaunchArgument('calibration_file', default_value=''),
         DeclareLaunchArgument('return_tolerance', default_value='0.20'),
-        DeclareLaunchArgument('preferred_target_sigma', default_value='0.10'),
+        DeclareLaunchArgument('preferred_target_sigma', default_value=str(DEFAULT_TARGET_SIGMA)),
         DeclareLaunchArgument('enable_ab_maneuver', default_value='false'),
         DeclareLaunchArgument('acquisition_seconds', default_value='90.0'),
         DeclareLaunchArgument('reacquisition_timeout', default_value='10.0'),
@@ -89,6 +92,7 @@ def generate_launch_description():
         Node(package='ee3033_project', executable='mission', output='screen', parameters=[
             config, {'target_class': target, 'allow_motion': motion,
                      'results_directory':LaunchConfiguration('results_directory'),
+                     **({'clearance': DEFAULT_CLEARANCE} if GEOMETRY_PROFILE=='legacy' else {}),
                      'map_partial':ParameterValue(LaunchConfiguration('map_partial'),value_type=bool),
                      'max_target_variance':ParameterValue(PythonExpression(['float(', LaunchConfiguration('preferred_target_sigma'), ') ** 2']),value_type=float),
                      'enable_ab_maneuver':ParameterValue(LaunchConfiguration('enable_ab_maneuver'),value_type=bool),

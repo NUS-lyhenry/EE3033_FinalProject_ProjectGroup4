@@ -9,6 +9,10 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from ee3033_project.robot_geometry import GEOMETRY_PROFILE, FOOTPRINT_RADIUS, DEFAULT_STOP_DISTANCE
 from ee3033_project.gap import TURNING, DEFAULT_AUDACITY
+from ee3033_project.operator_defaults import DEFAULT_REVERSE_RECOVERY, DEFAULT_SCAN_RADIUS
+from ee3033_project.trial import DEFAULT_PROFILE, PROFILES
+from ee3033_project.grid_settings import GRID_DEFAULTS
+from ee3033_project.mapping_settings import DEFAULT_SLAM_SETTINGS
 
 
 def generate_launch_description():
@@ -20,16 +24,16 @@ def generate_launch_description():
         DeclareLaunchArgument('allow_motion', default_value='false'),
         DeclareLaunchArgument('base', default_value='true'),
         DeclareLaunchArgument('lidar', default_value='true'),
-        DeclareLaunchArgument('self_mask_radius', default_value='.14'),
-        DeclareLaunchArgument('mapping_resolution', default_value='.05'),
-        DeclareLaunchArgument('occupancy_threshold', default_value='.10'),
-        DeclareLaunchArgument('minimum_pass_through', default_value='2'),
+        DeclareLaunchArgument('self_mask_radius', default_value=str(DEFAULT_SCAN_RADIUS)),
+        DeclareLaunchArgument('mapping_resolution', default_value=str(GRID_DEFAULTS['mapping_resolution'])),
+        DeclareLaunchArgument('occupancy_threshold', default_value=str(DEFAULT_SLAM_SETTINGS['occupancy_threshold'])),
+        DeclareLaunchArgument('minimum_pass_through', default_value=str(DEFAULT_SLAM_SETTINGS['minimum_pass_through'])),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('console', default_value='true'),
         DeclareLaunchArgument('map_directory', default_value='~/ee3033_maps'),
         DeclareLaunchArgument('port', default_value='8765'),
-        DeclareLaunchArgument('allow_reverse_recovery', default_value='true'),
-        DeclareLaunchArgument('navigation_profile', default_value='original', choices=['original', 'fast']),
+        DeclareLaunchArgument('allow_reverse_recovery', default_value=str(DEFAULT_REVERSE_RECOVERY).lower()),
+        DeclareLaunchArgument('navigation_profile', default_value=DEFAULT_PROFILE, choices=list(PROFILES)),
         DeclareLaunchArgument('nav_config', default_value=os.path.join(share,'config','navigation.yaml')),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(share, 'launch', 'hardware.launch.py')), launch_arguments={
@@ -57,6 +61,7 @@ def generate_launch_description():
         Node(package='ee3033_project',executable='console',output='screen',
              condition=IfCondition(LaunchConfiguration('console')),parameters=[{
                  'phase':'mapping','map_directory':LaunchConfiguration('map_directory'),
+                 'mapping_resolution':ParameterValue(LaunchConfiguration('mapping_resolution'),value_type=float),
                  'port':ParameterValue(LaunchConfiguration('port'),value_type=int),
                  'allow_motion':ParameterValue(LaunchConfiguration('allow_motion'),value_type=bool)}]),
         Node(package='rviz2', executable='rviz2', condition=IfCondition(LaunchConfiguration('rviz')),

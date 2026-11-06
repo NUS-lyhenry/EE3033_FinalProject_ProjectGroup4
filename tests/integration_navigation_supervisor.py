@@ -162,7 +162,7 @@ class SupervisorTests(unittest.TestCase):
         self.supervisor=NavigationSupervisor(parameter_overrides=[Parameter(k,value=v) for k,v in dict(
             goal_timeout=6.,translation_window=.35,translation_distance=.08,
             heading_window=.2,stationary_seconds=.06,stationary_timeout=.8,
-            sensor_timeout=.2,enable_grace=.5).items()])
+            sensor_timeout=.2,enable_grace=.5,allow_reverse_recovery=True).items()])
         self.executor=MultiThreadedExecutor(num_threads=8)
         for node in (self.fixture,self.supervisor):self.executor.add_node(node)
         self.thread=threading.Thread(target=self.executor.spin,daemon=True);self.thread.start()

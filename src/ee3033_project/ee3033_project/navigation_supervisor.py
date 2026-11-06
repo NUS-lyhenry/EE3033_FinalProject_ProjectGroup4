@@ -30,14 +30,16 @@ from .core import quaternion_yaw, stamp_seconds
 from .mapping_heading import mapping_tangent_tree
 from .navigation_supervision import navigation_budget, ProgressWatch, RecoveryBudget, wrap, path_reference
 from .ros_utils import LATCHED, parameters
-from .trial import guarded_parameters
+from .trial import TRIAL_DEFAULTS, guarded_parameters
+from .operator_defaults import DEFAULT_REVERSE_RECOVERY
 from .stationary import StationaryWindow
 
 
 class NavigationSupervisor(Node):
     def __init__(self, **kwargs):
         super().__init__('project_navigation_supervisor', **kwargs)
-        self.p = parameters(self, dict(goal_timeout=60., maximum_recoveries=2, allow_reverse_recovery=True,
+        self.p = parameters(self, dict(goal_timeout=TRIAL_DEFAULTS['goal_timeout'], maximum_recoveries=2,
+            allow_reverse_recovery=DEFAULT_REVERSE_RECOVERY,
             translation_window=12., translation_distance=.08, heading_window=3.,
             sensor_timeout=1., gate_timeout=1.5, cancel_timeout=3.,
             enable_grace=2., stationary_seconds=.5, stationary_timeout=2.,
