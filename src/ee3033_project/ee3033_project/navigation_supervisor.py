@@ -523,6 +523,7 @@ class NavigationSupervisor(Node):
             self.p['maximum_recoveries'], self.get_parameter('allow_reverse_recovery').value,
             outer.request.behavior_tree)
         status, reason = GoalStatus.STATUS_ABORTED, 'Navigation failed'
+        retryable_tracking_failure = False
         try:
             # The owner only enables driving after its action was accepted.
             while rclpy.ok() and not self.drive and time.monotonic()-started<self.p['enable_grace']:
@@ -548,6 +549,7 @@ class NavigationSupervisor(Node):
                     if outer.is_active:
                         outer.publish_feedback(msg.feedback)
                 reason = None
+                raw_aborted = False
                 accepted = self.dispatch(self.nav, forwarded, budget, feedback)
                 if not accepted:
                     reason = self.interrupted(budget) or 'Nav2 rejected navigation goal'
@@ -576,6 +578,7 @@ class NavigationSupervisor(Node):
                             reason = 'Nav2 reported success outside verified goal tolerance'
                             self.set_stage('FAILED',reason,failure=reason)
                             break
+                        raw_aborted = result.status == GoalStatus.STATUS_ABORTED
                         reason = 'Nav2 could not follow the collision-free route'
                 self.set_stage('CANCELING', 'Canceling Nav2 before recovery', failure=reason)
                 if not self.finish_raw():
@@ -602,6 +605,15 @@ class NavigationSupervisor(Node):
                     break
                 recovery = budget.next(time.monotonic(), had_path, allow_reverse=allow_reverse)
                 if recovery is None:
+                    goal = outer.request.pose.pose.position
+                    with self.guard:
+                        matching_path = self.path_received >= started and bool(self.path) and (
+                            math.dist(self.path[-1], (goal.x, goal.y)) <= self.p['xy_tolerance'])
+                    retryable_tracking_failure = (
+                        budget.count >= budget.maximum and not budget.expired(time.monotonic())
+                        and matching_path and accepted and (raw_aborted or reason in (
+                            'No translation progress', 'Path heading is not converging',
+                            'Final heading is not converging')))
                     reason = ('No collision-free route; no reverse attempted' if not had_path
                               else 'Navigation recovery budget exhausted')
                     break
@@ -654,7 +666,7 @@ class NavigationSupervisor(Node):
                 if not self.clear(budget):
                     reason = self.interrupted(budget) or 'Could not refresh navigation costmaps'
                     break
-            return self.terminal(outer, status, reason)
+            return self.terminal(outer, status, reason, retryable_tracking_failure)
         except Exception as exc:
             self.get_logger().error('Navigation supervision failed: '+str(exc))
             return self.terminal(outer, GoalStatus.STATUS_ABORTED,
@@ -670,7 +682,7 @@ class NavigationSupervisor(Node):
                 if not self.blocked:
                     self.outer = None
 
-    def terminal(self, outer, status, reason):
+    def terminal(self, outer, status, reason, retryable_tracking_failure=False):
         # Do not notify clients while a raw action could still drive or while
         # physical slew is settling. Clients may immediately request a Spin or
         # another navigation action after receiving an outer terminal result.
@@ -706,6 +718,9 @@ class NavigationSupervisor(Node):
             outer.succeed()
             self.set_stage('SUCCEEDED', reason)
         else:
+            with self.guard:
+                self.status['return_retryable'] = bool(
+                    retryable_tracking_failure and confirmed and settled and not self.blocked)
             outer.abort()
             self.set_stage('FAILED', reason, failure=reason)
         return NavigateToPose.Result()

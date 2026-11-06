@@ -65,13 +65,7 @@ class ExposureRobot(FakeRobot):
         try:
             if kind == 'home':
                 self.home_goals += 1
-                if self.mode == 'return_failure':
-                    handle.abort()
-                else:
-                    p = handle.request.pose.pose.position
-                    self.xy_yaw = [p.x, p.y, 0.]
-                    time.sleep(.15)
-                    handle.succeed()
+                self.execute_home(handle)
             else:
                 if kind == 'acquire':
                     self.center_goals += 1
@@ -95,6 +89,15 @@ class ExposureRobot(FakeRobot):
             return NavigateToPose.Result()
         finally:
             self.active_goals -= 1
+
+    def execute_home(self, handle):
+        if self.mode == 'return_failure':
+            handle.abort()
+        else:
+            p = handle.request.pose.pose.position
+            self.xy_yaw = [p.x, p.y, 0.]
+            time.sleep(.15)
+            handle.succeed()
 
     def exposure(self, centered):
         stamp = time.time()
@@ -122,13 +125,58 @@ class ExposureRobot(FakeRobot):
         return stamp
 
 
+class ReturnRetryRobot(ExposureRobot):
+    def __init__(self, positions, terminal_mode):
+        super().__init__('centered')
+        self.failed_positions = positions
+        self.terminal_mode = terminal_mode
+        self.home_destinations = []
+        self.terminal_status = None
+        self.nav_status_pub = self.create_publisher(String, '/project/navigation_status', 10)
+        self.create_timer(.02, self.publish_late_terminal)
+
+    def make_odometry(self, stamp):
+        odom = super().make_odometry(stamp)
+        if self.terminal_mode == 'fixed_odom':
+            odom.pose.pose.position.x = 0.
+            odom.pose.pose.position.y = 0.
+        return odom
+
+    def execute_home(self, handle):
+        p = handle.request.pose.pose.position
+        self.home_destinations.append((p.x, p.y))
+        if self.home_goals > len(self.failed_positions):
+            return super().execute_home(handle)
+        self.xy_yaw = list(self.failed_positions[self.home_goals - 1])
+        stop = dict(raw_terminal_confirmed=self.terminal_mode != 'unconfirmed',
+                    bounded_stop_confirmed=True)
+        goal_id = bytes(handle.goal_id.uuid).hex() if self.terminal_mode != 'wrong_id' else 'f' * 32
+        self.terminal_status = dict(goal_id=goal_id, stage='FAILED', return_retryable=True,
+            locked=self.terminal_mode == 'locked', stop_confirmation=stop,
+            reason='Navigation recovery budget exhausted')
+        if self.terminal_mode == 'early':
+            # Deliver terminal telemetry before the action result.
+            self.send_terminal()
+            time.sleep(.15)
+        handle.abort()
+
+    def send_terminal(self):
+        status, self.terminal_status = self.terminal_status, None
+        self.nav_status_pub.publish(String(data=json.dumps(dict(status, stamp=time.time()))))
+
+    def publish_late_terminal(self):
+        if (self.terminal_status and self.terminal_mode != 'withheld'
+                and self.mission.return_retry_pending is not None):
+            self.send_terminal()
+
+
 class SingleFrameMission(unittest.TestCase):
-    def run_case(self, mode):
+    def run_case(self, mode, return_case=None):
         self.assertNotIn(os.environ.get('ROS_DOMAIN_ID'), (None, '0', '6'))
         self.assertEqual(os.environ.get('ROS_LOCALHOST_ONLY'), '1')
         rclpy.init()
         with tempfile.TemporaryDirectory(prefix='single_frame_mission_') as directory:
-            robot = ExposureRobot(mode)
+            robot = ExposureRobot(mode) if return_case is None else ReturnRetryRobot(*return_case[:2])
             mission = Mission(parameter_overrides=overrides(
                 allow_motion=True, target_class='bottle', results_directory=directory,
                 clearance=.11, viewpoint_spacing=1., max_goals=4, max_candidates=12,
@@ -184,6 +232,8 @@ class SingleFrameMission(unittest.TestCase):
                     self.assertEqual(robot.home_goals, 0)
                     self.assertFalse(mission.return_verified)
                     self.assertFalse(mission.target_reported)
+                elif return_case is not None:
+                    self.check_return_retry(return_case, robot, mission, call)
                 else:
                     expected = 'STOPPED' if mode == 'return_failure' else 'COMPLETE'
                     self.assertTrue(wait(lambda: mission.state == expected, 12), mission.summary())
@@ -220,6 +270,33 @@ class SingleFrameMission(unittest.TestCase):
                     node.destroy_node()
                 rclpy.shutdown()
 
+    def check_return_retry(self, case, robot, mission, call):
+        expected_goals, expected_state = case[2:4]
+        interruption = case[4] if len(case) > 4 else None
+        if interruption in ('stop', 'sensor loss'):
+            self.assertTrue(wait(lambda: mission.return_retry_pending is not None, 3))
+            call('return_home')
+            self.assertEqual(robot.home_goals, 1)
+            if interruption == 'stop':
+                call('stop')
+            else:
+                robot.live = False
+            self.assertTrue(wait(lambda: mission.state == 'STOPPED', 3), mission.summary())
+            robot.send_terminal()
+        self.assertTrue(wait(lambda: mission.state == expected_state, 10), mission.summary())
+        self.assertEqual(robot.home_goals, expected_goals, mission.summary())
+        self.assertEqual(mission.return_verified, expected_state == 'COMPLETE')
+        self.assertTrue(mission.target_reported)
+        self.assertTrue(all(p == tuple(mission.home[:2]) for p in robot.home_destinations))
+        if expected_state == 'STOPPED':
+            time.sleep(.2)
+            self.assertEqual(robot.home_goals, expected_goals)
+        if interruption == 'manual_restart':
+            call('return_home')
+            self.assertTrue(wait(lambda: mission.state == 'COMPLETE', 8), mission.summary())
+            self.assertEqual(robot.home_goals, expected_goals + 2)
+            self.assertTrue(mission.return_verified)
+
     def test_single_centered_exposure(self):
         self.run_case('centered')
 
@@ -243,6 +320,38 @@ class SingleFrameMission(unittest.TestCase):
 
     def test_return_failure_preserves_coordinate(self):
         self.run_case('return_failure')
+
+    def test_return_retries_first_stall_with_early_confirmation(self):
+        self.run_case('centered', ([(.75, .5, 0.)], 'early', 2, 'COMPLETE'))
+
+    def test_return_can_retry_at_four_distinct_sites(self):
+        sites = [(x, .5, 0.) for x in (.9, .65, .40, .15)]
+        self.run_case('centered', (sites, 'late', 5, 'COMPLETE'))
+
+    def test_return_stops_at_same_site_even_after_rotation(self):
+        sites = [(.75, .5, 0.), (.75, .5, math.pi / 2)]
+        self.run_case('centered', (sites, 'late', 2, 'STOPPED'))
+
+    def test_return_stops_when_revisiting_earlier_site(self):
+        sites = [(.75, .5, 0.), (.5, .5, 0.), (.75, .5, 0.)]
+        self.run_case('centered', (sites, 'late', 3, 'STOPPED'))
+
+    def test_return_requires_odometry_translation_between_retry_sites(self):
+        sites = [(.75, .5, 0.), (.50, .5, 0.)]
+        self.run_case('centered', (sites, 'fixed_odom', 2, 'STOPPED'))
+
+    def test_manual_return_restarts_after_safe_stop(self):
+        self.run_case('centered', ([(.75, .5, 0.)] * 3, 'late', 2, 'STOPPED', 'manual_restart'))
+
+    def test_return_requires_matching_confirmed_terminal(self):
+        for terminal_mode in ('unconfirmed', 'wrong_id', 'locked'):
+            with self.subTest(terminal_mode=terminal_mode):
+                self.run_case('centered', ([(.75, .5, 0.)], terminal_mode, 1, 'STOPPED'))
+
+    def test_stop_and_sensor_loss_preempt_waiting_retry(self):
+        for interruption in ('stop', 'sensor loss'):
+            with self.subTest(interruption=interruption):
+                self.run_case('centered', ([(.75, .5, 0.)], 'withheld', 1, 'STOPPED', interruption))
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 {
-  "release": "search_clearance_20261105_e8e63de19a",
-  "baseline_release": "manual_clearance_20261105_89a6af1ef1",
+  "release": "mission_return_recovery_20261105_34eb2162cc",
+  "baseline_release": "search_clearance_20261105_e8e63de19a",
   "source_files": {
     "src/ee3033_navigation/CMakeLists.txt": "b9a530d1d6ec6778ac2485dfbfdf995321159a32754eecf7c1ee4de3b607e6de",
     "src/ee3033_navigation/README.md": "f791afa807cb871b8e65f680778759e6986ace68d8dcc8f9a963443387dbed18",
@@ -54,14 +54,14 @@
     "src/ee3033_project/ee3033_project/mapping_escape.py": "ab1d8ad1d1b6412e3c22404780a83bf381a81a7afa89a729cb294e1b1c193e30",
     "src/ee3033_project/ee3033_project/mapping_heading.py": "42c7566b9399589329ee076be24d746ba170d8f78efb79f6a6064b6880d4df0d",
     "src/ee3033_project/ee3033_project/mapping_settings.py": "c2135cefa0edb1dc72cc71199794a303150de3679e0081d9b9eacaa6f5007696",
-    "src/ee3033_project/ee3033_project/mission.py": "1fe1808eb5eba12ea05491cf6e8bca5adc842b0f1a07ea5a979bbfa7233acb58",
+    "src/ee3033_project/ee3033_project/mission.py": "ad9454caef90c04edfbfe39ed77d4b4ca3ca2d0f5f3bd6c8814118387b5e49a1",
     "src/ee3033_project/ee3033_project/model_labels.py": "46a44e7400d422612ce50818b568e1bb3b221f2355c1013f61d7ae9313943d5a",
     "src/ee3033_project/ee3033_project/motion_safety.py": "143eef1571f85dc44b98c0c835f22cabc2549746b7588b592cd0a29d14b554cf",
     "src/ee3033_project/ee3033_project/navigation_costmap.py": "3688e7faf91f49e12478e4f320ce823ce284661cb99f53e2effedcafcd06668f",
     "src/ee3033_project/ee3033_project/navigation_map.py": "ca35c8d78a81fd7a1d534e075ea93d0e724ded5c6cbd0dac88653ceef1dd1c65",
     "src/ee3033_project/ee3033_project/navigation_progress.py": "9f4889ac154f1a2a1f4a2379b5aa2e6d677ac5de92b6a12ac0438fc859aa792e",
     "src/ee3033_project/ee3033_project/navigation_supervision.py": "88fa7ec75fb47c58d18705fcb9b3e5eee34191425da147743598234e8c30a995",
-    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "64728500b6446932398a8a2cc9b01021e1694f9b323551d3ad8c55e321844b24",
+    "src/ee3033_project/ee3033_project/navigation_supervisor.py": "d05eab6d8e42ff137ba55a4fa335c3bff98b817216a12967aa6cea35dfaa63d2",
     "src/ee3033_project/ee3033_project/near_view.py": "1a7368828dce3b011496cc87465aee68171d602d74ec5bd1e7ed737ba51ef6b2",
     "src/ee3033_project/ee3033_project/observation_motion.py": "b97a1e89d1fb00b31758ced2bb2ee8855ab62ac1784f5932e1b1caebe906b520",
     "src/ee3033_project/ee3033_project/path_planner.py": "97caf4157728ece49c99ff97aa8f6c338ff94f013a46d36dd171b579f89d694a",
@@ -91,7 +91,7 @@
     "src/ee3033_project/launch/mission.launch.py": "6ec49f5fe24501a5fec1fa7c8fc2e0ca7265061f8559c98a116faff8ddd4bb37",
     "src/ee3033_project/launch/navigation.launch.py": "b8fd07f992e33d3011b8c4aab9affcd5ec2ebfa81a183fb31f24cceac282f0fe",
     "src/ee3033_project/launch/view.launch.py": "d8b5ea44456691ff05b341bdc312927dccceef5515419d8c2ac30a0ccb539096",
-    "src/ee3033_project/package.xml": "ffd6aa3ddba674bef3a0df0de1a2059dbd3b7e06db925a429b0bc0411874ea58",
+    "src/ee3033_project/package.xml": "a2bae4851442e593d55e31f5fb4dab190349529ed953781b005f09a149c9eb9a",
     "src/ee3033_project/resource/ee3033_project": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "src/ee3033_project/rviz/mission.rviz": "cccc70145f18426ae8f0443f62ac763893bc74a15e253eee91a0ee5a2e5201b0",
     "src/ee3033_project/setup.cfg": "897d70af76c606f9053b94fa87576f04540aeabfea4f6f69a5572637060ddaf4",
@@ -103,9 +103,10 @@
     "src/ee3033_project/web/index.html": "960e46cf5068a8de7e2831067733c8aa63a8980c5f544db37b49c4bb2388b837",
     "src/ee3033_project/web/style.css": "233ff3a642837dbf19e8c664a698776e7cf029dceb64c01a956ce0df6c41e791"
   },
-  "source_sha256": "e8e63de19a0c6d182f24143338e06ffb07de4723d8e9e9b7e201cbb247ceb70b",
-  "source_archive": "search_clearance_20261105_e8e63de19a.tar.gz",
-  "robot_source": "/home/ros2_ws/group4_releases/search_clearance_20261105_e8e63de19a",
-  "robot_workspace": "/home/ros2_ws/group4_workspaces/search_clearance_20261105_e8e63de19a",
-  "robot_session": "/home/ros2_ws/group4_results/assessment_search_clearance_20261105_e8e63de19a"
+  "source_sha256": "34eb2162cc60f8931443c188150647216eef639cb68446732ab2b14a864e53c3",
+  "source_archive": "mission_return_recovery_20261105_34eb2162cc.tar.gz",
+  "robot_source": "/home/ros2_ws/group4_releases/mission_return_recovery_20261105_34eb2162cc",
+  "robot_workspace": "/home/ros2_ws/group4_workspaces/mission_return_recovery_20261105_34eb2162cc",
+  "robot_session": "/home/ros2_ws/group4_results/assessment_mission_return_recovery_20261105_34eb2162cc",
+  "baseline_git_commit": "d17ad53239c8c435928b52c851732c962164fe74"
 }
